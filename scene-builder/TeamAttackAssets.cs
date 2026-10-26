@@ -29,7 +29,9 @@ static class TeamAttackAssets {
         }
         string Hash(string p)=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p)));
         var previous=Path.Combine(input,"team-attack-build.json");
-        var kept=File.Exists(previous)?System.Text.Json.JsonSerializer.Deserialize<Dictionary<int,int>>(System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(previous))!["original"])!:original;
+        // 已记录的原始值优先（重复运行时 AI 行已经是 100）；新增的 AI 行补上本次读到的原始值
+        var kept=File.Exists(previous)?System.Text.Json.JsonSerializer.Deserialize<Dictionary<int,int>>(System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(previous))!["original"])!:new Dictionary<int,int>();
+        foreach(var (id,value) in original)kept.TryAdd(id,value);
         File.WriteAllText(Path.Combine(output,"team-attack-build.json"),System.Text.Json.JsonSerializer.Serialize(new{value=Value,thinks=targets.Count,original=kept,sourceRegulationSha256=Hash(Path.Combine(input,"regulation.bin")),regulationSha256=Hash(path)},new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
         Console.WriteLine($"Set TeamAttackEffectivity={Value} on {targets.Count} weak/elite AI rows ({original.Values.Count(v=>v!=Value)} changed); boss AI and all other params preserved");
     }

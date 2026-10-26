@@ -99,7 +99,9 @@ mod tests {
     fn event_rosters_for_all_acts_have_unique_guard_slots_in_the_event_map() {
         for act in 1..=3 {for seed in 0..256 {for layer in 0..12 {
             for kind in [erdtree_tower::NodeKind::Monster,erdtree_tower::NodeKind::Elite] {
-                let guards=Guards::new(enemies::roster(kind,seed,17,layer,act)).unwrap();
+                let roster=enemies::party_roster_for_test(kind,seed,17,layer,act);
+                assert!(roster.iter().all(|e|!e.solo));
+                let guards=Guards::new(roster).unwrap();
                 assert_eq!(guards.ids.iter().collect::<std::collections::HashSet<_>>().len(),guards.ids.len());
                 assert!(guards.ids.iter().all(|&id|controls(id).is_ok()));
                 assert!(!guards.ready());assert!(!guards.active);

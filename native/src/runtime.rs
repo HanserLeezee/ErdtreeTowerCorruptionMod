@@ -673,6 +673,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
                 state.reward_wait=Some((Instant::now(),run.clone()));state.view.busy=true;
                 state.reward_portal=Default::default();
                 if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run.class);super::contracts::heal_victory(&mut player.chr_ins,run);}
+                give_elite_tear(world,run,id);
                 super::log(format!("Party victory received epoch={}",link.epoch));
             }
         }
@@ -990,6 +991,7 @@ fn tick_locked() {
         music.track=super::bgm::selection(music_run,i32::from(player.current_block_id),player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag(),game.warp_requested,state.view.travelling,music.active,music_wave);
     }
     super::spirits::set_active(local_combat&&!super::law::lone_wolf(state.view.run.as_ref()));
+    super::enemies::set_party(state.party.is_some());
     if let Some(spirits)=encounter_state(&mut state.party_spirits,summon_scope,summon_available) {
         if let Err(error)=spirits.poll(world,summon_scope.unwrap().2,true){super::log(format!("Party spirit registration: {error}"));}
     }
@@ -1528,10 +1530,14 @@ fn tick_locked() {
         return;
     }
 
+    if let Some(command)=super::debug_menu::take() {
+        let message=match debug_command(&mut state,world,command) {Ok(message)=>message,Err(error)=>format!("调试失败：{error}")};
+        super::log(format!("DEBUG_MENU {message}"));report(&mut state,message);
+    }
     if let Some(action) = state.command.take() {
         let journaled=state.party.is_some()&&matches!(action,Action::KeepCurrency|Action::Story(_)|Action::Claim(_)|Action::Camp(_));
         let story_message=if let Action::Story(choice)=action {
-            state.view.run.as_ref().and_then(|r|r.story_index().ok()).map(|index|erdtree_tower::events::outcome(index,choice))
+            state.view.run.as_ref().filter(|r|r.story_index().is_ok()).map(|r|erdtree_tower::events::story_outcome(r,choice))
         }else{None};
         let result = match action {
             Action::Enter(id) => {
@@ -1558,7 +1564,7 @@ fn tick_locked() {
             state.view.busy = false;
             let message=state.view.run.as_ref().filter(|r|r.act>1&&r.visited.is_empty()&&r.phase==Phase::Map)
                 .map(|r|format!("第 {} 幕已开启，生命、专注与圣杯瓶已回满。下一战：{}。",r.act,super::arenas::for_act(r.act).name))
-                .unwrap_or_else(||story_message.unwrap_or("行动完成，请选择下一层节点。").into());
+                .unwrap_or_else(||story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into()));
             report(&mut state, message);
         }
     }
@@ -1637,6 +1643,7 @@ fn tick_locked() {
         (Outcome::Victory, Ok(())) => {
             let _=super::native_talk::set_flag(45007990,false);
             if let Phase::Combat{id}=next.phase {
+                give_elite_tear(world,&next,id);
                 let bonus=erdtree_tower::boss_affixes::bonus_runes(&next,id);
                 if let Some(player)=world.main_player.as_mut().filter(|_|bonus>0) {
                     let data=unsafe {player.player_game_data.as_mut()};
@@ -1667,6 +1674,66 @@ fn tick_locked() {
         },
         (_, Err(error)) => report(&mut state, error),
         _ => {}
+    }
+}
+
+/// 调试菜单命令：改旅程的命令只在路线图界面、没有战斗与传送时执行；任何命令都会把旅程标记为调试旅程
+fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_menu::Command)->Result<String,String> {
+    use super::debug_menu::Command;
+    if state.party.is_some() {return Err("联机时不能使用调试功能".into());}
+    let busy=state.pending.as_ref().is_some_and(|p|!p.completed)||state.travel.is_some()||state.reward_wait.is_some()||state.view.travelling;
+    let player=world.main_player.as_mut().ok_or("角色尚未就绪")?;
+    let data=unsafe {player.player_game_data.as_mut()};
+    let mut next=state.view.run.clone().ok_or("旅程尚未开启")?;
+    next.debug=true;
+    if let Some(pending)=state.pending.as_mut() {pending.next_run.debug=true;}
+    let message=match command {
+        Command::Heal=>{
+            let vitals=&mut player.chr_ins.modules.data;vitals.hp=vitals.max_hp;vitals.fp=vitals.max_fp;
+            if let Some(flasks)=state.flasks.as_mut() {flasks.fill(data)?;next.flasks=flasks.total();}
+            if matches!(next.phase,Phase::Combat{..}) {next.hp=100;} else {next.hp=next.max_hp;}
+            "已回满生命、专注与圣杯瓶".to_owned()
+        },
+        Command::Runes(amount)=>{
+            data.rune_count=data.rune_count.saturating_add(amount).min(999_999_999);next.gold=data.rune_count;state.view.runes=data.rune_count;
+            format!("卢恩 +{amount}")
+        },
+        Command::Item(id)=>{
+            super::items::give_reward(data,id)?;
+            format!("已获得 {}",erdtree_tower::rewards::lookup(id).map_or("物品",|i|i.name))
+        },
+        command=>{
+            if busy {return Err("请等战斗、传送或领奖结束后再改旅程".into());}
+            let flask_cut=next.law.flask_cut();
+            let message=match command {
+                Command::Jump(id)=>{next.debug_jump(id)?;format!("已跳到第 {} 层的{}",next.nodes[id].layer+1,next.nodes[id].kind.label())},
+                Command::Act(act)=>{next.debug_act(act)?;format!("已切换到第 {act} 幕起点")},
+                Command::Oath(kind,level)=>{next.debug_oath(kind,level)?;format!("{} 设为 {}",kind.name(),["移除","I","II","III"][usize::from(level)])},
+                Command::Ember(ember,held)=>{next.debug_ember(ember,held)?;format!("{}余烬「{}」",if held{"获得"}else{"移除"},ember.name())},
+                Command::Law(law)=>{next.debug_law(law)?;format!("苦难律法改为 {} 分（{}）",law.score(),law.code())},
+                _=>unreachable!(),
+            };
+            if let Some(flasks)=state.flasks.as_mut() {
+                if next.law.flask_cut()!=flask_cut {flasks.set_bonus(data,next.class,next.flask_bonus,next.law.flask_cut())?;}
+                if next.act!=state.view.run.as_ref().map_or(next.act,|r|r.act) {flasks.fill(data)?;let vitals=&mut player.chr_ins.modules.data;vitals.hp=vitals.max_hp;vitals.fp=vitals.max_fp;}
+                flasks.restore(data,next.flasks)?;next.flasks=flasks.total();
+            }
+            state.view.prompt=state.view.prompt.wrapping_add(1);
+            message
+        },
+    };
+    record_checked(&next)?;
+    state.view.run=Some(next);
+    Ok(message)
+}
+
+/// 精英战胜利免费送一个圣杯滴露（与奖励三选一无关）；发放失败只记日志，不影响领奖
+fn give_elite_tear(world:&mut WorldChrMan,run:&Run,id:usize) {
+    if !run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Elite) {return;}
+    let Some(player)=world.main_player.as_mut() else{return};
+    match super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR) {
+        Ok(())=>super::log(format!("Elite victory sacred tear granted node={id}")),
+        Err(error)=>super::log(format!("Elite victory sacred tear failed node={id}: {error}")),
     }
 }
 
@@ -1707,7 +1774,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
             }
             next.claim_reward(index)?;
         },
-        Action::Story(choice) => effect = next.resolve_story(choice)?,
+        Action::Story(choice) => {effect = next.resolve_story(choice)?;item_reward=item_reward.or(effect.item);},
         Action::KeepCurrency => next.decline_reward()?,
         _ => return Err("无效节点行动".into()),
     }
@@ -1716,6 +1783,10 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     super::blessings::Blessings::validate(&next.blessings)?;
     if next.elite_buffs!=old.elite_buffs {super::elite::validate()?;}
     if let Some(id)=item_reward {super::items::check_reward(unsafe {player.player_game_data.as_ref()},id)?;}
+    let reforge=if effect.reforge {
+        let Phase::Node{id:node}=old.phase else {return Err("当前不在事件节点".into());};
+        Some(super::weapons::reforge_target(unsafe {player.player_game_data.as_ref()},&old,node,effect.reforge_upgrade)?)
+    }else{None};
     if journaled {write_award_journal(&award_path()?,&old)?;}
     if next.act > old.act {
         next_hp=vitals.max_hp;
@@ -1726,6 +1797,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     if next.weapon_level > old.weapon_level {
         super::weapons::upgrade(unsafe { player.player_game_data.as_mut() })?;
     }
+    if let Some(target)=reforge {super::weapons::reforge(unsafe { player.player_game_data.as_mut() },target)?;}
     if let Some(blue) = camp_refill {
         state.flasks.as_mut().ok_or("圣杯瓶未绑定")?
             .camp_refill(unsafe {player.player_game_data.as_mut()}, blue)?;
@@ -2284,6 +2356,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
         report(state,"等待房主敌人同步");return Ok(());
     }
     let mut roster = super::enemies::node_roster(run,id);
+    if state.party.is_none() {if let Some(debug)=super::debug_menu::take_roster() {super::log(format!("DEBUG_MENU roster override: {}",debug.iter().map(|e|e.name).collect::<Vec<_>>().join(",")));roster=debug;}}
     if state.party.is_none()&&run.nodes[id].kind==erdtree_tower::NodeKind::Monster {roster.sort_by_key(|e|super::enemies::role(e)!=erdtree_tower::encounter::Role::Weak);}
     let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "游戏参数未就绪")?;
     for spec in &roster {

@@ -55,6 +55,13 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
     }
     result
 });
+/// 调试菜单：按名称或说明搜索可以直接发放的奖励物品（含词条装备）
+pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
+    let query=query.trim();if query.is_empty() {return vec![];}
+    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|erdtree_tower::rewards::lookup(**id).is_some()&&(d.name.contains(query)||d.info.contains(query)))
+        .map(|(id,d)|(*id,format!("{}　{}",d.name,d.info.replace("\\n","　").replace('\n',"　")))).collect();
+    hits.sort_by_key(|(id,_)|*id);hits.truncate(limit);hits
+}
 pub fn talisman_description(id:u32)->(String,String) {
     DETAILS.get(&(0x20000000|id)).map(|d|(d.name.clone(),d.info.clone()))
         .unwrap_or_else(||(erdtree_tower::rewards::lookup(0x20000000|id).map_or("护符赐福",|i|i.name).into(),String::new()))
@@ -243,6 +250,9 @@ impl Panel {
                 2=>["捧起红泉","捧起蓝泉","离开泉水"],
                 3=>["收起钱袋","带走补给","留给后来者"],
                 4=>["研读魔法","追随火焰","合上禁书"],
+                erdtree_tower::events::DICE=>["押小注","押大注","离开赌桌"],
+                erdtree_tower::events::MYSTERY=>["普通盲盒","高级盲盒","离开商人"],
+                erdtree_tower::events::REFORGE=>["重铸","精炼","离开熔炉"],
                 _=>["帮助铁匠","委托锻造","继续前行"],
             };
             for i in 0..3 {

@@ -228,6 +228,7 @@ fn summary_page(ui:&Ui,run:&Run,ready:bool)->bool {
         }
         text(mid-210.0*s,392.0,&format!("圣杯上限  红 +{}  /  蓝 +{}",run.flask_bonus,run.flask_bonus),gold,1.0);
         text(mid+210.0*s,392.0,&format!("记忆栏位  +{}",run.memory_bonus),gold,1.0);
+        if run.debug {text(mid,170.0,"调试旅程 · 不计入纪录",muted,0.85);}
         if !run.law.is_empty() {
             let grade=run.law.grade().unwrap_or("普通");
             text(mid,424.0,&format!("苦难律法  {} 分 · {grade}  ·  律法码 {}",run.law.score(),run.law.code()),if run.phase==Phase::Won{white}else{muted},0.9);

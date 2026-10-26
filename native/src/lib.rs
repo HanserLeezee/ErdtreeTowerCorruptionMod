@@ -47,6 +47,7 @@ mod scaling;
 #[allow(dead_code)]
 mod law;
 mod embers;
+mod debug_menu;
 mod law_ui;
 mod reward_ui;
 mod random_ashes;
@@ -165,6 +166,7 @@ fn class_from_archetype(archetype: u8) -> Option<Class> {
 struct TowerPreview {
     diagnostics:diagnostics::Changes,
     rewards: reward_ui::Panel,
+    debug: debug_menu::Menu,
     visible: bool,
     run: Option<Run>,
     last_archetype: Option<u8>,
@@ -176,6 +178,7 @@ impl TowerPreview {
         Self {
             diagnostics:Default::default(),
             rewards: reward_ui::Panel::default(),
+            debug: Default::default(),
             visible: true,
             run: Some(Run::new(42, Class::Vagabond)),
             last_archetype: None,
@@ -280,6 +283,8 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let rewards=&mut self.rewards;
         let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
+        if ui.is_key_pressed_no_repeat(Key::F8) {debug_menu::toggle();}
+        self.debug.draw(ui,view.as_ref());
         if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
             let draw=ui.get_foreground_draw_list();
             let line=|text:&str,y:f32,color:hudhook::imgui::ImColor32| {

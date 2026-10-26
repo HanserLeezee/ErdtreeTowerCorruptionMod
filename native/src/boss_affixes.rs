@@ -3,7 +3,8 @@ use eldenring::cs::{ChrInsExt,FieldInsHandle,SoloParamRepository,SpEffectParam,W
 use fromsoftware_shared::FromStatic;
 use erdtree_tower::boss_affixes::Affix;
 pub const FIRST:i32=9620000;
-const ROT_BUILDUP:i32=FIRST+41;const ENVY:i32=FIRST+70;const PRIDE:i32=FIRST+80;const SHIELD:i32=FIRST+90;const REBORN:i32=FIRST+95;
+/// 原版“NPC：猩红腐败”（每次积累 20，积满后照常发作、持续扣血）。自建的 FIRST+41 只有积累值、没有发作内容，已停用
+const ROT_BUILDUP:i32=21001;const ENVY:i32=FIRST+70;const PRIDE:i32=FIRST+80;const SHIELD:i32=FIRST+90;const REBORN:i32=FIRST+95;
 const EFFECTS:[i32;10]=[FIRST,FIRST+10,FIRST+20,FIRST+30,FIRST+40,ROT_BUILDUP,ENVY,PRIDE,SHIELD,REBORN];
 const ROT_RADIUS:f32=5.0;
 const BAR_MARKER:i32=FIRST+99;

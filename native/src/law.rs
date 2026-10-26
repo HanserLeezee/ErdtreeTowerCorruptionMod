@@ -81,7 +81,7 @@ pub fn best(owner:(u32,i32),class:Class)->Option<u32> {
     parse_best(&std::fs::read_to_string(best_path(owner)).ok()?).into_iter().find(|(c,_)|*c==class).map(|(_,s)|s)
 }
 pub fn record(owner:(u32,i32),run:&Run)->Result<(),String> {
-    if run.phase!=Phase::Won||run.law.is_empty() {return Ok(());}
+    if run.phase!=Phase::Won||run.law.is_empty()||run.debug {return Ok(());}
     let path=best_path(owner);
     let Some(records)=merge_best(parse_best(&std::fs::read_to_string(&path).unwrap_or_default()),run.class,run.law.score()) else{return Ok(());};
     let text:String=records.iter().map(|(c,s)|format!("{c:?}|{s}\n")).collect();
