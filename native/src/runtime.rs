@@ -1537,7 +1537,7 @@ fn tick_locked() {
     if let Some(action) = state.command.take() {
         let journaled=state.party.is_some()&&matches!(action,Action::KeepCurrency|Action::Story(_)|Action::Claim(_)|Action::Camp(_));
         let story_message=if let Action::Story(choice)=action {
-            state.view.run.as_ref().and_then(|r|r.story_index().ok()).map(|index|erdtree_tower::events::outcome(index,choice))
+            state.view.run.as_ref().filter(|r|r.story_index().is_ok()).map(|r|erdtree_tower::events::story_outcome(r,choice))
         }else{None};
         let result = match action {
             Action::Enter(id) => {
@@ -1564,7 +1564,7 @@ fn tick_locked() {
             state.view.busy = false;
             let message=state.view.run.as_ref().filter(|r|r.act>1&&r.visited.is_empty()&&r.phase==Phase::Map)
                 .map(|r|format!("第 {} 幕已开启，生命、专注与圣杯瓶已回满。下一战：{}。",r.act,super::arenas::for_act(r.act).name))
-                .unwrap_or_else(||story_message.unwrap_or("行动完成，请选择下一层节点。").into());
+                .unwrap_or_else(||story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into()));
             report(&mut state, message);
         }
     }
@@ -1774,7 +1774,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
             }
             next.claim_reward(index)?;
         },
-        Action::Story(choice) => effect = next.resolve_story(choice)?,
+        Action::Story(choice) => {effect = next.resolve_story(choice)?;item_reward=item_reward.or(effect.item);},
         Action::KeepCurrency => next.decline_reward()?,
         _ => return Err("无效节点行动".into()),
     }
@@ -1783,6 +1783,10 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     super::blessings::Blessings::validate(&next.blessings)?;
     if next.elite_buffs!=old.elite_buffs {super::elite::validate()?;}
     if let Some(id)=item_reward {super::items::check_reward(unsafe {player.player_game_data.as_ref()},id)?;}
+    let reforge=if effect.reforge {
+        let Phase::Node{id:node}=old.phase else {return Err("当前不在事件节点".into());};
+        Some(super::weapons::reforge_target(unsafe {player.player_game_data.as_ref()},&old,node,effect.reforge_upgrade)?)
+    }else{None};
     if journaled {write_award_journal(&award_path()?,&old)?;}
     if next.act > old.act {
         next_hp=vitals.max_hp;
@@ -1793,6 +1797,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     if next.weapon_level > old.weapon_level {
         super::weapons::upgrade(unsafe { player.player_game_data.as_mut() })?;
     }
+    if let Some(target)=reforge {super::weapons::reforge(unsafe { player.player_game_data.as_mut() },target)?;}
     if let Some(blue) = camp_refill {
         state.flasks.as_mut().ok_or("圣杯瓶未绑定")?
             .camp_refill(unsafe {player.player_game_data.as_mut()}, blue)?;

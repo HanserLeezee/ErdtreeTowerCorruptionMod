@@ -30,6 +30,33 @@ pub fn upgrade(data: &mut PlayerGameData) -> Result<(), String> {
     {
         return Err("下一级强化参数不存在，未扣除资源".into());
     }
+    swap_right(data, slot, old, next, "upgraded")
+}
+/// 词条重铸：右手的词条武器换成同一件武器的另一种词条组合，强化等级与战灰保留
+pub fn reforge_target(data: &PlayerGameData, run: &erdtree_tower::Run, node: usize, guaranteed: bool) -> Result<u32, String> {
+    let slot = data.equipment.chr_asm.equipment.active_right_weapon_slot() as usize;
+    let old = data.equipment.chr_asm.equipment_param_ids[slot];
+    if old < 0 {return Err("请在右手装备词条武器".into());}
+    let (variant, level) = (old as u32 / 100 * 100, old as u32 % 100);
+    if erdtree_tower::affixes::tier(variant).is_none() {return Err("右手武器没有词条，未扣除卢恩".into());}
+    let target = erdtree_tower::affixes::reforge(run, node, variant, guaranteed).ok_or(if guaranteed {"传说品质的武器不能精炼，未扣除卢恩"} else {"这把武器没有其他词条组合，未扣除卢恩"})?;
+    let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "武器参数未就绪")?;
+    let row = params.get::<EquipParamWeapon>(target).ok_or("重铸后的武器参数不存在")?;
+    let cap = if row.origin_equip_wep16() < 0 {10} else {25};
+    let next = target + level.min(cap);
+    let reinforcement = i32::from(row.reinforce_type_id()) + (next % 100) as i32;
+    if reinforcement < 0 || params.get::<ReinforceParamWeapon>(reinforcement as u32).is_none() {
+        return Err("重铸后的强化参数不存在，未扣除卢恩".into());
+    }
+    Ok(next)
+}
+pub fn reforge(data: &mut PlayerGameData, next: u32) -> Result<(), String> {
+    let slot = data.equipment.chr_asm.equipment.active_right_weapon_slot() as usize;
+    let old = data.equipment.chr_asm.equipment_param_ids[slot];
+    swap_right(data, slot, old, next, "reforged")
+}
+/// 把右手武器换成编号为 next 的副本（保留战灰），自动装备后移除原武器
+fn swap_right(data: &mut PlayerGameData, slot: usize, old: i32, next: u32, verb: &str) -> Result<(), String> {
     let function = super::items::checked_function(
         0x249160,
         &[
@@ -102,7 +129,7 @@ pub fn upgrade(data: &mut PlayerGameData) -> Result<(), String> {
         return Err("强化副本已保留在背包，自动装备未成功；未扣款，请重试".into());
     }
     super::log(format!(
-        "Weapon upgraded copy: {old} -> {next}, slot={slot}, gem={gem}"
+        "Weapon {verb} copy: {old} -> {next}, slot={slot}, gem={gem}"
     ));
     remove_original(data, handle, gem_handle, remove_fn);
     Ok(())

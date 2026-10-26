@@ -52,3 +52,36 @@ pub fn rewards(run:&Run,node:usize,mut offers:Vec<Reward>)->Vec<Reward> {
     }}
     offers
 }
+/// 盲盒：从本职业可用的武器与防具中抽一件，品质按盲盒档次随机（传说档武器至少为其原有品质）
+pub fn mystery_box(run:&Run,node:usize,premium:bool)->Option<u32> {
+    let roll=crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0xb0b0_5e1d^u64::from(premium));
+    let value=crate::mix(roll)%100;
+    // 奖励装备的最低品质为稀有：普通盲盒 稀有 65／史诗 30／传说 5，高级盲盒 稀有 15／史诗 55／传说 30
+    let tier:u8=if premium {match value {0..=14=>1,15..=69=>2,_=>3}} else {match value {0..=64=>1,65..=94=>2,_=>3}};
+    // 先定品质，再只从能以该品质出现的装备里抽，说明里写的概率就是实际概率
+    let pool:Vec<_>=crate::rewards::CATALOG.iter().filter(|i|(i.kind==ItemKind::Weapon&&i.random_eligible()||i.kind==ItemKind::Armor)&&i.kind.allowed(run.class)
+        &&BY_BASE.contains_key(&i.id)&&BASE_RARITY.get(&i.id).copied().unwrap_or(0)<=tier).collect();
+    if pool.is_empty() {return None;}
+    let start=(roll%pool.len() as u64) as usize;
+    // 抽中的装备这局已经拿过时，顺延到下一件没拿过的
+    (0..pool.len()).map(|n|pool[(start+n)%pool.len()].id).find_map(|base|variant(run,base,(roll>>32) as usize,tier).filter(|id|!run.claimed_items.contains(id)))
+}
+fn variant(run:&Run,base:u32,profile:usize,tier:u8)->Option<u32> {
+    let id=if run.affix_rules>=2 {let groups=ADVANCED.get(&base)?;groups[profile%groups.len()][usize::from(tier)]}else{BY_BASE.get(&base)?[usize::from(tier)]};
+    (id!=0).then_some(id)
+}
+/// 重铸：换成同一件装备在同品质下的另一种词条组合；有 1/5 的概率品质 +1（这时任意组合都可以）。
+/// 精炼（guaranteed）必定品质 +1，传说品质不能精炼
+pub fn reforge(run:&Run,node:usize,current:u32,guaranteed:bool)->Option<u32> {
+    let (base,tier)=(base(current),tier(current)?);
+    if guaranteed&&tier>=3 {return None;}
+    let roll=crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0x4e70_f09e^u64::from(current));
+    let upgrade=guaranteed||tier<3&&roll%5==0;
+    let target=if upgrade {tier+1}else{tier};
+    let mut options:Vec<u32>=ADVANCED.get(&base).into_iter().flatten().map(|g|g[usize::from(target)])
+        .chain(BY_BASE.get(&base).map(|g|g[usize::from(target)]).filter(|_|run.affix_rules<2))
+        .filter(|id|*id!=0&&*id!=current).collect();
+    options.dedup();
+    (!options.is_empty()).then(||options[((roll>>8)%options.len() as u64) as usize])
+}
+
