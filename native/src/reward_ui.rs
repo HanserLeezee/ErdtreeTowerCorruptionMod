@@ -21,7 +21,7 @@ fn affixed_equipment_details_and_icons_cover_every_variant() {
 }
 fn quality(run:&Run,reward:&Reward)->usize {
     if matches!(reward,Reward::MemorySlot){return 1;}
-    if matches!(reward,Reward::StarStream){return 2;}
+    if matches!(reward,Reward::StarStream|Reward::Ember(_)){return 2;}
     item_id(run,reward).map_or(0,item_quality) as usize
 }
 fn card_light(tier:usize,selected:bool,hover:bool,time:f64)->u8 {
@@ -57,7 +57,7 @@ fn item_id(run:&Run,reward:&Reward)->Option<u32> {
     }
 }
 fn card_icon(run:&Run,reward:&Reward)->Option<u32> {
-    let id=if matches!(reward,Reward::StarStream){Some(0x40000000|4200)}else{item_id(run,reward)};
+    let id=match reward {Reward::StarStream=>Some(0x40000000|4200),Reward::Ember(ember)=>Some(0x20000000|erdtree_tower::embers::icon_talisman(*ember)),_=>item_id(run,reward)};
     id.and_then(|id|DETAILS.get(&id)).map(|detail|detail.icon)
 }
 fn card_summary(detail:&Detail)->String {
@@ -92,7 +92,7 @@ impl Selection {
 #[derive(Default)]
 pub struct Panel {selection:Selection,textures:HashMap<u32,Option<TextureId>>,wanted:Vec<u32>,card:Option<TextureId>,rarity_cards:Option<TextureId>,rare_blue:Option<TextureId>,story:Option<(Run,u32,[Option<String>;3])>}
 impl Panel {
-    fn icon(&mut self,icon:u32)->Option<TextureId> {
+    pub fn icon(&mut self,icon:u32)->Option<TextureId> {
         let texture=self.textures.get(&icon).copied();if texture.is_none()&&!self.wanted.contains(&icon){self.wanted.push(icon);}texture.flatten()
     }
     pub fn load_icons(&mut self,renderer:&mut dyn RenderContext) {
@@ -108,13 +108,26 @@ impl Panel {
     pub fn draw_contract(&mut self,ui:&Ui,run:&Run,view:&View) {
         let Some(contract)=run.contract.as_ref().filter(|c|c.selection_pending())else{return;};
         let now=ui.time();
-        self.selection.sync(format!("contract:{}:{}:{:?}",run.seed,run.act,contract.offers),now);
+        self.selection.sync(format!("contract:{}:{}:{:?}",run.seed,run.act,contract.cards()),now);
         let ready=view.ready&&!view.busy&&now>=self.selection.armed_at;
         let key=|keys:&[Key]|keys.iter().any(|k|ui.is_key_pressed_no_repeat(*k));
+        let count=contract.options();
         if ready {
-            if key(&[Key::A,Key::LeftArrow,Key::GamepadDpadLeft]){self.selection.step(-1,2);}
-            if key(&[Key::D,Key::RightArrow,Key::GamepadDpadRight]){self.selection.step(1,2);}
+            if key(&[Key::A,Key::LeftArrow,Key::GamepadDpadLeft]){self.selection.step(-1,count);}
+            if key(&[Key::D,Key::RightArrow,Key::GamepadDpadRight]){self.selection.step(1,count);}
         }
+        const LEVELS:[&str;4]=["","I","II","III"];
+        let fresh=contract.rules==1;
+        use erdtree_tower::contracts::Card;
+        // (贴图, 标题, 角标说明, 增益, 代价, 描边颜色)
+        let cards:Vec<(usize,String,Option<String>,String,String,Option<(u8,u8,u8)>)>=contract.cards().into_iter().map(|card|match card {
+            Card::Oath(kind) if fresh=>(kind.index(),format!("{} I",kind.name()),None,kind.boon_at(1),kind.bane_at().to_owned(),None),
+            Card::Oath(kind)=>(kind.index(),kind.name().to_owned(),None,kind.boon().to_owned(),kind.bane().to_owned(),None),
+            Card::Deepen(kind)=>{
+                let level=(contract.level(kind).unwrap_or(1)+1).min(3);
+                (kind.index(),format!("{} {}",kind.name(),LEVELS[usize::from(level)]),Some(format!("深化 · {} 升至 {}",LEVELS[usize::from(level-1)],LEVELS[usize::from(level)])),kind.boon_at(level),"代价不变 · 获得圣杯滴露 ×1".to_owned(),Some((236,196,104)))
+            },
+        }).collect();
         let size=ui.io().display_size;let s=(size[0]/1600.0).min(size[1]/900.0);
         let oy=(size[1]-900.0*s)*0.5;let mid=size[0]*0.5;
         let gold=[0.91,0.79,0.53,1.0];
@@ -125,18 +138,37 @@ impl Panel {
             crate::oath_art::background(&ui.get_window_draw_list(),size);
             ui.set_window_font_scale(s*0.95);center(ui,mid,oy+32.0*s,&format!("第 {} 幕",run.act),gold);
             ui.set_window_font_scale(s*1.85);center(ui,mid,oy+73.0*s,"立 下 誓 约",gold);
-            ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s,"二选一 · 本幕生效",[0.63,0.58,0.46,1.0]);
+            let subtitle=if !fresh {"二选一 · 本幕生效"}else if count==3 {"三选一 · 誓约整局保留，可以深化"}else{"二选一 · 誓约整局保留"};
+            ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s,subtitle,[0.63,0.58,0.46,1.0]);
+            if fresh&&!contract.held.is_empty() {
+                let held=contract.held.iter().map(|o|format!("{} {}",o.kind.name(),LEVELS[usize::from(o.level.min(3))])).collect::<Vec<_>>().join(" · ");
+                ui.set_window_font_scale(s*0.8);center(ui,mid,oy+155.0*s,&format!("已立誓约：{held}"),[0.80,0.70,0.50,1.0]);
+            }
             let width=366.0*s;let gap=72.0*s;let top=oy+187.0*s;let height=549.0*s;
-            for (i,kind) in contract.offers.iter().enumerate() {
-                let x=mid-width-gap*0.5+i as f32*(width+gap);
+            for (i,(art,title,label,boon,bane,accent)) in cards.iter().enumerate() {
+                let x=mid-(width*count as f32+gap*(count as f32-1.0))*0.5+i as f32*(width+gap);
                 ui.set_cursor_pos([x,top-7.0*s]);
                 {let _disabled=ui.begin_disabled(!ready);if ui.invisible_button(format!("contract-{i}"),[width,height+7.0*s]){self.selection.selected=i;}}
                 let hovered=ui.is_item_hovered();let selected=self.selection.selected==i;
                 let y=top-if selected{7.0*s}else if hovered{3.0*s}else{0.0};
-                crate::oath_art::card(&ui.get_window_draw_list(),kind.index(),[x,y],[x+width,y+height],if selected{255}else if hovered{225}else{165});
-                ui.set_window_font_scale(s*1.35);center(ui,x+width*0.5,y+333.0*s,kind.name(),gold);
+                crate::oath_art::card(&ui.get_window_draw_list(),*art,[x,y],[x+width,y+height],if selected{255}else if hovered{225}else{165});
+                if let Some((r,g,b))=accent {
+                    ui.get_window_draw_list().add_rect([x-4.0*s,y-4.0*s],[x+width+4.0*s,y+height+4.0*s],ImColor32::from_rgba(*r,*g,*b,if selected{230}else{150})).rounding(6.0*s).thickness(2.5*s).build();
+                }
+                if let Some(label)=label {
+                    let (r,g,b)=accent.unwrap_or((236,196,104));
+                    ui.set_window_font_scale(s*0.85);
+                    let half=ui.calc_text_size(label)[0]*0.5+14.0*s;let (cx,cy)=(x+width*0.5,y+300.0*s);
+                    let draw=ui.get_window_draw_list();
+                    draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(14,10,7,225)).filled(true).rounding(11.0*s).build();
+                    draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(r,g,b,220)).rounding(11.0*s).thickness(1.4*s).build();
+                    drop(draw);
+                    center(ui,cx,cy,label,[f32::from(r)/255.0*0.6+0.4,f32::from(g)/255.0*0.6+0.4,f32::from(b)/255.0*0.6+0.4,1.0]);
+                }
+                ui.set_window_font_scale(s*1.35);center(ui,x+width*0.5,y+333.0*s,title,gold);
                 ui.set_window_font_scale(s*0.95);
-                for (offset,text,color) in [(401.0,kind.boon(),[0.64,0.83,0.58,1.0]),(462.0,kind.bane(),[0.91,0.49,0.40,1.0])] {
+                let bane_y=(401.0+boon.lines().count() as f32*24.0+14.0).max(462.0);
+                for (offset,text,color) in [(401.0,boon.as_str(),[0.64,0.83,0.58,1.0]),(bane_y,bane.as_str(),[0.91,0.49,0.40,1.0])] {
                     center(ui,x+width*0.5,y+offset*s,text,color);
                 }
             }
@@ -249,7 +281,7 @@ impl Panel {
         std::thread::spawn(||{LazyLock::force(&DETAILS);LazyLock::force(&RARITIES);});
     }
     pub fn draw(&mut self,ui:&Ui,run:&Run,view:&View) {
-        let gift=run.contract.as_ref().filter(|c|c.chosen.is_some()&&!c.gear_done);
+        let gift=run.contract.as_ref().filter(|c|c.chosen.is_some()&&!c.gear_done&&!c.deepened);
         let gift_offers:Vec<_>=gift.map(|c|c.gear.iter().copied().map(Reward::Item).collect()).unwrap_or_default();
         let (id,offers)=if gift.is_some(){(usize::MAX,&gift_offers)}else if let Phase::Reward{id,offers}=&run.phase{(*id,offers)}else{return;};
         if offers.is_empty(){return;}
@@ -349,6 +381,7 @@ impl Panel {
                     Reward::FlaskCapacity=>("增益","圣杯扩容".into(),"红、蓝瓶上限各 +1\n本局生效，不补瓶".into()),
                     Reward::MemorySlot=>("增益","记忆扩容".into(),"记忆栏位 +1\n魔法与祷告共用，本局生效".into()),
                     Reward::StarStream=>("增益","星流引导".into(),"彗星亚兹勒随视角左右瞄准\n光束保持水平".into()),
+                    Reward::Ember(ember)=>("余烬",ember.name().into(),format!("{}\n本局生效",ember.effect())),
                 };
                 let tier=quality(run,reward);
                 let quality_color=match tier {1=>[0.52,0.75,1.0,1.0],2=>[0.82,0.64,0.96,1.0],3=>gold,_=>[0.80,0.83,0.86,1.0]};
@@ -489,6 +522,15 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
             panel.draw(context.frame(),&contract,&view);let data=context.render();assert!(data.total_vtx_count>0);
             if width==1920&&kind==erdtree_tower::contracts::Kind::Mystic {if let Some(path)=&output {write_frame(&path.join("contract-gift-1920.draw"),data,width,height);}}
         }
+        use erdtree_tower::contracts::{Kind,Oath,State};
+        let mut deepen=Run::new(42,erdtree_tower::Class::Samurai);
+        deepen.contract=Some(State::start(deepen.reward_seed(),deepen.class,2,vec![Oath{kind:Kind::Steel,level:1},Oath{kind:Kind::Blood,level:2}],0));
+        assert_eq!(deepen.contract.as_ref().unwrap().options(),3);
+        for _ in 0..3 {panel.draw_contract(context.frame(),&deepen,&view);context.render();}
+        panel.draw_contract(context.frame(),&deepen,&view);let data=context.render();assert!(data.total_vtx_count>0);
+        if let Some(path)=&output {write_frame(&path.join(format!("oath-deepen-{width}.draw")),data,width,height);}
+        let seed=deepen.reward_seed();deepen.contract.as_mut().unwrap().choose(2,seed,deepen.class).unwrap();
+        panel.draw(context.frame(),&deepen,&view);context.render();
     }
     run.phase=Phase::Reward{id:0,offers:vec![Reward::Item(1000000),Reward::Item(erdtree_tower::elite::EPIC[0]),Reward::Item(2140000)]};
     for (width,height,details) in [(1280,720,false),(1280,720,true),(1920,1080,false),(1920,1080,true),(3440,1440,false),(3440,1440,true)] {

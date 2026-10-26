@@ -140,7 +140,7 @@ pub(crate) fn before_elites(run:&Run,node:usize)->Vec<Reward> {weighted(run,node
 pub(crate) fn before_base_talismans(run:&Run,node:usize)->Vec<Reward> {weighted(run,node,false)}
 fn weighted(run:&Run,node:usize,base_only:bool)->Vec<Reward> {
     let mut offers=ranked_pool(run,node,true,&CATALOG,base_only);
-    if crate::mix(run.reward_seed() ^ node as u64 ^ 0xa549) % 4 != 0 {
+    if run.law.lone_wolf()||crate::mix(run.reward_seed() ^ node as u64 ^ 0xa549) % 4 != 0 {
         offers.retain(|r|!matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)));
     }
     offers.truncate(3);
@@ -267,7 +267,7 @@ mod tests {
     }
     #[test]
     fn current_currency_fallback_is_1500_and_old_rewards_migrate() {
-        let mut run=(0..100).map(|seed|Run::new(seed,Class::Samurai)).find(|run|offers(run,run.start_nodes()[0]).iter().any(|r|matches!(r,Reward::Gold(_)))).unwrap();
+        let mut run=(0..100).map(|seed|{let mut r=Run::new(seed,Class::Samurai);r.ember_rewards=false;r}).find(|run|offers(run,run.start_nodes()[0]).iter().any(|r|matches!(r,Reward::Gold(_)))).unwrap();
         let node=run.start_nodes()[0];
         run.enter(node).unwrap();run.win_combat().unwrap();
         let old=before_bosses(&run,node);
@@ -328,7 +328,7 @@ mod tests {
             a.act=act;b.act=act;
             assert_ne!(a.reward_seed(),b.reward_seed());
             a.enable_contracts();b.enable_contracts();
-            assert_eq!(a.contract,Some(crate::contracts::State::new(a.reward_seed(),a.class,act,None,0)));
+            assert_eq!(a.contract,Some(crate::contracts::State::start(a.reward_seed(),a.class,act,vec![],0)));
             a.contract=None;b.contract=None;
         }
         assert_ne!(first,a.reward_seed());
@@ -376,7 +376,7 @@ mod tests {
     fn old_numbered_talisman_offers_migrate_without_removing_owned_items() {
         let mut migrated=0;
         for seed in 0..500 {
-            let mut run=Run::new(seed,Class::Samurai);run.claimed_items.push(0x20000000|1001);
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.claimed_items.push(0x20000000|1001);
             run.enter(0).unwrap();run.win_combat().unwrap();
             let old=before_base_talismans(&run,0);
             if !old.iter().any(|r|matches!(r,Reward::Item(id) if !lookup(*id).unwrap().random_eligible())){continue;}
@@ -392,7 +392,7 @@ mod tests {
         let mut old=0;let mut new=0;
         let contains=|rewards:&[Reward]|rewards.iter().any(|r|matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)));
         for seed in 0..1000 {
-            let mut run=Run::new(seed,Class::Samurai);
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
             let mut unweighted=ranked_pool(&run,0,true,&CATALOG,true);
             unweighted.truncate(3);
             old+=usize::from(contains(&unweighted));
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn previous_version_pending_rewards_still_load() {
         for seed in 0..30 {
-            let mut run=Run::new(seed,Class::Samurai);run.enter(0).unwrap();run.win_combat().unwrap();
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.enter(0).unwrap();run.win_combat().unwrap();
             run.phase=crate::Phase::Reward{id:0,offers:run.legacy_offers(0)};
             let mut json:serde_json::Value=serde_json::from_str(&run.encode().unwrap()).unwrap();
             json.as_object_mut().unwrap().remove("claimed_items");
@@ -431,7 +431,7 @@ mod claimed_base_tests {
     use crate::{Class,Phase,Run};
     #[test]
     fn pending_page_from_variant_blind_rules_still_loads_and_migrates() {
-        let mut run=Run::new(7,Class::Samurai);
+        let mut run=Run::new(7,Class::Samurai);run.ember_rewards=false;
         let id=run.available()[0];run.enter(id).unwrap();run.win_combat().unwrap();
         let variant=crate::affixes::roll(&run,3150000,0,true).unwrap();run.claimed_items.push(variant);
         let old=super::before_claimed_bases(&run,id);run.phase=Phase::Reward{id,offers:old};

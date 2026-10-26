@@ -45,6 +45,8 @@ mod elite;
 mod boss_affixes;
 mod scaling;
 #[allow(dead_code)]
+mod law;
+mod embers;
 mod law_ui;
 mod reward_ui;
 mod contracts;
@@ -275,11 +277,21 @@ impl ImguiRenderLoop for TowerPreview {
             self.run = class_from_archetype(snapshot.archetype).map(|class| Run::new(42, class));
             log(format!("Class binding: archetype={}", snapshot.archetype));
         }
-        let run_screen=run_screen::draw(ui);
-        if self.visible&&!run_screen&&let Some(title)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))).and_then(|v|v.boss_affixes.as_ref()) {
-            let draw=ui.get_foreground_draw_list();let size=ui.calc_text_size(title);let x=(ui.io().display_size[0]-size[0])*0.5;
-            draw.add_text([x+1.5,31.5],hudhook::imgui::ImColor32::from_rgba(0,0,0,200),title);
-            draw.add_text([x,30.0],hudhook::imgui::ImColor32::from_rgb(232,190,92),title);
+        let rewards=&mut self.rewards;
+        let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
+        if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
+            let draw=ui.get_foreground_draw_list();
+            let line=|text:&str,y:f32,color:hudhook::imgui::ImColor32| {
+                let x=(ui.io().display_size[0]-ui.calc_text_size(text)[0])*0.5;
+                draw.add_text([x+1.5,y+1.5],hudhook::imgui::ImColor32::from_rgba(0,0,0,200),text);draw.add_text([x,y],color,text);
+            };
+            let mut y=30.0;
+            if let Some(title)=&combat.boss_affixes {line(title,y,hudhook::imgui::ImColor32::from_rgb(232,190,92));y+=24.0;}
+            if let Some(left)=combat.law_clock {
+                let (text,color)=if left>0 {(format!("苦难律法 · 限时 {}:{:02}",left/60,left%60),if left<=30{hudhook::imgui::ImColor32::from_rgb(235,110,90)}else{hudhook::imgui::ImColor32::from_rgb(232,214,180)})}
+                    else {(format!("苦难律法 · 已超时 {}:{:02} · 持续失血",-left/60,-left%60),hudhook::imgui::ImColor32::from_rgb(235,80,70))};
+                line(&text,y,color);
+            }
         }
         let key=format!("UI visible={} snapshot={} capture={} settlement={} view={:?}",self.visible,snapshot.is_some(),input::CAPTURE.load(Ordering::Relaxed),run_screen,view.as_ref().map(|v|(v.ready,v.busy,v.travelling,v.room.is_some(),v.shared_event,v.prompt)));
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}

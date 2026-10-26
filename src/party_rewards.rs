@@ -68,7 +68,9 @@ impl PartyRewards {
             Choice::Contract(index)=>{
                 if next.phase!=Phase::Map{return Err("当前不能选择契约".into());}
                 let seed=next.reward_seed();
-                next.contract.as_mut().ok_or("契约未开启")?.choose(index,seed,next.class)?;
+                let contract=next.contract.as_mut().ok_or("契约未开启")?;
+                contract.choose(index,seed,next.class)?;
+                if contract.deepened {contract.finish_deepen()?;}
             },
             Choice::SkipContract=>{
                 if next.phase!=Phase::Map{return Err("当前不能跳过契约".into());}

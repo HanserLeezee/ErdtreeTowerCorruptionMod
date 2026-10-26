@@ -7,9 +7,9 @@ pub struct Flasks {
     synced: Option<([(ItemId, u32); 2], [u8; 2], std::time::Instant)>,
 }
 
-fn capacity(_class:Class,bonus:u8)->Result<[u8;2],String> {
-    if bonus>4{return Err("圣杯容量增益无效".into());}
-    Ok([5+bonus;2])
+fn capacity(_class:Class,bonus:u8,cut:[u8;2])->Result<[u8;2],String> {
+    if bonus>4||cut.iter().any(|c|*c>2){return Err("圣杯容量增益无效".into());}
+    Ok([5+bonus-cut[0],5+bonus-cut[1]])
 }
 
 impl Flasks {
@@ -25,11 +25,11 @@ impl Flasks {
     }
 
     pub fn bind(data: &mut PlayerGameData, class: Class) -> Result<Self, String> {
-        Self::bind_bonus(data,class,0)
+        Self::bind_bonus(data,class,0,[0,0])
     }
 
-    pub fn bind_bonus(data:&mut PlayerGameData,class:Class,bonus:u8)->Result<Self,String> {
-        let capacity=capacity(class,bonus)?;
+    pub fn bind_bonus(data:&mut PlayerGameData,class:Class,bonus:u8,cut:[u8;2])->Result<Self,String> {
+        let capacity=capacity(class,bonus,cut)?;
         super::physick::ensure(data)?;
         let items = &data.equipment.equip_inventory_data.items_data;
         let find = |start| {
@@ -49,8 +49,8 @@ impl Flasks {
     pub fn total(&self) -> u8 {
         self.remaining[0] + self.remaining[1]
     }
-    pub fn set_bonus(&mut self,data:&mut PlayerGameData,class:Class,bonus:u8)->Result<(),String> {
-        let next=capacity(class,bonus)?;
+    pub fn set_bonus(&mut self,data:&mut PlayerGameData,class:Class,bonus:u8,cut:[u8;2])->Result<(),String> {
+        let next=capacity(class,bonus,cut)?;
         let old=self.capacity;self.capacity=next;
         if let Err(error)=self.write(data){self.capacity=old;return Err(error);}
         Ok(())
@@ -80,6 +80,13 @@ impl Flasks {
         if target == self.remaining && !super::physick::empty(data) { return Err("圣杯瓶与灵药已满".into()); }
         self.apply_refill(data, target)?;
         super::physick::refill(data)
+    }
+
+    /// 战斗中补回指定颜色的圣杯瓶（不超过上限，不补灵药）
+    pub fn grant(&mut self, data: &mut PlayerGameData, added: [u8;2]) -> Result<bool, String> {
+        let target = camp_supply(self.remaining, self.capacity, added);
+        if target == self.remaining {return Ok(false);}
+        self.apply_refill(data, target)?;Ok(true)
     }
 
     pub fn fill(&mut self, data: &mut PlayerGameData) -> Result<(), String> {
@@ -155,15 +162,16 @@ fn flask_target(id:ItemId,remaining:u32)->(ItemId,u32) {
 #[test]
 fn expanded_capacity_keeps_camp_supply_bounded() {
     for class in Class::ALL {for bonus in 0..=4 {
-        let cap=capacity(class,bonus).unwrap();
+        let cap=capacity(class,bonus,[0,0]).unwrap();
         assert_eq!(cap,[5+bonus,5+bonus]);
+        assert_eq!(capacity(class,bonus,[2,1]).unwrap(),[3+bonus,4+bonus]);
         for blue in [false,true] {
             let supply=camp_supply([0,0],cap,if blue{[1,2]}else{[2,1]});
             assert_eq!(supply,if blue{[1,2.min(cap[1])]}else{[2,1]});
             assert_eq!(camp_supply(cap,cap,if blue{[1,2]}else{[2,1]}),cap);
         }
     }}
-    assert!(capacity(Class::Samurai,5).is_err());
+    assert!(capacity(Class::Samurai,5,[0,0]).is_err());
 }
 
 fn obsolete_flask(id:ItemId,targets:&[(ItemId,u32);2])->bool {

@@ -125,7 +125,7 @@ pub fn stock(run:&Run)->Vec<Stock> {
     result.extend(select(catalog.iter().filter(|s|s.kind==4).cloned().collect(),2,run.seed,visit));
     let pool=CATALOG.iter().filter(|s|s.kind==ItemKind::Talisman&&s.random_eligible()).map(|s|Stock{kind:2,id:(s.id&0x0fffffff) as i32,price:talisman_price(super::reward_ui::item_quality(s.id)),quantity:1}).collect();
     result.extend(select(pool,2,run.seed,visit));
-    if hash(run.seed ^ visit as u64 ^ 0xa549)%4==0 {
+    if !run.law.lone_wolf()&&hash(run.seed ^ visit as u64 ^ 0xa549)%4==0 {
         result.extend(select(CATALOG.iter().filter(|s|s.kind==ItemKind::Spirit).map(|s|Stock{kind:3,id:(s.id&0x0fffffff) as i32,price:2000,quantity:1}).collect(),1,run.seed,visit));
     } else {
         let pool=extras("food").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
@@ -186,7 +186,7 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
             } else {None};
             if let Some(rarity)=rarity {item.price=weapon_price(rarity);}
         }
-        for item in &mut stock {item.price=super::passives::shop_price(run.class,item.price);}
+        for item in &mut stock {item.price=super::law::shop_price(run.law,super::passives::shop_price(run.class,item.price));}
         stock
     };
     if stock.len()!=STOCK_COUNT as usize {return Err("商店货单数量与原生商品槽位不符".into());}

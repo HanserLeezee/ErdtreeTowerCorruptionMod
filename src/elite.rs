@@ -10,7 +10,7 @@ pub fn boss_offers(run:&Run,node:usize)->Vec<Reward> {
 }
 pub fn offers(run:&Run,node:usize)->Vec<Reward> {
     let mut result=legendary_offers(run,node);
-    let items:Vec<_>=EPIC.iter().chain(LEGENDARY).copied().filter(|id|!run.claimed_items.contains(id)&&rewards::lookup(*id).is_some_and(|i|i.kind.allowed(run.class))).collect();
+    let items:Vec<_>=EPIC.iter().chain(LEGENDARY).copied().filter(|id|!run.claimed_items.contains(id)&&rewards::lookup(*id).is_some_and(|i|i.kind.allowed(run.class)&&!(run.law.lone_wolf()&&i.kind==rewards::ItemKind::Spirit))).collect();
     let roll=crate::mix(run.reward_seed()^node as u64^0xe91c);
     if !items.is_empty() {
         result[0]=Reward::Item(items[roll as usize%items.len()]);
@@ -18,7 +18,7 @@ pub fn offers(run:&Run,node:usize)->Vec<Reward> {
     result
 }
 pub(crate) fn legendary_offers(run:&Run,node:usize)->Vec<Reward> {
-    let items:Vec<_>=LEGENDARY.iter().copied().filter(|id|!run.claimed_items.contains(id)&&rewards::lookup(*id).is_some_and(|i|i.kind.allowed(run.class))).collect();
+    let items:Vec<_>=LEGENDARY.iter().copied().filter(|id|!run.claimed_items.contains(id)&&rewards::lookup(*id).is_some_and(|i|i.kind.allowed(run.class)&&!(run.law.lone_wolf()&&i.kind==rewards::ItemKind::Spirit))).collect();
     let buffs:Vec<_>=BUFFS.iter().copied().filter(|id|!run.elite_buffs.contains(id)).collect();
     let roll=crate::mix(run.reward_seed()^node as u64^0xe117e);
     vec![if items.is_empty(){Reward::Gold(5000)}else{Reward::Item(items[roll as usize%items.len()])},
@@ -32,7 +32,7 @@ mod tests {
         use crate::{Class,NodeKind,Phase};
         let mut checked=0;
         for seed in 0..40 {
-            let mut run=Run::new(seed,Class::Samurai);
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
             for _ in 0..11 {
                 let id=run.available()[0];run.enter(id).unwrap();
                 match run.nodes[id].kind {

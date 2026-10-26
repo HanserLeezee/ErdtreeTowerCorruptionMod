@@ -1,15 +1,17 @@
 use std::{collections::VecDeque,sync::{Mutex,atomic::{AtomicBool,Ordering}}};
 use erdtree_tower::{Run,Phase};
-use hudhook::imgui::{Ui,Key,Condition,StyleColor};
+use hudhook::imgui::{Ui,Key,Condition,StyleColor,TextureId};
+use erdtree_tower::law::Law;
 
 static SCREEN:Mutex<VecDeque<Screen>>=Mutex::new(VecDeque::new());
 static PENDING:Mutex<Option<Run>>=Mutex::new(None);
 static SEED:Mutex<Option<u64>>=Mutex::new(None);
+static LAW_START:Mutex<Option<(Option<u64>,Law)>>=Mutex::new(None);
 static ACTIVE:AtomicBool=AtomicBool::new(false);
-enum Screen {Summary{run:Run,opened:Option<f64>},Notice{message:String,opened:Option<f64>},TrialRewards{items:Vec<u32>,opened:Option<f64>},Seed{input:String,error:String,digit:u8,opened:Option<f64>}}
+enum Screen {Summary{run:Run,opened:Option<f64>},Notice{message:String,opened:Option<f64>},TrialRewards{items:Vec<u32>,opened:Option<f64>},Seed{input:String,error:String,digit:u8,opened:Option<f64>},Law{screen:crate::law_ui::LawScreen,seed:Option<u64>,record:Option<(u32,String)>}}
 fn show(next:Screen) {
     let Ok(mut screens)=SCREEN.lock() else{return;};
-    if screens.iter().any(|s|match (s,&next) {(Screen::Notice{message:a,..},Screen::Notice{message:b,..})=>a==b,(Screen::Seed{..},Screen::Seed{..})=>true,_=>false}) {return;}
+    if screens.iter().any(|s|match (s,&next) {(Screen::Notice{message:a,..},Screen::Notice{message:b,..})=>a==b,(Screen::Seed{..},Screen::Seed{..})|(Screen::Law{..},Screen::Law{..})=>true,_=>false}) {return;}
     screens.push_back(next);ACTIVE.store(true,Ordering::Relaxed);
 }
 pub fn party_notice(message:String) {show(Screen::Notice{message,opened:None});}
@@ -30,15 +32,25 @@ pub fn hub_ready() {
 }
 pub fn seed_entry() {show(Screen::Seed{input:String::new(),error:String::new(),digit:0,opened:None});}
 pub fn take_seed()->Option<u64> {SEED.lock().ok()?.take()}
+/// 开局前选择苦难律法；seed 为空时随机开局
+pub fn law_entry(seed:Option<u64>,record:Option<(u32,String)>) {let mut screen=crate::law_ui::LawScreen::new(Law::default());screen.seed=seed;show(Screen::Law{screen,seed,record});}
+pub fn take_law_start()->Option<(Option<u64>,Law)> {LAW_START.lock().ok()?.take()}
 fn parse_seed(text:&str)->Result<u64,&'static str> {
     let text=text.trim();
     if text.is_empty()||!text.bytes().all(|c|c.is_ascii_digit()){return Err("请输入数字种子");}
     text.parse().map_err(|_|"种子超出范围")
 }
-pub fn draw(ui:&Ui)->bool {
+pub fn draw(ui:&Ui,icon:&mut dyn FnMut(u32)->Option<TextureId>)->bool {
     let Ok(mut screen)=SCREEN.lock() else{return false;};
     let Some(current)=screen.front_mut() else{return false;};
-    if render(ui,current) {screen.pop_front();ACTIVE.store(!screen.is_empty(),Ordering::Relaxed);}
+    let done=if let Screen::Law{screen:law,seed,record}=current {
+        match crate::law_ui::draw(ui,law,icon,record.as_ref().map(|(best,class)|(*best,class.as_str()))) {
+            Some(crate::law_ui::LawAction::Start(law))=>{if let Ok(mut start)=LAW_START.lock(){*start=Some((*seed,law));}true},
+            Some(crate::law_ui::LawAction::Back)=>true,
+            None=>false,
+        }
+    } else {render(ui,current)};
+    if done {screen.pop_front();ACTIVE.store(!screen.is_empty(),Ordering::Relaxed);}
     true
 }
 fn render(ui:&Ui,current:&mut Screen)->bool {
@@ -72,7 +84,7 @@ fn render(ui:&Ui,current:&mut Screen)->bool {
                 let ready=ui.time()-opened>=0.35;
                 if (ui.button("确定，继续选路  [Enter / A]")||ui.is_key_pressed(Key::Enter)||ui.is_key_pressed(Key::GamepadFaceDown))&&ready {close=true;}
             },
-            Screen::Summary{..}|Screen::Seed{..}=>unreachable!(),
+            Screen::Summary{..}|Screen::Seed{..}|Screen::Law{..}=>unreachable!(),
         }
     });
     close
@@ -82,7 +94,7 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
     let mut run=Run::new(u64::MAX,erdtree_tower::Class::Samurai);run.phase=Phase::Dead;
     summary(&run);
     assert!(!active(),"Death must only queue the result, not capture input");
-    assert!(!draw(context.frame()),"Death and loading must remain unobstructed");context.render();
+    assert!(!draw(context.frame(),&mut |_|None),"Death and loading must remain unobstructed");context.render();
     hub_ready();
     assert!(active());
     assert!(PENDING.lock().unwrap().is_none());
@@ -216,6 +228,10 @@ fn summary_page(ui:&Ui,run:&Run,ready:bool)->bool {
         }
         text(mid-210.0*s,392.0,&format!("圣杯上限  红 +{}  /  蓝 +{}",run.flask_bonus,run.flask_bonus),gold,1.0);
         text(mid+210.0*s,392.0,&format!("记忆栏位  +{}",run.memory_bonus),gold,1.0);
+        if !run.law.is_empty() {
+            let grade=run.law.grade().unwrap_or("普通");
+            text(mid,424.0,&format!("苦难律法  {} 分 · {grade}  ·  律法码 {}",run.law.score(),run.law.code()),if run.phase==Phase::Won{white}else{muted},0.9);
+        }
         let seed=run.initial_seed.unwrap_or(run.seed);
         text(mid,487.0,if run.initial_seed.is_some()||run.act==1{"本局种子"}else{"本幕种子"},muted,0.9);
         text(mid,523.0,&seed.to_string(),white,1.25);

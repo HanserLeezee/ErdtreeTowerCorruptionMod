@@ -3,7 +3,7 @@ use erdtree_tower::{Class,NodeKind,Phase,Reward,Run,ShopStock,rewards};
 fn retired()->Vec<u32> {let mut ids:Vec<_>=rewards::RETIRED_SPELLS.iter().copied().collect();ids.sort();ids}
 fn legacy(run:&Run)->String {
     let mut json:serde_json::Value=serde_json::from_str(&run.encode().unwrap()).unwrap();
-    json["ruby_spells"]=serde_json::Value::Bool(true);json.to_string()
+    json["ruby_spells"]=serde_json::Value::Bool(true);json.as_object_mut().unwrap().remove("ember_rewards");json.to_string()
 }
 
 #[test]

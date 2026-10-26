@@ -47,11 +47,20 @@ pub fn bar_name(affixes:&[Affix],boss_name:i32,first:i32)->Option<i32> {
     (0..BAR_NAME_STRIDE).contains(&offset).then(||BAR_NAME_FIRST+index as i32*BAR_NAME_STRIDE+offset)
 }
 pub fn budget(act:u8)->u8 {match act {1=>2,2=>4,_=>6}}
+/// 本场的词条预算；苦难律法可以提高 Boss 预算并让精英战也带词条
+pub fn node_budget(run:&Run,node:usize)->u8 {
+    match run.nodes.get(node).map(|n|n.kind) {
+        Some(NodeKind::Boss)=>run.law.affix_budget(budget(run.act),budget(3)),
+        Some(NodeKind::Elite) if run.law.elite_affixes()=>budget(run.act),
+        _=>0,
+    }
+}
 pub fn roll(run:&Run,node:usize)->Vec<Affix> {
-    if !run.boss_affixes||!run.nodes.get(node).is_some_and(|n|n.kind==NodeKind::Boss) {return vec![];}
+    let budget=node_budget(run,node);
+    if !run.boss_affixes||budget==0 {return vec![];}
     let mut pool=Affix::ALL.to_vec();
     pool.sort_by_key(|a|crate::mix(run.seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^a.index() as u64^0xb055_af1c));
-    let (mut left,mut chosen)=(budget(run.act),Vec::new());
+    let (mut left,mut chosen)=(budget,Vec::new());
     for affix in pool {
         if chosen.len()==MAX_AFFIXES {break;}
         if affix.cost()<=left&&(affix.group()==0||!chosen.iter().any(|c:&Affix|c.group()==affix.group())) {left-=affix.cost();chosen.push(affix);}
@@ -60,8 +69,8 @@ pub fn roll(run:&Run,node:usize)->Vec<Affix> {
 }
 pub fn points(affixes:&[Affix])->u8 {affixes.iter().map(|a|a.cost()).sum()}
 pub fn bonus_runes(run:&Run,node:usize)->u32 {
-    let base=match run.act {1=>9000,2=>18000,_=>30000};
-    base*15*u32::from(points(&roll(run,node)))/100
+    let base=match run.act {1=>9000,2=>18000,_=>30000}/if run.nodes.get(node).is_some_and(|n|n.kind==NodeKind::Elite){3}else{1};
+    run.law.runes(base*15*u32::from(points(&roll(run,node)))/100)
 }
 pub fn title(affixes:&[Affix])->String {affixes.iter().map(|a|a.name()).collect::<Vec<_>>().join("·")}
 
@@ -109,6 +118,22 @@ mod tests {
         let old=Run::decode(&json.to_string()).unwrap();
         assert!(!old.boss_affixes&&roll(&old,boss(&old)).is_empty());
         assert!(Run::decode(&run.encode().unwrap()).unwrap().boss_affixes);
+    }
+    #[test]
+    fn law_raises_boss_budget_and_spreads_affixes_to_elites() {
+        use crate::law::Law;
+        let law=|ids:&[usize]|ids.iter().fold(Law::default(),|l,&id|l.toggle(id));
+        for seed in 0..200 {
+            let mut run=Run::new(seed,Class::Samurai);let node=boss(&run);
+            let elite=run.nodes.iter().position(|n|n.kind==NodeKind::Elite);
+            if let Some(e)=elite {assert!(roll(&run,e).is_empty());}
+            run.set_law(law(&[3])).unwrap();assert_eq!(node_budget(&run,node),4);assert!(points(&roll(&run,node))<=4);
+            run.law=law(&[3,4]);assert_eq!(node_budget(&run,node),6);
+            let affixes=roll(&run,node);assert!(combos().contains(&affixes),"every law roll keeps a bar name");
+            run.law=law(&[3,4,5]);
+            if let Some(e)=elite {let affixes=roll(&run,e);assert!(!affixes.is_empty()&&points(&affixes)<=2);assert_eq!(bonus_runes(&run,e),3000*15*u32::from(points(&affixes))/100);}
+            run.law=law(&[19,20]);assert_eq!(bonus_runes(&run,node),9000*15*u32::from(points(&roll(&run,node)))/100/2);
+        }
     }
     #[test]
     fn party_members_share_affixes_but_not_reward_seeds() {

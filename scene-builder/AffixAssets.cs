@@ -2,17 +2,42 @@ using SoulsFormats;
 using System.Globalization;
 
 static class AffixAssets {
-    const int WeaponFirst=100000000,ArmorFirst=10000000,EffectFirst=9850000;
+    public const int WeaponFirst=100000000,ArmorFirst=10000000,EffectFirst=9850000;
     static readonly string[] Tiers=["普通","稀有","史诗","传说"];
-    static readonly string[] Names=["活力","灵慧","耐久","复苏","锋锐","专注","坚韧","力量","灵巧","智识","信仰","感应"];
-    static ulong Mix(ulong n) {unchecked {n=(n^(n>>30))*0xbf58476d1ce4e5b9UL;n=(n^(n>>27))*0x94d049bb133111ebUL;return n^(n>>31);}}
+    // 词条池：0–6 为最初的通用词条；7–20 替换了原来的属性点词条（7–11）并扩充，见 AffixPoolPatch
+    static readonly string[] Names=["活力","灵慧","耐久","复苏","锋锐","专注","坚韧","战技","处决","坚毅","丰饶","御元","蓄力","凌空","反击","猎手","秘法","祈祷","铁卫","轻捷","甘露"];
+    public static int Kinds=>Names.Length;
+    public static ulong Mix(ulong n) {unchecked {n=(n^(n>>30))*0xbf58476d1ce4e5b9UL;n=(n^(n>>27))*0x94d049bb133111ebUL;return n^(n>>31);}}
     static void Set(PARAM.Row r,string k,object v)=>r[k].Value=Convert.ChangeType(v,r[k].Value.GetType(),CultureInfo.InvariantCulture);
     static int I(PARAM.Row r,string k)=>Convert.ToInt32(r[k].Value);
     static string EffectText(int kind,int tier)=>kind switch {
         0=>$"最大生命 +{2+tier}%",1=>$"最大专注 +{3+tier}%",2=>$"最大耐力 +{2+tier}%",3=>$"耐力恢复速度 +{1+tier}",
         4=>$"各类攻击伤害 +{2+tier}%",5=>$"魔法与祷告专注消耗 -{2+tier}%",6=>$"物理承伤 -{1+tier*0.5:0.#}%",
-        _=>$"{new[]{"力量","灵巧","智力","信仰","感应"}[kind-7]} +{1+tier}"
+        7=>$"战技伤害 +{6+2*tier}%",8=>$"致命一击伤害 +{8+3*tier}%",9=>$"受到的削韧 -{5+2*tier}%",10=>$"卢恩获取 +{5+3*tier}%",
+        11=>$"元素承伤 -{2+tier}%",12=>$"蓄力重攻击伤害 +{6+2*tier}%",13=>$"跳跃攻击伤害 +{6+2*tier}%",14=>$"防御反击伤害 +{8+2*tier}%",
+        15=>$"弓弩伤害 +{5+2*tier}%",16=>$"魔法伤害 +{4+2*tier}%",17=>$"祷告伤害 +{4+2*tier}%",18=>$"防御时精力消耗 -{8+3*tier}%",
+        19=>$"动作精力消耗 -{3+tier}%",20=>$"圣杯瓶恢复量 +{4+2*tier}%",
+        _=>throw new Exception($"Unknown affix kind {kind}")
     };
+    /// 旧词条池（12 种，7–11 为属性点）的说明文字，用于定位并替换已生成的文本
+    public static string LegacyText(int kind,int tier)=>kind<7?EffectText(kind,tier):$"{new[]{"力量","灵巧","智力","信仰","感应"}[kind-7]} +{1+tier}";
+    public const int LegacyKinds=12;
+    // 只对某类攻击生效的词条复制原版护符行，保留其攻击类型过滤
+    static int? Template(int kind)=>kind switch {7=>312310,8=>320900,12=>321300,13=>321800,14=>322000,15=>321500,16=>330010,17=>330500,18=>341000,_=>null};
+    static float Rate(int kind,int tier)=>1f+kind switch {7=>6+2*tier,8=>8+3*tier,12=>6+2*tier,13=>6+2*tier,14=>8+2*tier,15=>5+2*tier,16=>4+2*tier,17=>4+2*tier,_=>0}/100f;
+    public static PARAM.Row CreateEffect(PARAM effects,int kind,int tier) {
+        int id=EffectFirst+kind*10+tier;
+        if(Template(kind) is int source) {
+            var r=new PARAM.Row(effects.Rows.Single(x=>x.ID==source)){ID=id,Name=$"Tower affix {kind}:{tier}"};
+            foreach(var (k,v) in new (string,object)[]{("iconId",-1),("effectEndurance",-1f),("spCategory",0),("categoryPriority",0),("saveCategory",-1),("dontDeleteOnDead",0)})Set(r,k,v);
+            foreach(var e in new[]{"physics","magic","fire","thunder","dark"})Set(r,e+"AttackRate",Rate(kind,tier));
+            foreach(var target in new[]{"Player","Enemy"})foreach(var e in new[]{"Physics","Magic","Fire","Thunder","Dark"})Set(r,$"atk{target}DmgCorrectRate_{e}",1f);
+            if(kind==18)Set(r,"guardStaminaMult",1f-(8+3*tier)/100f);
+            return r;
+        }
+        var row=new PARAM.Row(effects.Rows.Single(r=>r.ID==9600011)){ID=id,Name=$"Tower affix {kind}:{tier}"};
+        ApplyEffect(row,kind,tier);return row;
+    }
     public static string DescribeEffect(int kind,int tier)=>EffectText(kind,tier);
     static void ApplyEffect(PARAM.Row r,int kind,int tier) {
         Set(r,"artsConsumptionRate",1f);
@@ -21,15 +46,17 @@ static class AffixAssets {
         else if(kind==4)foreach(var e in new[]{"physics","magic","fire","thunder","dark"})Set(r,e+"AttackPowerRate",1f+(2+tier)/100f);
         else if(kind==5)foreach(var k in new[]{"magicConsumptionRate","miracleConsumptionRate"})Set(r,k,1f-(2+tier)/100f);
         else if(kind==6)foreach(var k in new[]{"slash","blow","thrust","neutral"})Set(r,k+"DamageCutRate",1f-(1+tier*0.5f)/100f);
-        else Set(r,new[]{"addStrengthStatus","addDexterityStatus","addMagicStatus","addFaithStatus","addLuckStatus"}[kind-7],1+tier);
+        else if(kind==9)Set(r,"toughnessDamageCutRate",1f-(5+2*tier)/100f);
+        else if(kind==10)Set(r,"soulRate",1f+(5+3*tier)/100f);
+        else if(kind==11)foreach(var k in new[]{"magic","fire","thunder","dark"})Set(r,k+"DamageCutRate",1f-(2+tier)/100f);
+        else if(kind==19)Set(r,"consumeStaminaRate",1f-(3+tier)/100f);
+        else if(kind==20)foreach(var k in new[]{"changeHpEstusFlaskCorrectRate","changeMpEstusFlaskCorrectRate"})Set(r,k,1f+(4+2*tier)/100f);
+        else throw new Exception($"Affix kind {kind} needs a template");
     }
     public static void Build(Func<string,PARAM> read,Action<string,PARAM> save,BND4 messages,string input,string output) {
         var effects=read("SpEffectParam");
-        if(effects.Rows.Any(r=>r.ID>=EffectFirst&&r.ID<EffectFirst+120))throw new Exception("Affix effect ID collision");
-        for(int kind=0;kind<Names.Length;kind++)for(int tier=0;tier<4;tier++) {
-            var row=new PARAM.Row(effects.Rows.Single(r=>r.ID==9600011)){ID=EffectFirst+kind*10+tier,Name=$"Tower affix {kind}:{tier}"};
-            ApplyEffect(row,kind,tier);effects.Rows.Add(row);
-        }
+        if(effects.Rows.Any(r=>r.ID>=EffectFirst&&r.ID<EffectFirst+Names.Length*10))throw new Exception("Affix effect ID collision");
+        for(int kind=0;kind<Names.Length;kind++)for(int tier=0;tier<4;tier++)effects.Rows.Add(CreateEffect(effects,kind,tier));
         save("SpEffectParam",effects);
         var texts=messages.Files.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes));
         var details=File.ReadAllLines(Path.Combine(input,"reward-details.tsv")).Select(l=>l.Split('\t')).ToDictionary(p=>uint.Parse(p[0]));
@@ -136,7 +163,7 @@ static class AffixAssets {
             }
             if(name is "EquipParamWeapon" or "EquipParamProtector")foreach(var r in actual.Rows.Where(r=>r.Name?.StartsWith("Tower affix ")==true)) {
                 var fields=name=="EquipParamWeapon"?new[]{"residentSpEffectId","residentSpEffectId1","residentSpEffectId2"}:new[]{"residentSpEffectId","residentSpEffectId2","residentSpEffectId3"};
-                foreach(var k in fields)if(I(r,k)>=EffectFirst&&I(r,k)<EffectFirst+120&&!effectIds.Contains(I(r,k)))throw new Exception($"Dangling new affix effect {r.ID}:{k}:{I(r,k)}");
+                foreach(var k in fields)if(I(r,k)>=EffectFirst&&I(r,k)<EffectFirst+Names.Length*10&&!effectIds.Contains(I(r,k)))throw new Exception($"Dangling new affix effect {r.ID}:{k}:{I(r,k)}");
             }
         }
         var msgDir=Path.Combine(output,"msg/zhocn");Directory.CreateDirectory(msgDir);messages.Write(Path.Combine(msgDir,"item_dlc02.msgbnd.dcx"));

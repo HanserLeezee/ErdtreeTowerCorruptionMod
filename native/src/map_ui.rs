@@ -262,6 +262,7 @@ pub(crate) fn reward_description(run: &Run, reward: &Reward) -> String {
         Reward::FlaskCapacity=>"红、蓝圣杯瓶上限各 +1；本局生效，不补充剩余次数".into(),
         Reward::MemorySlot=>"记忆栏位 +1；魔法与祷告共用，本局生效".into(),
         Reward::StarStream=>"彗星亚兹勒随视角左右瞄准，光束保持水平；本局生效".into(),
+        Reward::Ember(ember)=>format!("余烬「{}」：{}；本局生效",ember.name(),ember.effect().replace('\n',"，")),
         Reward::TalismanBuff(id)=>format!("{}：直接生效，不占护符栏位，持续本局",erdtree_tower::rewards::lookup(0x20000000|id).map_or("护符效果",|i|i.name)),
         Reward::SacredTear=>"圣杯滴露 ×1：交给服务 NPC 提升红、蓝瓶恢复量".into(),
         Reward::Item(id)=>erdtree_tower::rewards::lookup(*id).map_or("未知奖励".into(),|item|

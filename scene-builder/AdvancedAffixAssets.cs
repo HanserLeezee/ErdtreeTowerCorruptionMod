@@ -66,7 +66,7 @@ static class AdvancedAffixAssets {
                     string name=weapon?$"{Tiers[tier]}·{build}·{entry[2]}{(stars==0?"":stars==1?" ★":" ★★")}":$"{Tiers[tier]}·{Types[profile]}·{entry[2]}";
                     var slots=weapon?new[]{"residentSpEffectId","residentSpEffectId1","residentSpEffectId2"}:new[]{"residentSpEffectId","residentSpEffectId2","residentSpEffectId3"};
                     int count=Math.Min(tier<2?1:tier,family.Min(r=>slots.Count(k=>I(r,k)<=0)));
-                    var choices=Enumerable.Range(0,12).OrderBy(i=>Mix(seed^(ulong)(100+i))).Take(count).ToArray();
+                    var choices=Enumerable.Range(0,AffixAssets.Kinds).OrderBy(i=>Mix(seed^(ulong)(100+i))).Take(count).ToArray();
                     string effectText=string.Join("\\n",choices.Select(i=>AffixAssets.DescribeEffect(i,tier)));
                     if(count==0)effectText="保留全部固有效果";
                     string info=(weapon?$"补正组合：{build}":$"防具类型：{Types[profile]}\\n"+(profile switch {0=>"偏重物理防护，不提供元素减伤",1=>"偏重元素防护，不提供物理减伤",2=>"物理与元素防护较低，重量较轻",_=>"兼顾物理与元素防护"}))+"\\n"+effectText;

@@ -2,8 +2,8 @@ use hudhook::imgui::{Condition,DrawListMut,ImColor32,Key,TextureId,Ui,WindowFlag
 use erdtree_tower::law::{BRANCHES,GRADES,Law,NODES};
 
 pub enum LawAction {Start(Law),Back}
-pub struct LawScreen {pub law:Law,focus:usize,opened:Option<f64>,copied:Option<f64>}
-impl LawScreen {pub fn new(law:Law)->Self {Self{law,focus:0,opened:None,copied:None}}}
+pub struct LawScreen {pub law:Law,pub seed:Option<u64>,focus:usize,opened:Option<f64>,copied:Option<f64>}
+impl LawScreen {pub fn new(law:Law)->Self {Self{law,seed:None,focus:0,opened:None,copied:None}}}
 
 const GOLD:[f32;4]=[0.86,0.74,0.48,1.0];const MUTED:[f32;4]=[0.62,0.59,0.51,1.0];const WHITE:[f32;4]=[0.93,0.9,0.81,1.0];const RED:[f32;4]=[0.92,0.47,0.38,1.0];
 const NOTES:[&str;4]=["强化敌方","束缚自身","削减收益","改写规则"];
@@ -51,6 +51,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
     if key(Key::GamepadDpadDown){screen.focus=moved(screen.focus,0,1);}
     if key(Key::GamepadFaceDown){screen.law=screen.law.toggle(screen.focus);}
     if key(Key::GamepadFaceUp){screen.law=Law::default();}
+    if ui.io().key_ctrl&&key(Key::V) {if let Some(law)=ui.clipboard_text().and_then(|text|Law::parse(&text)){screen.law=law;}}
     let mut action=if key(Key::Enter)||key(Key::GamepadFaceLeft){Some(LawAction::Start(screen.law))}else if key(Key::Escape)||key(Key::GamepadFaceRight){Some(LawAction::Back)}else{None};
     let mut hovered=None;let mut copy=false;
     ui.window("苦难律法##law").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
@@ -71,7 +72,8 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
         drop(draw);
         if button("返回  [Esc / B]",36.0,34.0,196.0,52.0,0.9){action=Some(LawAction::Back);}
         text(800.0,26.0,"苦 难 律 法",GOLD,2.0,0.5);
-        text(800.0,100.0,"接受的苦难越多，分数越高",MUTED,0.8,0.5);
+        let subtitle=screen.seed.map_or("接受的苦难越多，分数越高".to_string(),|seed|format!("以种子 {seed} 开局 · 接受的苦难越多，分数越高"));
+        text(800.0,100.0,&subtitle,MUTED,0.8,0.5);
         match record {
             Some((best,class))=>{text(1356.0,40.0,&format!("{class} · 历史最高"),MUTED,0.8,0.0);text(1548.0,40.0,&best.to_string(),GOLD,1.45,1.0);},
             None=>text(1452.0,48.0,"尚无纪录",MUTED,0.85,0.5),
@@ -171,7 +173,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
         text(40.0,796.0,"律法码",MUTED,0.8,0.0);text(104.0,792.0,&screen.law.code(),GOLD,1.1,0.0);
         copy=button(if screen.copied.is_some_and(|t|ui.time()-t<1.5){"已复制"}else{"复制"},212.0,790.0,96.0,34.0,0.75);
         if button("清空  [Y]",40.0,836.0,170.0,44.0,0.85){screen.law=Law::default();}
-        text(226.0,848.0,"取消节点会连带取消其后的节点",MUTED,0.72,0.0);
+        text(226.0,848.0,"Ctrl+V 粘贴律法码 · 取消节点会连带取消其后的节点",MUTED,0.72,0.0);
         text(700.0,790.0,"当前分数",MUTED,0.8,1.0);
         text(700.0,806.0,&score.to_string(),GOLD,2.7,1.0);
         let draw=ui.get_window_draw_list();

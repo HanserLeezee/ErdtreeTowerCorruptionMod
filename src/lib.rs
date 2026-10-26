@@ -19,6 +19,7 @@ pub mod stormveil;
 pub mod rewards;
 pub mod affixes;
 pub mod boss_affixes;
+pub mod embers;
 pub mod scaling;
 pub mod law;
 
@@ -136,6 +137,7 @@ pub enum Reward {
     FlaskCapacity,
     MemorySlot,
     StarStream,
+    Ember(embers::Ember),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +181,13 @@ pub struct Run {
     pub boss_affixes: bool,
     #[serde(default)]
     pub scaling_rules: u8,
+    #[serde(default,skip_serializing_if="no_law")]
+    pub law: law::Law,
+    /// 新旅程：战斗奖励里会出现余烬
+    #[serde(default)]
+    pub ember_rewards: bool,
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub embers: Vec<embers::Ember>,
     #[serde(default="first_act")]
     pub act:u8,
     pub seed: u64,
@@ -235,6 +244,7 @@ pub struct Run {
 pub struct ShopStock {pub node:usize,pub items:Vec<[i32;4]>}
 
 fn first_act()->u8 {1}
+fn no_law(law:&law::Law)->bool {law.is_empty()}
 fn mix(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9e3779b97f4a7c15);
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
@@ -461,6 +471,9 @@ impl Run {
             ruby_spells: false,
             boss_affixes: true,
             scaling_rules: 1,
+            law: law::Law::default(),
+            ember_rewards: true,
+            embers: vec![],
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -502,12 +515,24 @@ impl Run {
         run
     }
 
+    /// 开局时立下苦难律法；只能在第一幕起点、尚未行动时设置
+    pub fn set_law(&mut self,law:law::Law)->RuleResult<()> {
+        if !law.valid() {return Err("苦难律法无效".into());}
+        if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {return Err("苦难律法只能在开局时立下".into());}
+        let full=self.flasks==self.flask_limit;
+        self.law=law;self.flask_limit=self.full_flask_limit();
+        self.flasks=if full {self.flask_limit}else{self.flasks.min(self.flask_limit)};
+        Ok(())
+    }
+    pub fn full_flask_limit(&self)->u8 {let cut=self.law.flask_cut();10+self.flask_bonus*2-cut[0]-cut[1]}
+
     pub fn reward_seed(&self)->u64 {
         self.personal_reward_seed.map_or(self.seed,|seed|mix(seed ^ (u64::from(self.act)<<48) ^ 0x726577617264))
     }
 
     pub fn align_party_start(&mut self,seed:u64)->RuleResult<()> {
         self.validate()?;
+        if !self.law.is_empty() {return Err("苦难律法旅程只能单人进行，请在大赐福开始新的共同旅程".into());}
         if self.seed==seed {return Ok(());}
         if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {
             return Err("已有旅程不能替换路线，请从大赐福开始共同旅程".into());
@@ -579,7 +604,7 @@ impl Run {
             self.hp=self.max_hp;
             self.flasks=self.flask_limit;
             self.seed=mix(self.seed^u64::from(self.act));
-            if let Some(old)=&self.contract {self.contract=Some(contracts::State::new(self.reward_seed(),self.class,self.act,old.chosen,old.peak));}
+            if let Some(old)=&self.contract {self.contract=Some(old.next_act(self.reward_seed(),self.class,self.act));}
             self.schema=6;
             self.nodes=camp_graph(self.seed);
             self.visited.clear();
@@ -649,7 +674,16 @@ impl Run {
     }
 
     fn offers(&self, id: usize) -> Vec<Reward> {
-        rewards::offers(self,id)
+        let mut offers=rewards::offers(self,id);
+        if !self.law.is_empty() {
+            for reward in &mut offers {
+                if self.law.lone_wolf()&&matches!(reward,Reward::Item(item) if rewards::lookup(*item).is_some_and(|i|i.kind==rewards::ItemKind::Spirit)) {*reward=Reward::Gold(1500);}
+                if let Reward::Gold(amount)=reward {*amount=self.law.runes(*amount);}
+            }
+            if self.law.stingy()&&self.nodes.get(id).is_some_and(|n|n.kind.combat()) {offers.truncate(2);}
+        }
+        if let Some(ember)=embers::reward(self,id) {if let Some(last)=offers.last_mut() {*last=Reward::Ember(ember);}}
+        offers
     }
     fn legacy_offers(&self, id: usize) -> Vec<Reward> {
         let start = (mix(self.seed ^ (id as u64 + 100)) % 8) as usize;
@@ -698,7 +732,7 @@ impl Run {
         match reward {
             Reward::FlaskCapacity=>{
                 if self.flask_bonus>=4{return Err("圣杯瓶容量已达上限".into());}
-                self.flask_bonus+=1;self.flask_limit=10+self.flask_bonus*2;
+                self.flask_bonus+=1;self.flask_limit=self.full_flask_limit();
             },
             Reward::MemorySlot=>{
                 if self.memory_bonus>=6{return Err("记忆栏位已达上限".into());}
@@ -709,6 +743,10 @@ impl Run {
                 self.star_stream=true;
             },
             Reward::SacredTear=>{},
+            Reward::Ember(ember)=>{
+                if !self.ember_rewards||self.embers.contains(&ember){return Err("余烬已获得或无效".into());}
+                self.embers.push(ember);
+            },
             Reward::TalismanBuff(id)=>{
                 if !elite::BUFFS.contains(&id)||self.elite_buffs.contains(&id){return Err("护符效果已获得或无效".into());}
                 self.elite_buffs.push(id);
@@ -855,7 +893,7 @@ impl Run {
         }
         if run.flask_bonus<=4&&run.flask_limit==5+run.flask_bonus*2 {
             if run.flasks>run.flask_limit||run.checkpoint.as_ref().is_some_and(|c|c.flasks>run.flask_limit) {return Err("旧存档圣杯瓶数量无效".into());}
-            run.flask_limit=10+run.flask_bonus*2;
+            run.flask_limit=run.full_flask_limit();
         }
         run.validate()?;
         if let Phase::Reward{id,ref offers}=run.phase {
@@ -884,7 +922,10 @@ impl Run {
             || self.max_hp > 100
             || self.hp > self.max_hp
             || self.flask_bonus>4 || self.memory_bonus>6
-            || self.flask_limit != 10+self.flask_bonus*2
+            || !self.law.valid()
+            || (!self.ember_rewards&&!self.embers.is_empty())
+            || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
+            || self.flask_limit != self.full_flask_limit()
             || self.flasks > self.flask_limit
             || self.weapon_level > 25
             || self.shop_purchased > 7

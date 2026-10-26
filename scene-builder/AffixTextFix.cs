@@ -19,7 +19,22 @@ static class AffixTextFix {
         }
         return kept.Count==0?string.Join('\n',info):string.Join("\n\n",kept)+"\n\n"+string.Join('\n',info);
     }
-    static string Expected(int fmg,int id,string text)=>text==null||!Variant(id)?text:fmg==25?Fit(Advanced(id)?Convert(text):text):(fmg is 11 or 21)&&Advanced(id)?Convert(text):text;
+    // 词条池重做（affix-pool-patch）：按对照表把说明末尾的旧词条行换成新词条行；已经换过的保持不变
+    static Dictionary<int,(string old,string @new)> Remap=new();
+    public static Dictionary<int,(string,string)> LoadRemap(string input) {
+        var path=Path.Combine(input,"affix-effect-remap.tsv");if(!File.Exists(path))return new();
+        return File.ReadAllLines(path).Select(l=>l.Split('\t')).ToDictionary(p=>int.Parse(p[0]),p=>(p[1].Replace("\\n","\n"),p[2].Replace("\\n","\n")));
+    }
+    static string Remapped(int fmg,int id,string text) {
+        if(text==null||!(fmg is 21 or 22 or 25 or 26)||!Remap.TryGetValue(id,out var r))return text;
+        if(text.EndsWith(r.@new))return text;
+        if(!text.EndsWith(r.old))throw new Exception($"Affix effect lines not found in text {fmg}/{id}");
+        return text[..^r.old.Length]+r.@new;
+    }
+    static string Expected(int fmg,int id,string text) {
+        text=Remapped(fmg,id,text);
+        return text==null||!Variant(id)?text:fmg==25?Fit(Advanced(id)?Convert(text):text):(fmg is 11 or 21)&&Advanced(id)?Convert(text):text;
+    }
     public static void Test(string input) {
         int count=0,trimmed=0;
         foreach(var file in new[]{"affix-details.tsv","affix-v2-details.tsv"})foreach(var p in File.ReadAllLines(Path.Combine(input,file)).Select(l=>l.Split('\t')).Where(p=>long.Parse(p[0])<0x10000000)) {
@@ -29,6 +44,12 @@ static class AffixTextFix {
             if(p[0]=="179510000")Console.WriteLine(fitted);
         }
         Console.WriteLine($"Checked {count} weapon captions; {trimmed} trimmed to {CaptionLines} lines with affix text kept");
+        // 对照表：新词条行都已写进奖励详情，且没有残留旧的属性点词条
+        var remap=LoadRemap(input);var details=new[]{"affix-details.tsv","affix-v2-details.tsv"}.SelectMany(f=>File.ReadAllLines(Path.Combine(input,f))).Select(l=>l.Split('\t')).ToDictionary(p=>long.Parse(p[0])&0x0fffffff,p=>p[3].Replace("\\n","\n"));
+        foreach(var (id,(_,fresh)) in remap)if(!details.TryGetValue(id,out var info)||!info.EndsWith(fresh))throw new Exception($"Remap target missing from details: {id}");
+        var stale=details.Values.Count(v=>System.Text.RegularExpressions.Regex.IsMatch(v,"(力量|灵巧|智力|信仰|感应) \\+\\d"));
+        if(stale>0)throw new Exception($"{stale} details still list attribute-point affixes");
+        Console.WriteLine($"Checked {remap.Count} affix text remaps against the reward details");
     }
     public const int PoolNameFirst=9610000,BarNameFirst=9700000,BarNameStride=200,BossNameFirst=9600000,BarMarker=9620099;
     // 与 src/boss_affixes.rs 的 bar_name 相同：9700000 + 组合序号 × 200 + Boss 名称序号
@@ -60,9 +81,10 @@ static class AffixTextFix {
     public static List<string> PoolNames(string input) {var names=new List<string>();foreach(var p in File.ReadAllLines(Path.Combine(input,"enemy-pools.txt")).Select(l=>l.Split('|')))if(!names.Contains(p[4]))names.Add(p[4]);return names;}
     public static void Patch(string input,string output) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
+        Remap=LoadRemap(input);
         var messages=BND4.Read(Path.Combine(input,"msg/zhocn/item_dlc02.msgbnd.dcx"));var changed=0;var added=0;
         var before=messages.Files.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.Select(e=>(e.ID,e.Text)).ToArray());
-        foreach(var file in messages.Files.Where(f=>f.ID is 11 or 21 or 25)) {
+        foreach(var file in messages.Files.Where(f=>f.ID is 11 or 21 or 22 or 25 or 26)) {
             var fmg=FMG.Read(file.Bytes);
             foreach(var entry in fmg.Entries) {var text=Expected(file.ID,entry.ID,entry.Text);if(text!=entry.Text){entry.Text=text;changed++;}}
             file.Bytes=fmg.Write();
@@ -90,7 +112,7 @@ static class AffixTextFix {
         var written=BND4.Read(path).Files;var check=written.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text));
         foreach(var (fmg,entries) in before)foreach(var (id,text) in entries) {
             if((fmg is 10 or 20 or 24)&&retired.Contains(id)){if(check[fmg].ContainsKey(id))throw new Exception($"Retired spell text remains: {fmg}/{id}");continue;}
-            if(check[fmg][id]!=((fmg is 11 or 21 or 25)?Expected(fmg,id,text):text))throw new Exception($"Unexpected text change: {fmg}/{id}");
+            if(check[fmg][id]!=((fmg is 11 or 21 or 22 or 25 or 26)?Expected(fmg,id,text):text))throw new Exception($"Unexpected text change: {fmg}/{id}");
             if(fmg==25&&Variant(id)&&check[fmg][id]?.Split('\n').Length>CaptionLines)throw new Exception($"Weapon caption still exceeds {CaptionLines} lines: {id}");
         }
         var npcCheck=FMG.Read(written.First(f=>f.Name.Contains("NpcName")).Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text);

@@ -143,6 +143,7 @@ pub struct Hub {
     chosen: u8,
     resume: Option<Run>,
     seed:Option<u64>,
+    law:erdtree_tower::law::Law,
     settled:bool,
 }
 impl Hub {
@@ -155,9 +156,13 @@ impl Hub {
         let paused=!reset&&path(owner,"paused").exists();
         if paused {if let Some(run)=&resume {super::run_screen::summary(run);}}
         let settled=resume.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won));
-        Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,settled})
+        Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,law:Default::default(),settled})
     }
-    pub fn finish(&mut self) { self.active=true;self.paused=false;self.settled=true;self.reset=true;self.start=false;self.resume=None;self.seed=None;self.warp=WarpGate::default(); }
+    pub fn finish(&mut self) { self.active=true;self.paused=false;self.settled=true;self.reset=true;self.start=false;self.resume=None;self.seed=None;self.law=Default::default();self.warp=WarpGate::default(); }
+    fn law_record(&self)->Option<(u32,String)> {
+        let class=super::class_from_archetype(self.chosen)?;
+        super::law::best(self.owner,class).map(|best|(best,super::map_ui::class_name(class).to_owned()))
+    }
     pub fn ready_for_party_restart(&self)->bool {self.active&&!self.reset&&!self.start&&matches!(self.warp,WarpGate::Ready)}
     pub fn settling(&self)->bool {self.active&&self.settled}
     pub fn view(&self)->super::rooms::RoomView {
@@ -219,6 +224,8 @@ impl Hub {
             player.chr_ins.modules.data.hp=player.chr_ins.modules.data.max_hp;
             player.chr_ins.modules.data.fp=player.chr_ins.modules.data.max_fp;
             let mut run=Run::new_personal(seed,class,super::party::random_entropy()?);run.enable_contracts();
+            run.set_law(std::mem::take(&mut self.law))?;
+            if !run.law.is_empty() {super::log(format!("TOWER_LAW start code={} score={}",run.law.code(),run.law.score()));}
             return Ok(Some(run));
         }
         if self.room.is_none() {
@@ -229,7 +236,11 @@ impl Hub {
         }
         let room=self.room.as_mut().unwrap();
         if let Some(seed)=super::run_screen::take_seed() {
-            if seeded_start_allowed() {self.seed=Some(seed);self.reset=true;self.start=true;}else{room.notice(9500105)?;}
+            if seeded_start_allowed() {super::run_screen::law_entry(Some(seed),self.law_record());}else{room.notice(9500105)?;}
+            return Ok(None);
+        }
+        if let Some((seed,law))=super::run_screen::take_law_start() {
+            if seeded_start_allowed() {self.seed=seed;self.law=law;self.reset=true;self.start=true;}else{room.notice(9500105)?;}
             return Ok(None);
         }
         if super::run_screen::active(){return Ok(None);}
@@ -243,7 +254,8 @@ impl Hub {
                 return Ok(None);
             }
             match (npc,choice) {
-                (0,1)=>{self.seed=None;self.reset=true;self.start=true;},
+                // 单人开局先立苦难律法；联机暂不支持，直接开局
+                (0,1)=>{if seeded_start_allowed(){super::run_screen::law_entry(None,self.law_record());}else{self.seed=None;self.law=Default::default();self.reset=true;self.start=true;}},
                 (0,3)=>{if seeded_start_allowed(){super::run_screen::seed_entry();}else{room.notice(9500105)?;}},
                 (0,2)=>{
                     if let Some(mut run)=self.resume.take().filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)) {

@@ -76,10 +76,12 @@ pub struct View {
     pub room: Option<super::rooms::RoomView>,
     pub runes: u32,
     pub boss_affixes: Option<String>,
+    /// 苦难律法限时战斗的剩余秒数，超时后为负
+    pub law_clock: Option<i64>,
 }
 fn initial_view()->View {
     View{shared_event:false,ballots:vec![],run:None,status:"进入角色后，从金色入口开始旅程。".into(),
-        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None}
+        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None}
 }
 
 struct Foe {
@@ -229,8 +231,11 @@ struct Runtime {
     hub_failed: Option<((u32,i32),Instant)>,
     ashes_checked: Option<Instant>,
     larval_retry: Option<Instant>,
+    deepen_retry: Option<Instant>,
     boss_fight: super::boss_affixes::Fight,
     growth: super::scaling::Growth,
+    law_fight: super::law::Fight,
+    ember_fight: super::embers::Fight,
     pending: Option<Pending>,
     spawn_used: bool,
     last_player_probe: Option<(u32, i32, i32, u8, bool)>,
@@ -274,8 +279,11 @@ fn fresh_runtime()->Runtime {
         hub_failed: None,
         ashes_checked: None,
         larval_retry: None,
+        deepen_retry: None,
         boss_fight: Default::default(),
         growth: Default::default(),
+        law_fight: Default::default(),
+        ember_fight: Default::default(),
         pending: None,
         spawn_used: false,
         last_player_probe: None,
@@ -981,7 +989,7 @@ fn tick_locked() {
     if let Some(player)=world.main_player.as_ref() {
         music.track=super::bgm::selection(music_run,i32::from(player.current_block_id),player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag(),game.warp_requested,state.view.travelling,music.active,music_wave);
     }
-    super::spirits::set_active(local_combat);
+    super::spirits::set_active(local_combat&&!super::law::lone_wolf(state.view.run.as_ref()));
     if let Some(spirits)=encounter_state(&mut state.party_spirits,summon_scope,summon_available) {
         if let Err(error)=spirits.poll(world,summon_scope.unwrap().2,true){super::log(format!("Party spirit registration: {error}"));}
     }
@@ -1026,7 +1034,7 @@ fn tick_locked() {
         if let Some(room)=state.attendant.as_mut() {room.set_enemies(&texts);if let Err(e)=room.poll(world,game){super::log_repeating(format!("Arena attendant: {e}"));}}
     } else if let Some(room)=state.attendant.take() {room.retire(world);}
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
-    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);}
+    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);}
     if !game.warp_requested&&!state.view.travelling {
         if let Some(player)=world.main_player.as_mut(){super::star_stream::tick(&mut player.chr_ins,contract_run);}
     }
@@ -1074,9 +1082,14 @@ fn tick_locked() {
     let player_data = unsafe { &mut *player.player_game_data.as_ptr() };
     state.view.runes = player_data.rune_count;
     if let Some(run)=state.view.run.as_mut(){run.gold=player_data.rune_count;}
+    let deepen_due=state.deepen_retry.is_none_or(|t|t.elapsed()>=Duration::from_secs(2));
+    if deepen_due&&state.view.run.as_ref().is_some_and(|r|r.contract.as_ref().is_some_and(|c|c.deepened&&!c.gear_done)) {state.deepen_retry=Some(Instant::now());}
     if let Some(run)=state.view.run.as_mut() {
         if run.contract.is_none()&&run.phase==Phase::Map {run.enable_contracts();record(run);}
         if let Some(contract)=run.contract.as_mut(){super::contracts::observe_peak(player_data,contract);}
+        if deepen_due&&run.contract.as_ref().is_some_and(|c|c.deepened&&!c.gear_done) {
+            match super::contracts::deliver_deepen(player_data,run) {Ok(true)=>record(run),Ok(false)=>{},Err(error)=>super::log_repeating(format!("Oath deepen gift: {error}"))}
+        }
     }
     let identity = (player_data.character_id, game.save_slot);
     if game.event_world_type != EventWorldType::Local && state.party.is_none() && !super::seamless::active() {return;}
@@ -1101,7 +1114,10 @@ fn tick_locked() {
         && state.hub.as_ref().is_some_and(|h|!h.active) {
         if let Some(run)=&state.view.run {
             super::run_screen::summary(run);
-            if let Some(hub)=&state.hub {if let Ok(json)=run.encode(){let _=std::fs::write(super::hub::path(hub.owner,"summary.json"),json);}}
+            if let Some(hub)=&state.hub {
+                if let Ok(json)=run.encode(){let _=std::fs::write(super::hub::path(hub.owner,"summary.json"),json);}
+                if let Err(error)=super::law::record(hub.owner,run){super::log(error);}
+            }
         }
         if let Some(room)=state.room.take(){room.retire(world);}
         if let Some(pending)=&state.pending {retire_group(pending,world);}
@@ -1211,8 +1227,8 @@ fn tick_locked() {
         return;
     }
     if state.identity.is_none() && state.view.ready {
-        let bonus=state.view.run.as_ref().map_or(0,|r|r.flask_bonus);
-        match super::flasks::Flasks::bind_bonus(player_data, class.unwrap(),bonus) {
+        let (bonus,cut)=state.view.run.as_ref().map_or((0,[0,0]),|r|(r.flask_bonus,r.law.flask_cut()));
+        match super::flasks::Flasks::bind_bonus(player_data, class.unwrap(),bonus,cut) {
             Ok(mut flasks) => {
                 if let Some(run)=&state.view.run {if let Err(error)=flasks.restore(player_data,run.flasks){report(&mut state,error);return;}}
                 state.flasks = Some(flasks);
@@ -1549,6 +1565,8 @@ fn tick_locked() {
 
     let Some(_) = state.pending.as_mut().filter(|pending| !pending.completed) else {
         if state.view.boss_affixes.is_some(){state.boss_fight=Default::default();state.view.boss_affixes=None;}
+        if state.view.law_clock.is_some(){state.law_fight=Default::default();state.view.law_clock=None;}
+        if state.ember_fight.active(){state.ember_fight=Default::default();}
         return;
     };
     let party_mode=state.party.is_some();
@@ -1561,7 +1579,7 @@ fn tick_locked() {
         let _ = pending.next_run.observe_hp(normalized_hp(hp, max_hp));
     }
     if outcome == Outcome::Waiting {
-        if bound {if let Err(error)=pending.spirits.poll(world,block,!player_dead) {super::log(format!("Spirit activation failed: {error}"));}}
+        if bound&&!pending.next_run.law.lone_wolf() {if let Err(error)=pending.spirits.poll(world,block,!player_dead) {super::log(format!("Spirit activation failed: {error}"));}}
         let runtime=&mut *state;
         if let Some(pending)=runtime.pending.as_ref().filter(|_|bound)&&let Phase::Combat{id}=pending.next_run.phase {
             let run=&pending.next_run;
@@ -1572,6 +1590,18 @@ fn tick_locked() {
             runtime.boss_fight.tick(world,&handles,authority,flasks);
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
             runtime.view.boss_affixes=runtime.boss_fight.title();
+            runtime.law_fight.tick(world,(run.seed,run.act,id),run.law,&handles,authority,flasks);
+            runtime.view.law_clock=runtime.law_fight.clock();
+            let embers=super::embers::held(Some(run));
+            let foes:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec)<=1))).collect();
+            if runtime.ember_fight.tick(world,(run.seed,run.act,id),&embers,&foes,authority,flasks) {
+                if let (Some(flasks),Some(player))=(runtime.flasks.as_mut(),world.main_player.as_mut()) {
+                    match flasks.grant(unsafe {player.player_game_data.as_mut()},[1,0]) {
+                        Ok(granted)=>super::log(format!("TOWER_EMBER feast granted={granted}")),
+                        Err(error)=>super::log(format!("TOWER_EMBER feast failed: {error}")),
+                    }
+                }
+            }
         }
         let runtime=&mut *state;
         if publish_bound_combat(&mut runtime.view,&runtime.pending.as_ref().unwrap().next_run,bound) {
@@ -1589,6 +1619,7 @@ fn tick_locked() {
         }
     }
     state.boss_fight=Default::default();state.view.boss_affixes=None;
+    state.law_fight=Default::default();state.view.law_clock=None;state.ember_fight=Default::default();
     let pending = state.pending.as_mut().unwrap();
     pending.completed = true;
     let result = match outcome {
@@ -1712,7 +1743,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     if let Some(id)=item_reward {super::items::give_reward(unsafe {player.player_game_data.as_mut()},id)?;}
     if sacred_tear {super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR)?;}
     if next.flask_bonus!=old.flask_bonus {
-        state.flasks.as_mut().ok_or("圣杯瓶未绑定")?.set_bonus(unsafe {player.player_game_data.as_mut()},next.class,next.flask_bonus)?;
+        state.flasks.as_mut().ok_or("圣杯瓶未绑定")?.set_bonus(unsafe {player.player_game_data.as_mut()},next.class,next.flask_bonus,next.law.flask_cut())?;
     }
     if next.memory_bonus!=old.memory_bonus {unsafe {player.player_game_data.as_mut()}.unlocked_magic_slots=2+next.memory_bonus;}
     unsafe {player.player_game_data.as_mut()}.rune_count=next.gold;
@@ -1735,7 +1766,13 @@ fn contract_action(state:&mut Runtime,world:&mut WorldChrMan,action:Action)->Res
     let reward_seed=run.reward_seed();
     let contract=run.contract.as_mut().ok_or("契约尚未开启")?;
     match action {
-        Action::Contract(index)=>contract.choose(index,reward_seed,run.class)?,
+        Action::Contract(index)=>{
+            contract.choose(index,reward_seed,run.class)?;
+            if run.contract.as_ref().is_some_and(|c|c.deepened) {
+                record_checked(run)?;
+                super::contracts::deliver_deepen(unsafe {player.player_game_data.as_mut()},run)?;
+            }
+        },
         Action::SkipGear=>contract.skip_gift()?,
         Action::SkipContract=>contract.skip()?,
         Action::Gear(index)=>{
@@ -2042,7 +2079,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         let pending=state.pending.as_mut().unwrap();
         let (outcome,hp,bound)=poll_group(pending,world,false,room.block);
         state.view.enemy_hp=hp;
-        if bound {pending.spirits.poll(world,room.block,true)?;}
+        if bound&&!run.law.lone_wolf() {pending.spirits.poll(world,room.block,true)?;}
         match outcome {
             Outcome::Victory => {
                 if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run.class);super::contracts::heal_victory(&mut player.chr_ins,run);}
@@ -2744,7 +2781,7 @@ fn request_travel(
 mod tests {
     fn ui_view()->super::View {
         super::View{shared_event:false,ballots:vec![],run:Some(erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai)),
-            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None}
+            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None}
     }
     #[test]
     fn queued_selection_is_bounded_and_consumed_once_on_the_game_thread() {
