@@ -4,7 +4,8 @@ using System.Text.Json;
 static class PartyEnemyAudit {
     record Requirement(int Act,int Model,int Npc,int Think,int Copies,string Label,int Source);
     public static void Run(string output) {
-        var requirements=File.ReadAllLines("outputs/erdtree-tower/scene-assets/enemy-pools.txt").Select(line=>{
+        // 仅单人（dlc）的敌人不在联机地图里摆放，与 native/src/enemies.rs 的 MAP_ENTITIES 一致
+        var requirements=File.ReadAllLines("outputs/erdtree-tower/scene-assets/enemy-pools.txt").Where(line=>!line.EndsWith("|dlc")).Select(line=>{
             var p=line.Split('|');int model=int.Parse(p[2]);
             return new Requirement(int.Parse(p[0]),model,900000000+model*10000,model*10000,4,p[4],-1);
         }).DistinctBy(r=>(r.Act,r.Npc)).ToList();

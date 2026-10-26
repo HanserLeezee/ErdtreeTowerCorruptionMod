@@ -52,6 +52,13 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
     }
     result
 });
+/// 调试菜单：按名称或说明搜索可以直接发放的奖励物品（含词条装备）
+pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
+    let query=query.trim();if query.is_empty() {return vec![];}
+    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|erdtree_tower::rewards::lookup(**id).is_some()&&(d.name.contains(query)||d.info.contains(query)))
+        .map(|(id,d)|(*id,format!("{}　{}",d.name,d.info.replace("\\n","　").replace('\n',"　")))).collect();
+    hits.sort_by_key(|(id,_)|*id);hits.truncate(limit);hits
+}
 pub fn talisman_description(id:u32)->(String,String) {
     DETAILS.get(&(0x20000000|id)).map(|d|(d.name.clone(),d.info.clone()))
         .unwrap_or_else(||(erdtree_tower::rewards::lookup(0x20000000|id).map_or("护符赐福",|i|i.name).into(),String::new()))

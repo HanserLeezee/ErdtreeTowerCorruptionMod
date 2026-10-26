@@ -154,7 +154,10 @@ pub fn stock(run:&Run)->Vec<Stock> {
     for (kind,equip,price) in [(ItemKind::Sorcery,3,1800),(ItemKind::Incantation,3,1800),(ItemKind::Armor,1,1500)] {
         result.extend(select(CATALOG.iter().filter(|s|s.kind==kind).map(|s|Stock{kind:equip,id:(s.id&0x0fffffff) as i32,price,quantity:1}).collect(),3,run.seed,visit));
     }
-    for group in ["food","pot","knife"] {result.extend(select(extras(group),1,run.seed,visit));}
+    // 原来卖投掷壶的一格改卖第二种飞刀：投掷壶要有龟裂壶才能持有，商店不再发放龟裂壶
+    for group in ["food","knife"] {result.extend(select(extras(group),1,run.seed,visit));}
+    let knives=extras("knife").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
+    result.extend(select(knives,1,run.seed^0x6b6e_6966,visit));
     result.extend(select(catalog.iter().filter(|s|s.kind==4).cloned().collect(),2,run.seed,visit));
     let pool=CATALOG.iter().filter(|s|s.kind==ItemKind::Talisman&&s.random_eligible()).map(|s|Stock{kind:2,id:(s.id&0x0fffffff) as i32,price:talisman_price(super::reward_ui::item_quality(s.id)),quantity:1}).collect();
     result.extend(select(pool,2,run.seed,visit));
@@ -194,16 +197,6 @@ fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
         }
     }
 }
-fn ensure_pots(data:&mut PlayerGameData)->Result<(),String> {
-    let count=||data.equipment.equip_inventory_data.items_data.items()
-        .filter(|e|e.item_id.category()==ItemCategory::Goods&&e.item_id.param_id()==9500).map(|e|e.quantity as i32).sum::<i32>();
-    let missing=(3-count()).max(0);
-    if missing>0 {
-        super::items::give(&[(0x4000251c,missing,-1)])?;
-        if count()<3 {return Err("龟裂壶尚未进入背包，请重试".into());}
-    }
-    Ok(())
-}
 pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) -> Result<erdtree_tower::ShopStock, String> {
     let params = unsafe { SoloParamRepository::instance_mut() }.map_err(|_| "商店参数未加载")?;
     let saved=run.shop_stock.as_ref().filter(|saved|!refresh&&saved.node==node&&saved.items.len()==STOCK_COUNT as usize);
@@ -240,7 +233,6 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
             return Err(format!("商品参数不存在：{} / {}",item.kind,item.id));
         }
     }
-    ensure_pots(data)?;
     let flags = unsafe { CSEventFlagMan::instance_mut() }.map_err(|_| "商店库存标记未加载")?;
     for flag in (0..STOCK_COUNT).flat_map(|i|stock_flag(i)..stock_flag(i)+8).filter(|_|refresh) {
         flags.virtual_memory_flag.set_flag(flag, false);
@@ -401,12 +393,13 @@ mod tests {
                 let spirit=rows.iter().filter(|s|s.kind==3&&erdtree_tower::rewards::lookup(0x40000000|s.id as u32).is_some_and(|c|c.kind==ItemKind::Spirit)).count();
                 let crystal=rows.iter().any(|s|s.kind==3&&CATALOG.iter().any(|i|i.id==0x40000000|s.id as u32&&i.kind==ItemKind::Crystal));
                 assert_eq!(spirit,usize::from(!crystal&&hash(seed ^ 0xa549)%4==0));
-                for (group,quantity) in [("food",5),("pot",3),("knife",20)] {
+                for (group,quantity) in [("food",5),("knife",20)] {
                     let pool=extras(group);
                     let selected:Vec<_>=rows.iter().filter(|s|pool.iter().any(|p|p.kind==s.kind&&p.id==s.id)).collect();
-                    assert_eq!(selected.len(),1+usize::from(group=="food"&&spirit==0&&!crystal)+usize::from(group=="food"&&!rows.iter().any(|s|s.kind==3&&s.id==8000)));
-                    assert_eq!(selected[0].quantity,quantity);
+                    assert_eq!(selected.len(),if group=="knife"{2}else{1+usize::from(spirit==0&&!crystal)+usize::from(!rows.iter().any(|s|s.kind==3&&s.id==8000))});
+                    assert!(selected.iter().all(|s|s.quantity==quantity));
                 }
+                assert!(rows.iter().all(|s|!extras("pot").iter().any(|p|p.kind==s.kind&&p.id==s.id)),"the shop no longer sells throwing pots");
                 let catalyst=match class {Class::Astrologer|Class::Prisoner=>Some("staff"),Class::Prophet|Class::Confessor=>Some("seal"),_=>None};
                 if let Some(group)=catalyst {
                     assert_eq!(rows.iter().filter(|s|extras(group).iter().any(|p|p.kind==s.kind&&p.id as u32==erdtree_tower::affixes::base(s.id as u32))).count(),2);

@@ -77,6 +77,27 @@ static class AffixTextFix {
         if(actual.Rows.Count!=effects.Rows.Count||!actual.Rows.Any(r=>r.ID==BarMarker))throw new Exception("Bar name marker not written");
         return true;
     }
+    // 侍从的敌人预览（menu_dlc02 第 33 表，9510000+序号×16+数量）：与 melina-patch 写入的内容相同，新增敌人时补上
+    static int UpdatePreviewNames(string input,string output) {
+        const string msg="msg/zhocn/menu_dlc02.msgbnd.dcx";
+        var menu=BND4.Read(Path.Combine(input,msg));var file=menu.Files.Single(f=>f.ID==MelinaAssets.PreviewMenu);var fmg=FMG.Read(file.Bytes);
+        var before=menu.Files.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text));
+        var expected=MelinaAssets.PreviewTexts(MelinaAssets.PreviewNames(input)).ToDictionary(t=>t.id,t=>t.text);
+        int changed=0;
+        foreach(var (id,text) in expected) {
+            var entry=fmg.Entries.FirstOrDefault(e=>e.ID==id);
+            if(entry?.Text==text)continue;
+            fmg.Entries.RemoveAll(e=>e.ID==id);fmg.Entries.Add(new FMG.Entry(id,text));changed++;
+        }
+        if(changed==0)return 0;
+        fmg.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=fmg.Write();
+        var dest=Path.Combine(output,msg);Directory.CreateDirectory(Path.GetDirectoryName(dest)!);menu.Write(dest);
+        var check=BND4.Read(dest).Files.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text));
+        foreach(var (table,entries) in before)foreach(var (id,text) in entries)
+            if(check[table].GetValueOrDefault(id)!=(table==MelinaAssets.PreviewMenu&&expected.TryGetValue(id,out var t)?t:text))throw new Exception($"Unexpected menu text change: {table}/{id}");
+        foreach(var (id,text) in expected)if(check[MelinaAssets.PreviewMenu].GetValueOrDefault(id)!=text)throw new Exception($"Enemy preview name missing: {id}");
+        return changed;
+    }
     // 与 native/src/enemies.rs 的 POOL_NAMES 相同：按 enemy-pools.txt 行序去重
     public static List<string> PoolNames(string input) {var names=new List<string>();foreach(var p in File.ReadAllLines(Path.Combine(input,"enemy-pools.txt")).Select(l=>l.Split('|')))if(!names.Contains(p[4]))names.Add(p[4]);return names;}
     public static void Patch(string input,string output) {
@@ -107,7 +128,8 @@ static class AffixTextFix {
         }
         npcNames.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));npcFile.Bytes=npcNames.Write();
         bool marker=AddMarker(input,output);
-        if(changed==0&&added==0&&dropped==0){Console.WriteLine(marker?"Item text already updated; wrote regulation.bin with the affix bar name marker":"Item text and affix bar name marker already present; nothing written");return;}
+        int previews=UpdatePreviewNames(input,output);
+        if(changed==0&&added==0&&dropped==0){Console.WriteLine((marker?"Item text already updated; wrote regulation.bin with the affix bar name marker":"Item text and affix bar name marker already present; nothing written")+$"; {previews} enemy preview names updated");return;}
         var dir=Path.Combine(output,"msg/zhocn");Directory.CreateDirectory(dir);var path=Path.Combine(dir,"item_dlc02.msgbnd.dcx");messages.Write(path);
         var written=BND4.Read(path).Files;var check=written.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text));
         foreach(var (fmg,entries) in before)foreach(var (id,text) in entries) {
@@ -123,6 +145,6 @@ static class AffixTextFix {
         foreach(var line in File.ReadAllLines(Path.Combine(input,"affix-v2-catalog.txt")).Select(l=>l.Split('|')).Where(p=>p[0]=="weapon")) {
             if(!EquipmentStyleAssets.SameName(check[11].GetValueOrDefault(int.Parse(line[1])),line[4]))throw new Exception($"Weapon name differs from catalog: {line[1]}");
         }
-        Console.WriteLine($"Updated {changed} affix weapon text entries (localized scaling labels, captions fit {CaptionLines} lines) and added {added} bar names (enemies {PoolNameFirst}-{PoolNameFirst+poolNames.Count-1}, {barNames.Count} affix boss titles from {BarNameFirst}){(marker?"; wrote regulation.bin with the affix bar name marker":"")}, removed {dropped} retired spell text entries; all other text unchanged");
+        Console.WriteLine($"Updated {previews} enemy preview names; updated {changed} affix weapon text entries (localized scaling labels, captions fit {CaptionLines} lines) and added {added} bar names (enemies {PoolNameFirst}-{PoolNameFirst+poolNames.Count-1}, {barNames.Count} affix boss titles from {BarNameFirst}){(marker?"; wrote regulation.bin with the affix bar name marker":"")}, removed {dropped} retired spell text entries; all other text unchanged");
     }
 }

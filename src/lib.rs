@@ -22,6 +22,7 @@ pub mod boss_affixes;
 pub mod embers;
 pub mod scaling;
 pub mod law;
+pub mod debug;
 
 pub mod music;
 
@@ -188,6 +189,9 @@ pub struct Run {
     pub ember_rewards: bool,
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub embers: Vec<embers::Ember>,
+    /// 用过调试菜单的旅程：不计入律法纪录，誓约进度不再校验
+    #[serde(default,skip_serializing_if="std::ops::Not::not")]
+    pub debug: bool,
     #[serde(default="first_act")]
     pub act:u8,
     pub seed: u64,
@@ -474,6 +478,7 @@ impl Run {
             law: law::Law::default(),
             ember_rewards: true,
             embers: vec![],
+            debug: false,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -911,7 +916,7 @@ impl Run {
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
         if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>2||self.scaling_rules>1
-            || self.contract.as_ref().is_some_and(|c|!c.valid(self.act))
+            || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
             || self.elite_buffs.iter().collect::<std::collections::BTreeSet<_>>().len()!=self.elite_buffs.len()
