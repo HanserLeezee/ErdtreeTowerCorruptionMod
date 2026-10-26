@@ -1,0 +1,20 @@
+{
+  "variants": 370,
+  "prototypes": 109,
+  "dependencies": {
+    "SpEffectParam": 533,
+    "SpEffectVfxParam": 15,
+    "BehaviorParam_PC": 48,
+    "Bullet": 136,
+    "AtkParam_Pc": 61
+  },
+  "sourceSha256": "B9B8A058AED8D970EF264710BCA381CC90AEE28D4C0DD42D3CAB9AC851DE7036",
+  "excludedEffects": [
+    7005660,
+    7005670,
+    7005680,
+    7005690
+  ],
+  "reason": "Critical-hit entry and damage duration are unresolved",
+  "inGameVerified": false
+}

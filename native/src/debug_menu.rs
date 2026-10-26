@@ -131,7 +131,7 @@ impl Menu {
             ui.text_colored([0.7,0.7,0.7,1.0],"怪物池");
             for enemy in crate::enemies::debug_pool().into_iter().filter(|e|filter.is_empty()||e.name.contains(filter.as_str())) {
                 let tier=match enemy.kind {NodeKind::Monster=>"普通",NodeKind::Elite=>"强敌",_=>"Boss"};
-                let label=format!("第{}幕 {tier} {}{}##pool-{}",enemy.act,enemy.name,if enemy.solo{"（DLC）"}else{""},enemy.npc);
+                let label=format!("第{}幕 {tier} {}{}##pool-{}",enemy.act,enemy.name,if enemy.dlc{"（DLC）"}else{""},enemy.npc);
                 if ui.selectable(label) {set_roster(vec![enemy;self.count as usize]);}
             }
             ui.text_colored([0.7,0.7,0.7,1.0],"Boss 组（整组生成）");

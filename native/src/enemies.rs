@@ -12,14 +12,14 @@ pub struct Enemy {
     pub bar:u32,
     /// 停用：保留名称编号与联机实体，但不再抽到
     pub retired:bool,
-    /// 仅单人：联机地图里没有预先摆放的实体（DLC 敌人）
-    pub solo:bool,
+    /// DLC 敌人：在原有联机实体之后追加槽位
+    pub dlc:bool,
 }
 /// 联机时只能抽到地图里预先摆放过的敌人；由运行时每帧同步
 static PARTY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub fn set_party(active:bool) {PARTY.store(active,std::sync::atomic::Ordering::Relaxed);}
 fn party()->bool {PARTY.load(std::sync::atomic::Ordering::Relaxed)}
-fn selectable(e:&Enemy,party:bool)->bool {!e.retired&&(!e.solo||!party)}
+fn selectable(e:&Enemy,_party:bool)->bool {!e.retired}
 /// Boss 与精英版 Boss 的参数编号段（BossAssets.Npc）；DLC 怪物池的编号也在 950000000 之上，不能只比大小
 pub fn boss_npc(npc:i32)->bool {(950000000..950100000).contains(&npc)}
 fn enemy(name: &'static str, model: i32,act:u8,kind:NodeKind) -> Enemy {
@@ -28,13 +28,13 @@ fn enemy(name: &'static str, model: i32,act:u8,kind:NodeKind) -> Enemy {
         model,
         npc: 900000000 + model * 10000,
         think: model as u32 * 10000,
-        act,kind,bar:0,retired:false,solo:false,
+        act,kind,bar:0,retired:false,dlc:false,
     }
 }
 static PREVIEW_NAMES:LazyLock<Vec<&'static str>>=LazyLock::new(|| {
     let mut names=Vec::new();
     // 仅单人的敌人排在 Boss 之后，保持原有名称编号不变
-    for name in POOLS.iter().filter(|e|!e.solo).map(|e|e.name).chain(BOSSES.iter().map(|(_,e)|e.name)).chain(POOLS.iter().filter(|e|e.solo).map(|e|e.name)) {if !names.contains(&name){names.push(name);}}
+    for name in POOLS.iter().filter(|e|!e.dlc).map(|e|e.name).chain(BOSSES.iter().map(|(_,e)|e.name)).chain(POOLS.iter().filter(|e|e.dlc).map(|e|e.name)) {if !names.contains(&name){names.push(name);}}
     names
 });
 pub fn preview_texts(group:&[Enemy])->Vec<i32> {
@@ -50,7 +50,7 @@ static POOLS:LazyLock<Vec<Enemy>>=LazyLock::new(||include_str!("../../scene-asse
     let kind=match p[1]{"weak"=>NodeKind::Monster,"elite"=>NodeKind::Elite,"boss"=>NodeKind::Boss,_=>panic!("Invalid enemy tier")};
     let flag=p.get(5).copied().unwrap_or("");
     assert!(matches!(flag,""|"retired"|"dlc"),"Invalid enemy pool flag");
-    Enemy{retired:flag=="retired",solo:flag=="dlc",..enemy(p[4],p[2].parse().unwrap(),p[0].parse().unwrap(),kind)}
+    Enemy{retired:flag=="retired",dlc:flag=="dlc",..enemy(p[4],p[2].parse().unwrap(),p[0].parse().unwrap(),kind)}
 }).collect());
 pub const POOL_NAME_FIRST:i32=9610000;
 pub const BOSS_NAME_FIRST:i32=9600000;
@@ -64,6 +64,8 @@ pub fn bar_text(spec:&Enemy)->Option<i32> {
 }
 pub fn bar_rank(spec:&Enemy)->u8 {if spec.bar>0 {0}else if boss_npc(spec.npc)||spec.kind==NodeKind::Boss {1}else if spec.kind==NodeKind::Elite {2}else{3}}
 pub fn roster(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8) -> Vec<Enemy> {roster_in(kind,seed,ordinal,layer,act,party())}
+#[cfg(test)]
+pub(super) fn party_roster_for_test(kind:NodeKind,seed:u64,ordinal:usize,layer:usize,act:u8)->Vec<Enemy>{roster_in(kind,seed,ordinal,layer,act,true)}
 fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,party:bool) -> Vec<Enemy> {
     if kind == NodeKind::Boss { return boss_roster(kind,seed,ordinal,act); }
     if kind == NodeKind::Elite && act!=1 && (seed.wrapping_add(ordinal as u64))%4!=0 {return boss_roster(kind,seed/4,ordinal,act);}
@@ -81,7 +83,7 @@ fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,part
     };
     (0..strong).map(|i| if kind==NodeKind::Elite&&act==1 {
         let models=[3010,3800,4351,4352,4353,4354,4355,4290,3020,4340,2270,4490];
-        select(POOLS.iter().copied().filter(|e|e.act==1&&e.kind==NodeKind::Elite&&(models.contains(&e.model)||e.solo)).collect(),seed,ordinal*strong+i,party)
+        select(POOLS.iter().copied().filter(|e|e.act==1&&e.kind==NodeKind::Elite&&(models.contains(&e.model)||e.dlc)).collect(),seed,ordinal*strong+i,party)
     } else if kind==NodeKind::Monster {
         select(POOLS.iter().copied().filter(|e|e.act==act&&e.kind==NodeKind::Elite&&e.model!=4290).collect(),seed,ordinal*strong+i,party)
     } else {choose_in(NodeKind::Elite, seed, ordinal * strong + i,act,party)})
@@ -89,11 +91,11 @@ fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,part
 }
 static BOSSES:LazyLock<Vec<(usize,Enemy)>>=LazyLock::new(||include_str!("../../scene-assets/boss-pool.txt").lines().map(|line| {
     let p:Vec<_>=line.split('|').collect();let index=p[2].parse::<u32>().unwrap();
-    (p[1].parse().unwrap(),Enemy{name:p[7],model:p[3].parse().unwrap(),npc:950000000+index as i32*2,think:p[5].parse().unwrap(),act:p[0].parse().unwrap(),kind:NodeKind::Boss,retired:false,solo:false,bar:if p[9]=="1" {index+1}else{0}})
+    (p[1].parse().unwrap(),Enemy{name:p[7],model:p[3].parse().unwrap(),npc:950000000+index as i32*2,think:p[5].parse().unwrap(),act:p[0].parse().unwrap(),kind:NodeKind::Boss,retired:false,dlc:false,bar:if p[9]=="1" {index+1}else{0}})
 }).collect());
 static MAP_ENTITIES:LazyLock<Vec<(Enemy,Vec<u32>)>>=LazyLock::new(||{
     let mut variants=std::collections::BTreeMap::new();
-    for &spec in POOLS.iter().filter(|e|!e.solo) {variants.insert((spec.act,spec.npc),(spec,4));}
+    for &spec in POOLS.iter() {variants.insert((spec.act,spec.npc),(spec,4));}
     for &(_,spec) in BOSSES.iter() {
         variants.insert((spec.act,spec.npc),(spec,1));
         let elite=Enemy{npc:spec.npc+1,kind:NodeKind::Elite,bar:0,..spec};
@@ -324,9 +326,10 @@ mod tests {
         assert!(map_entities(&[spec,Enemy{act:2,..spec}]).is_err());
     }
     #[test]
-    fn all_generated_combat_rosters_have_map_entity_slots() {
+    fn all_generated_party_combat_rosters_have_map_entity_slots() {
         for act in 1..=3 {for seed in 0..300 {for kind in [NodeKind::Monster,NodeKind::Elite,NodeKind::Boss] {
-            let group=roster(kind,seed,seed as usize%24,seed as usize%12,act);
+            let group=party_roster_for_test(kind,seed,seed as usize%24,seed as usize%12,act);
+            assert!(group.iter().all(|e|!e.retired));
             let ids=map_entities(&group).unwrap();
             assert_eq!(ids.len(),group.len());
             assert_eq!(ids.iter().copied().collect::<std::collections::HashSet<_>>().len(),group.len());
@@ -337,21 +340,21 @@ mod tests {
         for (spec,ids) in MAP_ENTITIES.iter() {for (slot,id) in ids.iter().enumerate() {
             println!("PARTY_SLOT={}|{}|{}|{}|{}|{}",spec.act,spec.npc,spec.model,spec.think,slot,id);
         }}
-        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),684);
+        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),732);
     }
     #[test]
     fn first_act_elites_always_use_curated_combatants_not_boss_labels() {
-        let allowed=[3010,3800,4351,4352,4353,4354,4355,4290,3020,4340,2270,4490];
+        let allowed=[3010,3800,4351,4352,4353,4354,4355,4290,3020,4340,2270,4490,5040];
         let mut seen=std::collections::HashSet::new();
         for seed in 0..100 {for ordinal in 0..24 {for layer in 0..12 {
-            let group=roster(NodeKind::Elite,seed,ordinal,layer,1);
+            let group=roster_in(NodeKind::Elite,seed,ordinal,layer,1,false);
             assert!(group.iter().any(|e|e.kind==NodeKind::Elite));
             for enemy in group.iter().filter(|e|e.kind==NodeKind::Elite) {
                 assert!(allowed.contains(&enemy.model),"Unexpected elite: {}",enemy.name);
                 assert_eq!(enemy.npc,900000000+enemy.model*10000);
                 seen.insert(enemy.model);
             }
-            assert_eq!(group,roster(NodeKind::Elite,seed,ordinal,layer,1));
+            assert_eq!(group,roster_in(NodeKind::Elite,seed,ordinal,layer,1,false));
         }}}
         assert_eq!(seen,allowed.into_iter().collect());
     }
@@ -545,8 +548,8 @@ mod tests {
         assert!(POOLS.iter().all(|e|models.insert(e.model)));
     }
     #[test]
-    fn dlc_enemies_are_solo_only_and_keep_existing_name_and_entity_ids() {
-        let dlc:Vec<_>=POOLS.iter().filter(|e|e.solo).collect();
+    fn dlc_enemies_reach_multiplayer_and_keep_existing_name_and_entity_ids() {
+        let dlc:Vec<_>=POOLS.iter().filter(|e|e.dlc).collect();
         assert_eq!(dlc.len(),12);
         assert!(dlc.iter().all(|e|e.model>=5000&&!boss_npc(e.npc)&&bar_rank(e)>=2&&role(e)!=erdtree_tower::encounter::Role::Boss));
         // 名称编号：DLC 敌人排在已有名称之后
@@ -555,11 +558,23 @@ mod tests {
         let first_preview=PREVIEW_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
         assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len());
         // 联机实体只包含地图里摆放过的敌人
-        assert!(MAP_ENTITIES.iter().all(|(spec,_)|!spec.solo));
+        assert_eq!(MAP_ENTITIES.iter().filter(|(spec,_)|spec.dlc).map(|(_,ids)|ids.len()).sum::<usize>(),48);
         for act in 1..=3 {for seed in 0..200 {for kind in [NodeKind::Monster,NodeKind::Elite] {
-            assert!(roster_in(kind,seed,0,11,act,true).iter().all(|e|!e.solo&&!e.retired));
+            assert!(roster_in(kind,seed,0,11,act,true).iter().all(|e|!e.retired));
         }}}
-        let solo:std::collections::HashSet<_>=(1..=3).flat_map(|act|(0..400).flat_map(move|seed|[NodeKind::Monster,NodeKind::Elite].into_iter().flat_map(move|kind|roster_in(kind,seed,0,11,act,false)))).filter(|e|e.solo).map(|e|e.model).collect();
+        let solo:std::collections::HashSet<_>=(1..=3).flat_map(|act|(0..400).flat_map(move|seed|[NodeKind::Monster,NodeKind::Elite].into_iter().flat_map(move|kind|roster_in(kind,seed,0,11,act,false)))).filter(|e|e.dlc).map(|e|e.model).collect();
         assert_eq!(solo.len(),12,"every DLC enemy is reachable solo");
+        let party:std::collections::HashSet<_>=(1..=3).flat_map(|act|(0..400).flat_map(move|seed|[NodeKind::Monster,NodeKind::Elite].into_iter().flat_map(move|kind|roster_in(kind,seed,0,11,act,true)))).filter(|e|e.dlc).map(|e|e.model).collect();
+        assert_eq!(party,solo,"every DLC enemy must also be reachable in multiplayer");
+        for act in 1..=3 {
+            let old:Vec<_>=MAP_ENTITIES.iter().filter(|(e,_)|e.act==act&&!e.dlc).flat_map(|(_,ids)|ids).copied().collect();
+            assert_eq!(old,(0..old.len()).map(|n|48000000+u32::from(act)*10000+n as u32).collect::<Vec<_>>());
+        }
+        let lines:Vec<_>=include_str!("../../scene-assets/party-dlc-slots.tsv").lines().collect();assert_eq!(lines.len(),48);
+        for line in lines {
+            let p:Vec<u32>=line.split('|').map(|s|s.parse().unwrap()).collect();
+            let (enemy,ids)=MAP_ENTITIES.iter().find(|(e,_)|e.act as u32==p[0]&&e.npc as u32==p[1]).unwrap();
+            assert!(enemy.dlc);assert_eq!(enemy.model as u32,p[2]);assert_eq!(enemy.think,p[3]);assert_eq!(ids[p[4] as usize],p[5]);assert_eq!(super::super::map_guards::entity(p[5]).unwrap(),p[6]);
+        }
     }
 }

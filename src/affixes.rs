@@ -25,6 +25,7 @@ pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool)->Option<u32> {roll_min(run,
 /// 规则 3 起品质只看前缀：不再按原版稀有度托底，改由来源决定保底（Boss 与试炼为传说、精英与上锁宝箱至少史诗）。
 /// 旧规则（affix_rules < 3）仍以原版稀有度为最低品质，忽略 min
 pub fn roll_min(run:&Run,id:u32,entropy:u64,repeat:bool,min:u8)->Option<u32> {
+    if id>>28==2{return Some(crate::talismans::roll(run,id,entropy,repeat));}
     if !run.affix_equipment{return Some(id);}
     let groups=if run.affix_rules>=2 {ADVANCED.get(&id).map(Vec::as_slice)}else{BY_BASE.get(&id).map(std::slice::from_ref)};
     let Some(groups)=groups else{return Some(id)};

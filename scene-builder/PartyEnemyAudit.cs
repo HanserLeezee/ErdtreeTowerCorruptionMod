@@ -4,7 +4,7 @@ using System.Text.Json;
 static class PartyEnemyAudit {
     record Requirement(int Act,int Model,int Npc,int Think,int Copies,string Label,int Source);
     public static void Run(string output) {
-        // 仅单人（dlc）的敌人不在联机地图里摆放，与 native/src/enemies.rs 的 MAP_ENTITIES 一致
+        // 先重建原有 684 个槽位；DLC 由 party-dlc-patch 追加，保持旧实体编号不变。
         var requirements=File.ReadAllLines("outputs/erdtree-tower/scene-assets/enemy-pools.txt").Where(line=>!line.EndsWith("|dlc")).Select(line=>{
             var p=line.Split('|');int model=int.Parse(p[2]);
             return new Requirement(int.Parse(p[0]),model,900000000+model*10000,model*10000,4,p[4],-1);

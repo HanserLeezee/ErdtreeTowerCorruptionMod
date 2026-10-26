@@ -18,6 +18,7 @@ pub mod regional_events;
 pub mod stormveil;
 pub mod rewards;
 pub mod affixes;
+pub mod talismans;
 pub mod boss_affixes;
 pub mod embers;
 pub mod scaling;
@@ -176,6 +177,8 @@ pub struct Run {
     pub affix_equipment: bool,
     #[serde(default)]
     pub affix_rules: u8,
+    #[serde(default)]
+    pub talisman_affixes: bool,
     #[serde(default)]
     pub ruby_spells: bool,
     #[serde(default)]
@@ -475,6 +478,7 @@ impl Run {
             schema: 6,
             affix_equipment: true,
             affix_rules: 3,
+            talisman_affixes: true,
             ruby_spells: false,
             boss_affixes: true,
             scaling_rules: 1,
