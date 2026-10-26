@@ -102,6 +102,7 @@ static class PartyEnemyEvents {
             uint first=(uint)(48000000+act*10000);
             var targets=file.Events.Where(e=>e.ID>=first&&e.ID<first+300).ToArray();
             int expected=new[]{282,242,160}[act-1];
+            var dlc=System.IO.Path.Combine(input,"party-dlc-slots.tsv");if(System.IO.File.Exists(dlc))expected+=System.IO.File.ReadLines(dlc).Count(l=>l.StartsWith(act+"|"));
             if(targets.Length!=expected)throw new Exception("Unexpected party enemy event count");
             var untouched=file.Events.Except(targets).ToArray();
             foreach(var ev in targets)file.Events[file.Events.IndexOf(ev)]=Create((uint)ev.ID);

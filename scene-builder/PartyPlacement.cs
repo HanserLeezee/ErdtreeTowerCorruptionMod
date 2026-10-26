@@ -11,13 +11,14 @@ static class PartyPlacement {
             throw new Exception($"Cross-map character retains source visibility restrictions: {part.EntityID}");
     }
     public static void Audit(string directory) {
-        int count=0;
+        int count=0,combat=0;
         foreach(var path in Directory.EnumerateFiles(Path.Combine(directory,"map/mapstudio"),"*.msb.dcx")) {
             if(Path.GetFileName(path).StartsWith("m11_10"))continue;
-            foreach(var part in MSBE.Read(path).Parts.Enemies.Where(p=>p.Name.StartsWith("tower_service_")||p.Name.StartsWith("tower_camp_service_")||p.Name.StartsWith("tower_party_"))) {Verify(part);count++;}
+            foreach(var part in MSBE.Read(path).Parts.Enemies.Where(p=>p.Name.StartsWith("tower_service_")||p.Name.StartsWith("tower_camp_service_")||p.Name.StartsWith("tower_party_"))) {Verify(part);count++;if(part.Name.StartsWith("tower_party_"))combat++;}
         }
-        int expected=684+3+File.ReadAllLines("outputs/erdtree-tower/scene-assets/party-services.txt").Length;
-        if(count!=expected)throw new Exception($"Expected {expected} cross-map characters, found {count}");
-        Console.WriteLine($"Verified visibility masks for {count} cross-map characters");
+        int expected=684;
+        var dlc=Path.Combine(directory,"party-dlc-slots.tsv");if(File.Exists(dlc))expected+=File.ReadAllLines(dlc).Length;
+        if(combat!=expected)throw new Exception($"Expected {expected} combat characters, found {combat}");
+        Console.WriteLine($"Verified visibility masks for {count} cross-map characters ({combat} combat, {count-combat} baked services)");
     }
 }

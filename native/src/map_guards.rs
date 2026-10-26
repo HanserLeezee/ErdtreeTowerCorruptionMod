@@ -100,7 +100,7 @@ mod tests {
         for act in 1..=3 {for seed in 0..256 {for layer in 0..12 {
             for kind in [erdtree_tower::NodeKind::Monster,erdtree_tower::NodeKind::Elite] {
                 let roster=enemies::party_roster_for_test(kind,seed,17,layer,act);
-                assert!(roster.iter().all(|e|!e.solo));
+                assert!(roster.iter().all(|e|!e.retired));
                 let guards=Guards::new(roster).unwrap();
                 assert_eq!(guards.ids.iter().collect::<std::collections::HashSet<_>>().len(),guards.ids.len());
                 assert!(guards.ids.iter().all(|&id|controls(id).is_ok()));

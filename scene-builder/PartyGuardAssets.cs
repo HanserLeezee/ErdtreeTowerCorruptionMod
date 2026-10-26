@@ -26,6 +26,8 @@ static class PartyGuardAssets {
         }
         return ev;
     }
+    public static EMEVD.Event ForEntity(uint original,bool battle)=>Convert(original,battle);
+    static int ExpectedCount(string root)=>684+(File.Exists(Path.Combine(root,"party-dlc-slots.tsv"))?File.ReadAllLines(Path.Combine(root,"party-dlc-slots.tsv")).Length:0);
     public static void Build(string input,string output) {
         const string name="m45_01_00_00";
         var map=MSBE.Read(Path.Combine(input,"map/mapstudio",name+".msb.dcx"));
@@ -103,7 +105,7 @@ static class PartyGuardAssets {
         var map=MSBE.Read(Path.Combine(root,"map/mapstudio/m45_01_00_00.msb.dcx"));
         var events=EMEVD.Read(Path.Combine(root,"event/m45_01_00_00.emevd.dcx"));
         var guards=map.Parts.Enemies.Where(p=>p.EntityID>=51010000&&p.EntityID<51040000).ToArray();
-        if(guards.Length!=684)throw new Exception("Event room lacks shared guard entities");
+        if(guards.Length!=ExpectedCount(root))throw new Exception("Event room lacks shared guard entities");
         foreach(var part in guards) {
             PartyPlacement.Verify(part);
             if(part.TalkID!=-1||part.ChrActivateCondParamID!=0)throw new Exception("Unexpected guard activation rule");
