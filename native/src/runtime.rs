@@ -236,6 +236,7 @@ struct Runtime {
     growth: super::scaling::Growth,
     law_fight: super::law::Fight,
     ember_fight: super::embers::Fight,
+    bout: super::debug_menu::Bout,
     pending: Option<Pending>,
     spawn_used: bool,
     last_player_probe: Option<(u32, i32, i32, u8, bool)>,
@@ -284,6 +285,7 @@ fn fresh_runtime()->Runtime {
         growth: Default::default(),
         law_fight: Default::default(),
         ember_fight: Default::default(),
+        bout: Default::default(),
         pending: None,
         spawn_used: false,
         last_player_probe: None,
@@ -1573,6 +1575,7 @@ fn tick_locked() {
         if state.view.boss_affixes.is_some(){state.boss_fight=Default::default();state.view.boss_affixes=None;}
         if state.view.law_clock.is_some(){state.law_fight=Default::default();state.view.law_clock=None;}
         if state.ember_fight.active(){state.ember_fight=Default::default();}
+        if state.bout.active(){state.bout.end(world);}
         return;
     };
     let party_mode=state.party.is_some();
@@ -1598,6 +1601,10 @@ fn tick_locked() {
             runtime.view.boss_affixes=runtime.boss_fight.title();
             runtime.law_fight.tick(world,(run.seed,run.act,id),run.law,&handles,authority,flasks);
             runtime.view.law_clock=runtime.law_fight.clock();
+            if runtime.bout.active() {
+                let named:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,f.spec.name))).collect();
+                if let Some(message)=runtime.bout.tick(world,&named) {runtime.view.status=message;}
+            }
             let embers=super::embers::held(Some(run));
             let foes:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec)<=1))).collect();
             if runtime.ember_fight.tick(world,(run.seed,run.act,id),&embers,&foes,authority,flasks) {
@@ -1625,7 +1632,7 @@ fn tick_locked() {
         }
     }
     state.boss_fight=Default::default();state.view.boss_affixes=None;
-    state.law_fight=Default::default();state.view.law_clock=None;state.ember_fight=Default::default();
+    state.law_fight=Default::default();state.view.law_clock=None;state.ember_fight=Default::default();state.bout.end(world);
     let pending = state.pending.as_mut().unwrap();
     pending.completed = true;
     let result = match outcome {
@@ -2356,8 +2363,12 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
         report(state,"等待房主敌人同步");return Ok(());
     }
     let mut roster = super::enemies::node_roster(run,id);
-    if state.party.is_none() {if let Some(debug)=super::debug_menu::take_roster() {super::log(format!("DEBUG_MENU roster override: {}",debug.iter().map(|e|e.name).collect::<Vec<_>>().join(",")));roster=debug;}}
-    if state.party.is_none()&&run.nodes[id].kind==erdtree_tower::NodeKind::Monster {roster.sort_by_key(|e|super::enemies::role(e)!=erdtree_tower::encounter::Role::Weak);}
+    if state.party.is_none() {if let Some(debug)=super::debug_menu::take_roster() {
+        super::log(format!("DEBUG_MENU roster override: {}",debug.iter().map(|e|e.name).collect::<Vec<_>>().join(",")));roster=debug;
+        // 斗蛐蛐实验：两只都按 Boss 角色处理，同时出场且保持红方、蓝方的顺序
+        if let Some(setup)=super::debug_menu::take_bout() {state.bout.begin(setup);for e in &mut roster {e.kind=erdtree_tower::NodeKind::Boss;}}
+    }}
+    if state.party.is_none()&&!state.bout.active()&&run.nodes[id].kind==erdtree_tower::NodeKind::Monster {roster.sort_by_key(|e|super::enemies::role(e)!=erdtree_tower::encounter::Role::Weak);}
     let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "游戏参数未就绪")?;
     for spec in &roster {
         if params.get::<NpcParam>(spec.npc as u32).is_none() || params.get::<NpcThinkParam>(spec.think).is_none() {

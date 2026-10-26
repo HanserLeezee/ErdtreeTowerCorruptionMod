@@ -24,8 +24,54 @@ pub fn take()->Option<Command> {QUEUE.lock().ok()?.pop_front()}
 pub fn take_roster()->Option<Vec<Enemy>> {ROSTER.lock().ok()?.take()}
 fn pending_roster()->Option<String> {ROSTER.lock().ok()?.as_ref().map(|r|r.iter().map(|e|e.name).collect::<Vec<_>>().join("、"))}
 
+/// 斗蛐蛐实验：下一场生成两只敌人，给它们挂上改阵营的效果（scene-builder bout-patch，9680000+阵营值），
+/// 玩家在这场里不受伤害，记录哪一只先倒下。用来实机确认怪物能否互相攻击
+pub const BOUT_FIRST:i32=9680000;
+pub const BOUT_TEAMS:[u8;6]=[29,24,26,27,30,34];
+#[derive(Clone,Copy,Debug)]
+pub struct BoutSetup {pub team:u8,pub both:bool}
+static BOUT:Mutex<Option<BoutSetup>>=Mutex::new(None);
+pub fn take_bout()->Option<BoutSetup> {BOUT.lock().ok()?.take()}
 #[derive(Default)]
-pub struct Menu {enemy_filter:String,item_query:String,items:Vec<(u32,String)>,searched:String,count:i32}
+pub struct Bout {setup:Option<BoutSetup>,applied:Vec<eldenring::cs::FieldInsHandle>,started:Option<std::time::Instant>,done:bool,guarded:bool}
+impl Bout {
+    pub fn begin(&mut self,setup:BoutSetup) {
+        crate::log(format!("BOUT begin team={} both={}",setup.team,setup.both));
+        *self=Self{setup:Some(setup),..Default::default()};
+    }
+    pub fn active(&self)->bool {self.setup.is_some()}
+    /// 每帧：敌人就位后挂阵营效果，玩家不受伤害；第一只敌人倒下时记下胜者并恢复玩家
+    pub fn tick(&mut self,world:&mut eldenring::cs::WorldChrMan,foes:&[(eldenring::cs::FieldInsHandle,&'static str)])->Option<String> {
+        use eldenring::cs::ChrInsExt;
+        let setup=self.setup?;
+        if self.done {return None;}
+        if !self.guarded {if let Some(player)=world.main_player.as_mut() {player.chr_ins.debug_flags.set_disabled_hit(true);self.guarded=true;}}
+        let effect=BOUT_FIRST+i32::from(setup.team);
+        for (index,(handle,name)) in foes.iter().enumerate() {
+            if self.applied.contains(handle)||!(setup.both||index==1) {continue;}
+            if let Some(chr)=world.chr_ins_by_handle_mut(handle) {chr.apply_speffect(effect,false);self.applied.push(*handle);crate::log(format!("BOUT team {} applied to {name}",setup.team));}
+        }
+        if foes.len()<2||self.applied.len()<usize::from(setup.both)+1 {return None;}
+        let started=*self.started.get_or_insert_with(std::time::Instant::now);
+        let alive:Vec<_>=foes.iter().map(|(handle,_)|world.chr_ins_by_handle(handle).is_some_and(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag())).collect();
+        let hp:Vec<_>=foes.iter().map(|(handle,_)|world.chr_ins_by_handle(handle).map_or(0,|c|c.modules.data.hp)).collect();
+        let message=if alive.iter().filter(|a|!**a).count()>=1 {
+            let winner=alive.iter().position(|a|*a).map_or("同归于尽".to_owned(),|i|format!("{} 获胜",foes[i].1));
+            format!("斗蛐蛐实验（阵营 {}）：{winner}，用时 {} 秒；现在可以动手清场",setup.team,started.elapsed().as_secs())
+        } else if started.elapsed()>std::time::Duration::from_secs(120) {
+            format!("斗蛐蛐实验（阵营 {}）：120 秒内没有分出胜负，剩余生命 {:?}；可能没有互相攻击",setup.team,hp)
+        } else {return None;};
+        self.done=true;self.release(world);crate::log(format!("BOUT result {message}"));Some(message)
+    }
+    fn release(&mut self,world:&mut eldenring::cs::WorldChrMan) {
+        if self.guarded {if let Some(player)=world.main_player.as_mut() {player.chr_ins.debug_flags.set_disabled_hit(false);}self.guarded=false;}
+    }
+    /// 战斗结束或中断时调用，保证玩家恢复正常
+    pub fn end(&mut self,world:&mut eldenring::cs::WorldChrMan) {if self.active() {self.release(world);*self=Self::default();}}
+}
+
+#[derive(Default)]
+pub struct Menu {enemy_filter:String,item_query:String,items:Vec<(u32,String)>,searched:String,count:i32,bout:[usize;2],bout_team:usize,bout_both:bool}
 const LEVELS:[&str;4]=["无","I","II","III"];
 impl Menu {
     pub fn draw(&mut self,ui:&Ui,view:Option<&crate::runtime::View>) {
@@ -59,8 +105,24 @@ impl Menu {
             }
         });
         ui.separator();
+        ui.text_colored([0.95,0.75,0.45,1.0],"斗蛐蛐实验：下一场生成两只敌人并改阵营，你在这场不会受伤，请不要攻击");
+        let pool=crate::enemies::debug_pool();
+        let names:Vec<String>=pool.iter().map(|e|format!("第{}幕 {}",e.act,e.name)).collect();
+        for (slot,label) in ["红方##bout-a","蓝方（改阵营）##bout-b"].into_iter().enumerate() {
+            ui.set_next_item_width(260.0);ui.combo_simple_string(label,&mut self.bout[slot],&names);
+        }
+        let teams:Vec<String>=BOUT_TEAMS.iter().map(|t|format!("阵营 {t}")).collect();
+        ui.set_next_item_width(120.0);ui.combo_simple_string("##bout-team",&mut self.bout_team,&teams);
+        ui.same_line();ui.checkbox("两只都改阵营",&mut self.bout_both);
+        ui.same_line();
+        if ui.small_button("设为下一场##bout") {
+            let (a,b)=(pool[self.bout[0].min(pool.len()-1)],pool[self.bout[1].min(pool.len()-1)]);
+            set_roster(vec![a,b]);
+            if let Ok(mut bout)=BOUT.lock(){*bout=Some(BoutSetup{team:BOUT_TEAMS[self.bout_team.min(BOUT_TEAMS.len()-1)],both:self.bout_both});}
+        }
+        ui.separator();
         ui.text(format!("下一场战斗的敌人：{}",pending_roster().unwrap_or_else(||"按路线正常抽取".into())));
-        if ui.small_button("恢复正常抽取") {if let Ok(mut roster)=ROSTER.lock(){*roster=None;}}
+        if ui.small_button("恢复正常抽取") {if let Ok(mut roster)=ROSTER.lock(){*roster=None;}if let Ok(mut bout)=BOUT.lock(){*bout=None;}}
         if self.count<1 {self.count=1;}
         ui.set_next_item_width(120.0);ui.input_int("数量",&mut self.count).build();self.count=self.count.clamp(1,4);
         ui.set_next_item_width(240.0);ui.input_text("筛选##enemy",&mut self.enemy_filter).build();
