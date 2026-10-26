@@ -150,7 +150,7 @@ pub fn reset(data: &mut PlayerGameData, archetype: u8) -> Result<(), String> {
         let category=if slot>=12 {ItemCategory::Protector} else {ItemCategory::Weapon};
         let full=if slot>=12 {id|0x10000000} else {id};
         let quantity=match slot {6=>i32::from(p.arrow_num()).max(1),7=>i32::from(p.bolt_num()).max(1),8=>i32::from(p.sub_arrow_num()).max(1),9=>i32::from(p.sub_bolt_num()).max(1),_=>1};
-        super::items::give(&[(full,quantity,-1)])?;
+        super::random_ashes::give(&[(full,quantity,-1)])?;
         equip(data,slot,Some(ItemId::new(category,id as u32).map_err(|e|e.to_string())?),equip_fn)?;
     }
     repair_weapon_slots(data)?;
@@ -163,6 +163,7 @@ pub fn reset(data: &mut PlayerGameData, archetype: u8) -> Result<(), String> {
     }
     super::items::give_flasks(true,true)?;
     super::physick::ensure(data)?;
+    super::items::give(&[(0x40000000|8590,1,-1)])?;
     super::items::give(&[(0x40000000|8158,1,-1),(0x20000000|6110,1,-1)])?;
     super::passives::give_starting(data,super::class_from_archetype(archetype).unwrap())?;
     super::log(format!("Initial class restored: archetype={archetype}, level={}",data.level));

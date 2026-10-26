@@ -85,9 +85,12 @@ pub fn check_reward(data:&eldenring::cs::PlayerGameData,id:u32)->Result<u64,Stri
     Ok(before)
 }
 pub fn give_reward(data:&mut eldenring::cs::PlayerGameData,id:u32)->Result<(),String> {
+    give_reward_with_ash(data,id,-1)
+}
+pub fn give_reward_with_ash(data:&mut eldenring::cs::PlayerGameData,id:u32,gem:i32)->Result<(),String> {
     let before=check_reward(data,id)?;
     let granted=super::smith::reward_id(data,id)?;
-    give(&[(granted as i32,1,-1)])?;
+    super::random_ashes::give(&[(granted as i32,1,gem)])?;
     if held(data,reward_item(id)?.0)<=before {return Err("奖励未进入背包或仓库，请检查容量后重试".into());}
     Ok(())
 }

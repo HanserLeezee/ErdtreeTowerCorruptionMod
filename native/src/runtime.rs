@@ -1691,6 +1691,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     next.physick_empty=super::physick::empty(unsafe {player.player_game_data.as_ref()});
     let mut effect = erdtree_tower::events::StoryEffect::default();
     let mut item_reward=None;
+    let mut reward_ash=-1;
     let mut sacred_tear=false;
     let mut camp_refill=None;
     match action {
@@ -1699,9 +1700,9 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
             camp_refill = match choice { CampChoice::Refill => Some([2,1]), CampChoice::RefillBlue => Some([1,2]), CampChoice::RefillRedOnly => Some([3,0]), CampChoice::RefillBlueOnly => Some([0,3]), _ => None };
         }
         Action::Claim(index) => {
-            if let Phase::Reward{ref offers,..}=old.phase {
+            if let Phase::Reward{id:node,ref offers}=old.phase {
                 if matches!(offers.get(index),Some(erdtree_tower::Reward::StarStream))&&!super::star_stream::ready(){return Err("星流引导暂不可用，请更新后重试".into());}
-                if let Some(erdtree_tower::Reward::Item(id))=offers.get(index){item_reward=Some(*id);}
+                if let Some(erdtree_tower::Reward::Item(id))=offers.get(index){item_reward=Some(*id);reward_ash=super::random_ashes::preview(&old,node,index,*id);}
                 sacred_tear=matches!(offers.get(index),Some(erdtree_tower::Reward::SacredTear));
             }
             next.claim_reward(index)?;
@@ -1740,7 +1741,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     if next.blessings != old.blessings {
         super::blessings::Blessings::deliver(unsafe {player.player_game_data.as_mut()}, &mut next)?;
     }
-    if let Some(id)=item_reward {super::items::give_reward(unsafe {player.player_game_data.as_mut()},id)?;}
+    if let Some(id)=item_reward {super::items::give_reward_with_ash(unsafe {player.player_game_data.as_mut()},id,reward_ash)?;}
     if sacred_tear {super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR)?;}
     if next.flask_bonus!=old.flask_bonus {
         state.flasks.as_mut().ok_or("圣杯瓶未绑定")?.set_bonus(unsafe {player.player_game_data.as_mut()},next.class,next.flask_bonus,next.law.flask_cut())?;
@@ -1781,7 +1782,8 @@ fn contract_action(state:&mut Runtime,world:&mut WorldChrMan,action:Action)->Res
             record_checked(run)?;
             for (slot,(id,qty)) in entries.into_iter().enumerate() {
                 if run.contract.as_ref().unwrap().gift.as_ref().unwrap().delivered[slot]{continue;}
-                super::contracts::give(unsafe {player.player_game_data.as_mut()},id,qty)?;
+                let gem=super::random_ashes::preview(run,usize::MAX,index,id);
+                super::contracts::give_with_ash(unsafe {player.player_game_data.as_mut()},id,qty,gem)?;
                 run.contract.as_mut().unwrap().gift.as_mut().unwrap().delivered[slot]=true;
                 record_checked(run)?;
             }

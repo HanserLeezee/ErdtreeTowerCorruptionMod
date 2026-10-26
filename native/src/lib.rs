@@ -49,6 +49,7 @@ mod law;
 mod embers;
 mod law_ui;
 mod reward_ui;
+mod random_ashes;
 mod contracts;
 mod rooms;
 mod scarabs;

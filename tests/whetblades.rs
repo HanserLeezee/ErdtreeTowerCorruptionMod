@@ -1,6 +1,16 @@
 use erdtree_tower::{Class,Run,NodeKind,Reward,rewards};
 
 #[test]
+fn whetblade_rewards_are_uncommon_after_the_rate_reduction() {
+    let mut count=0;
+    for seed in 0..1000 {
+        let run=Run::new(seed,Class::Samurai);let node=run.start_nodes()[0];
+        count+=usize::from(rewards::offers(&run,node).iter().any(|r|matches!(r,Reward::Item(id) if rewards::lookup(*id).is_some_and(|i|i.kind==rewards::ItemKind::Tool))));
+    }
+    assert!((10..=100).contains(&count),"Unexpected whetblade reward frequency: {count}/1000");
+}
+
+#[test]
 fn all_six_whetblades_are_obtainable_and_claimed_blades_do_not_repeat() {
     let ids=[8590,8970,8971,8972,8973,8974].map(|id|0x40000000|id);
     for id in ids {assert!(rewards::lookup(id).is_some(),"missing whetblade {id}");assert!(rewards::progression_good(id));}

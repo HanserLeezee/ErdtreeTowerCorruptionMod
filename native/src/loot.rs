@@ -63,7 +63,7 @@ pub fn choose(seed:u64,node:usize)->Loot {
     n=(n^(n>>27)).wrapping_mul(0x94d049bb133111eb);n^=n>>31;
     let kinds=[ItemKind::Weapon,ItemKind::Talisman,ItemKind::Sorcery,ItemKind::Incantation,ItemKind::Spirit];
     let roll=n as usize%21;
-    let kind=if n%10==0 {ItemKind::Tool}else{kinds[if roll==20 {4}else{roll/5}]};
+    let kind=if n%50==0 {ItemKind::Tool}else{kinds[if roll==20 {4}else{roll/5}]};
     let pool:Vec<_>=CATALOG.iter().filter(|i|i.kind==kind&&i.random_eligible()).collect();
     let item=pool[(n>>32) as usize%pool.len()];
     Loot{id:item.id as i32,name:item.name}

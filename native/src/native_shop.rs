@@ -1,5 +1,5 @@
 use eldenring::cs::{
-    CSEventFlagMan, EquipParamWeapon, EquipParamGoods, ItemCategory, PlayerGameData, ShopLineupParam,
+    CSEventFlagMan, EquipParamWeapon, EquipParamGoods, EquipParamCustomWeapon, ItemCategory, PlayerGameData, ShopLineupParam,
     SoloParamRepository,
 };
 use erdtree_tower::{Blessing, BlessingKind, NodeKind, Run};
@@ -247,10 +247,15 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     }
     let peak=super::smith::inventory_peak(data,params);
     let granted:Vec<_>=stock.iter().map(|item|if item.kind==0 {super::smith::acquisition_id(item.id as u32,peak,params).map(|id|id as i32)}else{Ok(item.id)}).collect::<Result<_,String>>()?;
+    let mut shop_items=Vec::with_capacity(stock.len());
+    for (i,item) in stock.iter().enumerate() {
+        let custom=item.kind==0&&item.quantity==1&&super::random_ashes::eligible(granted[i] as u32);
+        shop_items.push(if custom {(super::random_ashes::shop_weapon(params,i as u32,granted[i] as u32)?,5)}else{(granted[i],item.kind)});
+    }
     for (i, item) in stock.iter().enumerate() {
         let row = params.get_mut::<ShopLineupParam>(GOODS + i as u32).unwrap();
-        row.set_equip_id(granted[i]);
-        row.set_equip_type(item.kind);
+        row.set_equip_id(shop_items[i].0);
+        row.set_equip_type(shop_items[i].1);
         row.set_value(item.price);
         row.set_cost_type(0);
         row.set_mtrl_id(-1);
@@ -270,13 +275,24 @@ pub fn refresh_weapon_levels(data:&PlayerGameData)->Result<(),String> {
     let params=unsafe {SoloParamRepository::instance_mut()}.map_err(|_|"商店参数未加载")?;
     let peak=super::smith::inventory_peak(data,params);
     let mut updates=Vec::new();
+    let mut custom_updates=Vec::new();
     for id in GOODS..GOODS+STOCK_COUNT {
         let row=params.get::<ShopLineupParam>(id).ok_or("商店货单尚未就绪")?;
+        if row.equip_type()==5&&row.equip_id()>=super::random_ashes::SHOP_FIRST as i32&&row.equip_id()<(super::random_ashes::SHOP_FIRST+STOCK_COUNT) as i32 {
+            let custom=params.get::<EquipParamCustomWeapon>(row.equip_id() as u32).ok_or("随机战灰商品参数缺失")?;
+            let weapon=custom.base_wep_id() as u32+u32::from(custom.reinforce_lv());
+            let next=super::smith::acquisition_id(weapon,peak,params)?;
+            custom_updates.push((row.equip_id() as u32,next));continue;
+        }
         if row.equip_type()!=0||row.equip_id()<0 {continue;}
         let base=row.equip_id() as u32/100*100;
         updates.push((id,super::smith::acquisition_id(base,peak,params)? as i32));
     }
     for (row,item) in updates {params.get_mut::<ShopLineupParam>(row).unwrap().set_equip_id(item);}
+    for (id,weapon) in custom_updates {
+        let custom=params.get_mut::<EquipParamCustomWeapon>(id).unwrap();
+        custom.set_base_wep_id((weapon/100*100) as i32);custom.set_reinforce_lv((weapon%100) as u8);
+    }
     super::log(format!("Shop weapon levels refreshed: bag_peak={peak}"));
     Ok(())
 }

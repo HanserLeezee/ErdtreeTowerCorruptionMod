@@ -42,6 +42,9 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
         let p:Vec<_>=line.split('\t').collect();
         (p[0].parse().unwrap(),Detail{icon:p[1].parse().unwrap(),name:p[2].into(),info:p[3].replace("\\n","\n"),caption:p[4].replace("\\n","\n"),stats:p[5].replace("\\n","\n"),skill:p[6].replace("\\n","\n")})
     }).collect();
+    for (id,detail) in &mut result {
+        if super::random_ashes::eligible(*id){detail.skill="获得时独立随机战灰\n包含本体与 DLC，已放开武器类型限制；获得后固定，可在铁匠处更换。".into();}
+    }
     for item in erdtree_tower::rewards::CATALOG.iter().filter(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit) {
         if let Some(base)=result.get(&item.id).cloned() {
             for level in 1..=10 {
@@ -70,7 +73,7 @@ fn card_icon(run:&Run,reward:&Reward)->Option<u32> {
     id.and_then(|id|DETAILS.get(&id)).map(|detail|detail.icon)
 }
 fn card_summary(detail:&Detail)->String {
-    if !detail.info.trim().is_empty(){return detail.info.clone();}
+    if !detail.info.trim().is_empty(){return if detail.skill.is_empty(){detail.info.clone()}else{format!("战技：{}\n{}",detail.skill.lines().next().unwrap_or(""),detail.info)};}
     let weight=detail.stats.lines().find(|line|line.starts_with("重量：")).unwrap_or("");
     let skill=detail.skill.lines().next().unwrap_or("");
     if !skill.is_empty() {
@@ -79,11 +82,17 @@ fn card_summary(detail:&Detail)->String {
         };
         if !purpose.is_empty() {
             let effect=detail.caption.split("\n\n").find(|part|part.contains("能强化")||part.contains("能提升")||part.contains("能缩短"));
-            return format!("{}\n{}",effect.map_or(purpose.to_owned(),|s|s.replace('\n',"")),weight);
+            return format!("战技：{skill}\n{}\n{}",effect.map_or(purpose.to_owned(),|s|s.replace('\n',"")),weight);
         }
         return format!("战技：{skill}\n{weight}");
     }
     detail.caption.split("\n\n").next().unwrap_or("").replace('\n',"")
+}
+fn offer_detail(run:&Run,node:usize,slot:usize,reward:&Reward)->Option<Detail> {
+    let id=item_id(run,reward)?;let mut detail=DETAILS.get(&id)?.clone();
+    let gem=super::random_ashes::preview(run,node,slot,id);
+    if let Some((name,text))=super::random_ashes::description(gem){detail.skill=format!("{name}\n{}",text.replace("\\n","\n"));}
+    Some(detail)
 }
 #[derive(Default)]
 struct Selection {key:String,selected:usize,details:bool,skip:bool,armed_at:f64,last_submit:f64}
@@ -321,7 +330,7 @@ impl Panel {
             crate::oath_art::background(&ui.get_window_draw_list(),size);
             if self.selection.details {
                 let reward=&offers[self.selection.selected];
-                let d=item_id(run,reward).and_then(|id|DETAILS.get(&id));
+                let preview=offer_detail(run,id,self.selection.selected,reward);let d=preview.as_ref();
                 let left=(size[0]-1360.0*scale)*0.5;
                 let top=(size[1]-900.0*scale)*0.5;
                 ui.set_window_font_scale(scale*1.45);
@@ -381,7 +390,7 @@ impl Panel {
                 let selected=self.selection.selected==i;
                 let hover=ready&&!self.selection.details&&!self.selection.skip&&ui.is_mouse_hovering_rect([x,top],[x+width,top+height]);
                 let y=top-if selected{7.0*scale}else if hover{3.0*scale}else{0.0};
-                let detail=item_id(run,reward).and_then(|id|DETAILS.get(&id));
+                let preview=offer_detail(run,id,i,reward);let detail=preview.as_ref();
                 let (category,title,summary)=match reward {
                     Reward::Item(id)=>{
                         let item=erdtree_tower::rewards::lookup(*id);let base=erdtree_tower::affixes::base(*id);let legendary=erdtree_tower::elite::LEGENDARY.contains(&base);
@@ -679,6 +688,17 @@ pub fn test_pad_frames(context:&mut hudhook::imgui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn card_and_details_show_the_same_gem_used_by_delivery() {
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        for (node,slot,id) in [(3,0,1000000),(3,1,1000000),(usize::MAX,2,33000000)] {
+            let d=offer_detail(&run,node,slot,&Reward::Item(id)).unwrap();
+            let gem=crate::random_ashes::preview(&run,node,slot,id);
+            let (name,description)=crate::random_ashes::description(gem).unwrap();
+            assert_eq!(d.skill,format!("{name}\n{}",description.replace("\\n","\n")));
+            assert!(card_summary(&d).contains(name));
+        }
+    }
     #[test]
     fn equipment_palette_is_distinct_opaque_and_matches_native_hex_colors() {
         let colors:Vec<_>=(0..4).map(super::rarity_color).collect();

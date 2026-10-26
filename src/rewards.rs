@@ -52,6 +52,11 @@ pub fn random_spirit_level(id:u32,entropy:u64)->u32 {
 }
 
 pub fn offers(run:&Run,node:usize)->Vec<Reward> {
+    if crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0x746f6f6c)%100<10{return before_tool_rate(run,node);}
+    let mut limited=run.clone();limited.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Tool).map(|i|i.id));
+    before_tool_rate(&limited,node)
+}
+pub(crate) fn before_tool_rate(run:&Run,node:usize)->Vec<Reward> {
     let owned:Vec<_>=run.claimed_items.iter().map(|id|crate::affixes::base(*id)).filter(|id|!run.claimed_items.contains(id)).collect();
     if owned.is_empty(){return crate::affixes::rewards(run,node,casting_replaced(run,node,true));}
     let mut run=run.clone();run.claimed_items.extend(owned);
@@ -414,6 +419,7 @@ mod tests {
         let contains=|rewards:&[Reward]|rewards.iter().any(|r|matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)));
         for seed in 0..1000 {
             let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
+            run.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Tool).map(|i|i.id));
             let mut unweighted=ranked_pool(&run,0,true,&CATALOG,true);
             unweighted.truncate(3);
             old+=usize::from(contains(&unweighted));
@@ -425,6 +431,16 @@ mod tests {
             }
         }
         assert!(new>0&&new*3<old&&new*5>old);
+    }
+    #[test]
+    fn rewards_saved_before_tool_rate_change_still_load() {
+        for seed in 0..60 {
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
+            let node=run.start_nodes()[0];run.enter(node).unwrap();run.win_combat().unwrap();
+            run.phase=crate::Phase::Reward{id:node,offers:before_tool_rate(&run,node)};
+            let restored=Run::decode(&run.encode().unwrap()).unwrap();
+            assert_eq!(restored.phase,crate::Phase::Reward{id:node,offers:offers(&restored,node)});
+        }
     }
     #[test]
     fn previous_version_pending_rewards_still_load() {
