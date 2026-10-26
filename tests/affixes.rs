@@ -76,3 +76,25 @@ fn previous_affix_journey_keeps_the_same_equipment_ids() {
     let Phase::Reward{offers,..}=run.phase else {panic!()};
     for reward in offers {if let Reward::Item(id)=reward {assert!(affixes::profile(id).is_none());}}
 }
+
+#[test]
+fn quality_follows_the_prefix_with_source_floors_and_old_runs_keep_vanilla_floors() {
+    use erdtree_tower::NodeKind;
+    // 亵渎圣剑：原版传说，规则 3 起也会以普通、稀有、史诗出现
+    let mut tiers=std::collections::BTreeSet::new();
+    for seed in 0..400 {let run=Run::new(seed,Class::Samurai);tiers.insert(affixes::tier(affixes::roll(&run,3140000,seed.wrapping_mul(7919)^0x51,true).unwrap()).unwrap());}
+    assert_eq!(tiers.into_iter().collect::<Vec<_>>(),vec![0,1,2,3]);
+    for seed in 0..60 {
+        let run=Run::new(seed,Class::Samurai);
+        for (id,node) in run.nodes.iter().enumerate() {
+            let floor=match node.kind {NodeKind::Boss=>3,NodeKind::Elite=>2,_=>continue};
+            for reward in rewards::offers(&run,id) {if let Reward::Item(item)=reward {if let Some(tier)=affixes::tier(item) {
+                assert!(tier>=floor,"{:?} reward {item} tier {tier}",node.kind);
+            }}}
+        }
+        assert!(affixes::tier(affixes::roll_min(&run,3140000,seed,true,3).unwrap())==Some(3));
+        let mut old=run.clone();old.affix_rules=2;
+        assert_eq!(affixes::tier(affixes::roll(&old,3140000,seed,true).unwrap()),Some(3),"old runs keep the vanilla rarity floor");
+        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().affix_rules,3);
+    }
+}

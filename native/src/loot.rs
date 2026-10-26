@@ -40,7 +40,7 @@ pub fn locked_reward(data:&eldenring::cs::PlayerGameData,run:&erdtree_tower::Run
     let mut n=run.seed ^ (node as u64).wrapping_mul(7919) ^ 0x10cced;
     n=(n^(n>>30)).wrapping_mul(0xbf58476d1ce4e5b9);n=(n^(n>>27)).wrapping_mul(0x94d049bb133111eb);n^=n>>31;
     let id=locked_choice(n,&weapons,&crystals)?;
-    erdtree_tower::affixes::roll(run,id,n,true).ok_or_else(||"词条奖励池为空".into())
+    erdtree_tower::affixes::roll_min(run,id,n,true,2).ok_or_else(||"词条奖励池为空".into())
 }
 #[test]
 fn locked_chest_gives_one_of_three_categories_and_handles_owned_crystals() {

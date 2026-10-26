@@ -2614,7 +2614,7 @@ fn tick_chariot(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     let data=unsafe{player.player_game_data.as_mut()};
     if alive&&run.regional_event.opened==0&&run.regional_event.receipt.is_none()&&flag(45007884)? {
         let item=erdtree_tower::regional_events::descent_reward(run.reward_seed(),id);
-        let item=erdtree_tower::affixes::roll(run,item,id as u64,true).ok_or("传说词条奖励缺失")?;
+        let item=erdtree_tower::affixes::roll_min(run,item,id as u64,true,3).ok_or("传说词条奖励缺失")?;
         let mut next=run.clone();next.begin_chariot_reward(item,loot::count(data,item))?;record_checked(&next)?;state.view.run=Some(next);
     }
     if alive {if let Some(receipt)=state.view.run.as_ref().unwrap().regional_event.receipt.clone() {
@@ -2729,7 +2729,7 @@ fn tick_descent(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     let data=unsafe {player.player_game_data.as_mut()};
     if run.regional_event.opened==0&&run.regional_event.receipt.is_none()&&requested&&at_finish {
         let item=erdtree_tower::regional_events::descent_reward(run.seed,id);
-        let item=erdtree_tower::affixes::roll(run,item,id as u64,true).ok_or("传说词条奖励缺失")?;
+        let item=erdtree_tower::affixes::roll_min(run,item,id as u64,true,3).ok_or("传说词条奖励缺失")?;
         let mut next=run.clone();next.begin_descent(item,loot::count(data,item))?;
         record_checked(&next)?;state.view.run=Some(next);
     }

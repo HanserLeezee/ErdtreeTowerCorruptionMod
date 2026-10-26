@@ -21,13 +21,16 @@ pub fn lookup(id:u32)->Option<&'static Item>{BY_ID.get(&id).map(|i|&CATALOG[*i])
 pub fn base(id:u32)->u32 {BY_ID.get(&id).map_or(id,|i|VARIANTS[*i].base)}
 pub fn tier(id:u32)->Option<u8>{BY_ID.get(&id).map(|i|VARIANTS[*i].tier)}
 pub fn profile(id:u32)->Option<u8>{BY_ID.get(&id).and_then(|i|VARIANTS[*i].profile)}
-pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool)->Option<u32> {
+pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool)->Option<u32> {roll_min(run,id,entropy,repeat,0)}
+/// 规则 3 起品质只看前缀：不再按原版稀有度托底，改由来源决定保底（Boss 与试炼为传说、精英与上锁宝箱至少史诗）。
+/// 旧规则（affix_rules < 3）仍以原版稀有度为最低品质，忽略 min
+pub fn roll_min(run:&Run,id:u32,entropy:u64,repeat:bool,min:u8)->Option<u32> {
     if id>>28==2{return Some(crate::talismans::roll(run,id,entropy,repeat));}
     if !run.affix_equipment{return Some(id);}
     let groups=if run.affix_rules>=2 {ADVANCED.get(&id).map(Vec::as_slice)}else{BY_BASE.get(&id).map(std::slice::from_ref)};
     let Some(groups)=groups else{return Some(id)};
     let start=if run.affix_rules>=2{crate::mix(run.reward_seed()^entropy^u64::from(id)^0xa4c4_7e99) as usize%groups.len()}else{0};
-    let floor=BASE_RARITY.get(&id).copied().unwrap_or(0).min(3);
+    let floor=if run.affix_rules>=3 {min.min(3)}else{BASE_RARITY.get(&id).copied().unwrap_or(0).min(3)};
     let value=crate::mix(run.reward_seed()^entropy^u64::from(id)^0xaff1_600d)%100;
     let selected=(match value {0..=44=>0,45..=74=>1,75..=92=>2,_=>3}).max(floor);
     for n in 0..groups.len() {
@@ -47,9 +50,11 @@ pub fn rewards(run:&Run,node:usize,mut offers:Vec<Reward>)->Vec<Reward> {
             if let Some(item)=(0..armor.len()).map(|n|armor[(start+n)%armor.len()]).find(|i|roll(run,i.id,entropy^slot as u64,false).is_some()){offers[slot]=Reward::Item(item.id);}
         }
     }
-    let repeat=run.nodes.get(node).is_some_and(|n|n.kind==crate::NodeKind::Boss);
+    let kind=run.nodes.get(node).map(|n|n.kind);
+    let repeat=kind==Some(crate::NodeKind::Boss);
+    let min=match kind {Some(crate::NodeKind::Boss)=>3,Some(crate::NodeKind::Elite)=>2,_=>0};
     for (slot,reward) in offers.iter_mut().enumerate(){if let Reward::Item(id)=*reward {
-        *reward=roll(run,id,entropy^slot as u64,repeat).map_or(Reward::Gold(1500),Reward::Item);
+        *reward=roll_min(run,id,entropy^slot as u64,repeat,min).map_or(Reward::Gold(1500),Reward::Item);
     }}
     offers
 }
@@ -61,7 +66,7 @@ pub fn mystery_box(run:&Run,node:usize,premium:bool)->Option<u32> {
     let tier:u8=if premium {match value {0..=14=>1,15..=69=>2,_=>3}} else {match value {0..=64=>1,65..=94=>2,_=>3}};
     // 先定品质，再只从能以该品质出现的装备里抽，说明里写的概率就是实际概率
     let pool:Vec<_>=crate::rewards::CATALOG.iter().filter(|i|(i.kind==ItemKind::Weapon&&i.random_eligible()||i.kind==ItemKind::Armor)&&i.kind.allowed(run.class)
-        &&BY_BASE.contains_key(&i.id)&&BASE_RARITY.get(&i.id).copied().unwrap_or(0)<=tier).collect();
+        &&BY_BASE.contains_key(&i.id)&&(run.affix_rules>=3||BASE_RARITY.get(&i.id).copied().unwrap_or(0)<=tier)).collect();
     if pool.is_empty() {return None;}
     let start=(roll%pool.len() as u64) as usize;
     // 抽中的装备这局已经拿过时，顺延到下一件没拿过的
