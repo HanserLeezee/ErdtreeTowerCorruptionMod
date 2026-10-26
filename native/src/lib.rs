@@ -50,6 +50,7 @@ mod embers;
 mod debug_menu;
 mod law_ui;
 mod reward_ui;
+mod random_ashes;
 mod contracts;
 mod rooms;
 mod scarabs;

@@ -5,8 +5,8 @@ static class AffixTextFix {
     static readonly Dictionary<string,string> Labels=new(){["STR"]="力气",["DEX"]="灵巧",["INT"]="智力",["FAI"]="信仰",["ARC"]="感应"};
     static readonly Regex Build=new(@"(?<![A-Za-z])(?:STR|DEX|INT|FAI|ARC)(?:/(?:STR|DEX|INT|FAI|ARC))*(?![A-Za-z])");
     public static string Convert(string text)=>Build.Replace(text,m=>m.Value.Split('/').Length==5?"全属性":string.Join('/',m.Value.Split('/').Select(t=>Labels[t])));
-    static bool Variant(int id)=>id>=100000000&&id<115000000||id>=160000000&&id<190000000;
-    static bool Advanced(int id)=>id>=160000000&&id<190000000;
+    static bool Variant(int id)=>id>=100000000&&id<115000000||id>=160000000&&id<200000000;
+    static bool Advanced(int id)=>id>=160000000&&id<200000000;
     // 原版武器说明最多 7 行，下方是固定位置的战技说明；保留词条信息，背景文字按段落截取
     public static string Fit(string caption) {
         int split=caption.LastIndexOf("\n\n");if(split<0)return caption;
@@ -26,16 +26,26 @@ static class AffixTextFix {
         return File.ReadAllLines(path).Select(l=>l.Split('\t')).ToDictionary(p=>int.Parse(p[0]),p=>(p[1].Replace("\\n","\n"),p[2].Replace("\\n","\n")));
     }
     static string Remapped(int fmg,int id,string text) {
-        if(text==null||!(fmg is 21 or 22 or 25 or 26)||!Remap.TryGetValue(id,out var r))return text;
-        if(text.EndsWith(r.@new))return text;
-        if(!text.EndsWith(r.old))throw new Exception($"Affix effect lines not found in text {fmg}/{id}");
-        return text[..^r.old.Length]+r.@new;
+        if(text==null||!(fmg is 21 or 22 or 25 or 26)||((fmg is 21 or 25)&&!Variant(id))||!Remap.TryGetValue(id,out var r))return text;
+        var suffix=Regex.Match(text,@"(?:</font>)+$").Value;
+        var body=text[..^suffix.Length];
+        if(body.EndsWith(r.@new))return text;
+        if(!body.EndsWith(r.old))throw new Exception($"Affix effect lines not found in text {fmg}/{id}");
+        return body[..^r.old.Length]+r.@new+suffix;
     }
     static string Expected(int fmg,int id,string text) {
         text=Remapped(fmg,id,text);
         return text==null||!Variant(id)?text:fmg==25?Fit(Advanced(id)?Convert(text):text):(fmg is 11 or 21)&&Advanced(id)?Convert(text):text;
     }
     public static void Test(string input) {
+        var saved=Remap;Remap=new(){[100000000]=("力量 +1","战技伤害 +6%"),[10000000]=("力量 +1","战技伤害 +6%")};
+        foreach(var text in new[]{"力量 +1","<font color=\"#85BFFF\">力量 +1</font>","背景\n\n<font color=\"#85BFFF\">力量 +1</font>"}) {
+            var expected=text.Replace("力量 +1","战技伤害 +6%");
+            if(Remapped(21,100000000,text)!=expected||Remapped(21,100000000,expected)!=expected)throw new Exception("Colored affix remap must preserve markup and be idempotent");
+        }
+        if(Remapped(25,10000000,"Base weapon lore")!="Base weapon lore")throw new Exception("Armor remaps must not affect base weapons with the same ID");
+        if(!Variant(198470000)||!Advanced(198470000))throw new Exception("DLC weapon variants must be included");
+        Remap=saved;
         int count=0,trimmed=0;
         foreach(var file in new[]{"affix-details.tsv","affix-v2-details.tsv"})foreach(var p in File.ReadAllLines(Path.Combine(input,file)).Select(l=>l.Split('\t')).Where(p=>long.Parse(p[0])<0x10000000)) {
             var caption=p[4].Replace("\\n","\n");var fitted=Fit(Convert(caption));var info=Convert(caption)[(caption.LastIndexOf("\n\n")+2)..];

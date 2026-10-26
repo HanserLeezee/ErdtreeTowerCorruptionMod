@@ -114,7 +114,7 @@ pub fn deliver_deepen(data:&mut PlayerGameData,run:&mut Run)->Result<bool,String
     super::items::give_stack(data,erdtree_tower::elite::TEAR)?;
     run.contract.as_mut().unwrap().finish_deepen()?;Ok(true)
 }
-pub fn give(data:&mut PlayerGameData,id:u32,qty:u32)->Result<(),String> {
+pub fn give_with_ash(data:&mut PlayerGameData,id:u32,qty:u32,gem:i32)->Result<(),String> {
     if qty==0{return Ok(());}
     let category=if id>>28==4{ItemCategory::Goods}else{ItemCategory::Weapon};
     let item=ItemId::new(category,id&0x0fffffff).map_err(|e|e.to_string())?;
@@ -124,7 +124,7 @@ pub fn give(data:&mut PlayerGameData,id:u32,qty:u32)->Result<(),String> {
     };
     let before=count(data);
     if category==ItemCategory::Goods&&before>0{return Ok(());}
-    super::items::give(&[(id as i32,qty as i32,-1)])?;
+    super::random_ashes::give(&[(id as i32,qty as i32,gem)])?;
     if count(data)<before+u64::from(qty){return Err("适配装备未完整进入背包，请清理背包后重试".into());}
     Ok(())
 }

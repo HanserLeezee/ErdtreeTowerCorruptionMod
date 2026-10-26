@@ -9,7 +9,7 @@ fn starting_gift(class:Class)->Option<(u32,i32)> {
 pub fn give_starting(data:&mut PlayerGameData,class:Class)->Result<(),String> {
     if let Some((id,quantity))=starting_gift(class) {
         let full=0x40000000|id;
-        super::items::give(&[(full as i32,quantity,-1)])?;
+        super::random_ashes::give(&[(full as i32,quantity,-1)])?;
         if super::loot::count(data,full)!=quantity as u64 {return Err("职业初始物品发放不完整".into());}
     }
     Ok(())
