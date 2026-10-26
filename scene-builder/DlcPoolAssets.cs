@@ -40,6 +40,7 @@ static class DlcPoolAssets {
         if(!expectedEpic.SetEquals(File.ReadAllLines(Path.Combine(input,"epic-weapons.txt")).Select(int.Parse)))throw new Exception("Epic reward pool incomplete");
         AdvancedAffixAssets.Verify(Read,input);
         if(File.Exists(Path.Combine(input,"random-ashes.tsv")))EquipmentStyleAssets.Verify(Read,input);
+        if(File.Exists(Path.Combine(input,"talisman-catalog.txt")))TalismanAssets.Verify(input);
         Console.WriteLine($"Verified {rewards.Length} reward entries, native/DLC names, descriptions, icons, spirit levels and shop parameter coverage");
     }
 }

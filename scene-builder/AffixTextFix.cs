@@ -93,6 +93,7 @@ static class AffixTextFix {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
         Remap=LoadRemap(input);
         var messages=BND4.Read(Path.Combine(input,"msg/zhocn/item_dlc02.msgbnd.dcx"));var changed=0;var added=0;
+        changed+=AffinityNameAssets.Apply(input,messages);
         var before=messages.Files.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.Select(e=>(e.ID,e.Text)).ToArray());
         foreach(var file in messages.Files.Where(f=>f.ID is 11 or 21 or 22 or 25 or 26)) {
             var fmg=FMG.Read(file.Bytes);

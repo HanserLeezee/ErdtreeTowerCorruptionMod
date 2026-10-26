@@ -22,6 +22,7 @@ pub fn base(id:u32)->u32 {BY_ID.get(&id).map_or(id,|i|VARIANTS[*i].base)}
 pub fn tier(id:u32)->Option<u8>{BY_ID.get(&id).map(|i|VARIANTS[*i].tier)}
 pub fn profile(id:u32)->Option<u8>{BY_ID.get(&id).and_then(|i|VARIANTS[*i].profile)}
 pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool)->Option<u32> {
+    if id>>28==2{return Some(crate::talismans::roll(run,id,entropy,repeat));}
     if !run.affix_equipment{return Some(id);}
     let groups=if run.affix_rules>=2 {ADVANCED.get(&id).map(Vec::as_slice)}else{BY_BASE.get(&id).map(std::slice::from_ref)};
     let Some(groups)=groups else{return Some(id)};

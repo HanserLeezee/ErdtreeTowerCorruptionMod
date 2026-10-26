@@ -71,6 +71,21 @@ fn new_shop_sells_affixed_equipment_and_legacy_stock_is_preserved() {
 }
 fn talisman_price(tier:u8)->i32 {match tier {0=>1000,1=>2000,2=>4000,_=>8000}}
 #[test]
+fn randomized_talismans_reach_the_shop_with_matching_quality_prices() {
+    let mut seen=std::collections::HashSet::new();
+    for seed in 0..2000 {
+        let run=Run::new(seed,erdtree_tower::Class::Samurai);
+        let ids:Vec<_>=stock(&run).iter().filter(|i|i.kind==2).map(|i|i.id).collect();assert_eq!(ids.iter().collect::<std::collections::HashSet<_>>().len(),ids.len());
+        for item in stock(&run).iter().filter(|i|i.kind==2) {
+            let id=0x20000000|item.id as u32;
+            if let Some(tier)=erdtree_tower::talismans::tier(id){seen.insert(tier);assert_eq!(item.price,talisman_price(tier));}
+        }
+        let mut old=run;old.talisman_affixes=false;
+        assert!(stock(&old).iter().filter(|i|i.kind==2).all(|i|erdtree_tower::talismans::lookup(0x20000000|i.id as u32).is_none()));
+    }
+    assert_eq!(seen.len(),4);
+}
+#[test]
 fn talisman_prices_follow_card_quality_and_class_discount() {
     for (tier,price) in [(0,1000),(1,2000),(2,4000),(3,8000)] {
         assert_eq!(talisman_price(tier),price);
@@ -187,7 +202,14 @@ pub fn stock(run:&Run)->Vec<Stock> {
     result
 }
 fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
+    let mut talismans=std::collections::HashSet::new();
     for (slot,item) in result.iter_mut().enumerate() {
+        if item.kind==2&&item.quantity==1 {
+            let original=0x20000000|item.id as u32;
+            let mut id=erdtree_tower::talismans::roll(run,original,(visit as u64).wrapping_mul(7919)^slot as u64,true);
+            if !talismans.insert(id){id=original;talismans.insert(id);}
+            item.id=(id&0x0fffffff) as i32;item.price=talisman_price(super::reward_ui::item_quality(id));
+        }
         if item.quantity==1&&matches!(item.kind,0|1) {
             let tag=if item.kind==0{0}else{0x10000000};
             if let Some(id)=erdtree_tower::affixes::roll(run,tag|item.id as u32,(visit as u64).wrapping_mul(7919)^slot as u64,true){item.id=(id&0x0fffffff) as i32;}

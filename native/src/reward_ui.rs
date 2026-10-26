@@ -5,7 +5,7 @@ use crate::runtime::{self,Action,View};
 
 #[derive(Clone)]
 struct Detail {icon:u32,name:String,info:String,caption:String,stats:String,skill:String}
-static RARITIES:LazyLock<HashMap<u32,u8>>=LazyLock::new(||include_str!("../../scene-assets/reward-rarities.tsv").lines().chain(include_str!("../../scene-assets/affix-rarities.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-rarities.tsv").lines()).map(|line| {
+static RARITIES:LazyLock<HashMap<u32,u8>>=LazyLock::new(||include_str!("../../scene-assets/reward-rarities.tsv").lines().chain(include_str!("../../scene-assets/affix-rarities.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-rarities.tsv").lines()).chain(include_str!("../../scene-assets/talisman-rarities.tsv").lines()).map(|line| {
     let (id,rarity)=line.split_once('\t').unwrap();(id.parse().unwrap(),rarity.parse().unwrap())
 }).collect());
 pub fn item_quality(id:u32)->u8 {RARITIES.get(&erdtree_tower::rewards::spirit_base(id)).copied().unwrap_or(0).min(3)}
@@ -38,7 +38,7 @@ fn card_light(tier:usize,selected:bool,hover:bool,time:f64)->u8 {
     (base+if tier==3 {15.0*(time*std::f64::consts::TAU/3.6).sin()}else{0.0}) as u8
 }
 static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
-    let mut result:HashMap<u32,Detail>=include_str!("../../scene-assets/reward-details.tsv").lines().chain(include_str!("../../scene-assets/affix-details.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-details.tsv").lines()).map(|line| {
+    let mut result:HashMap<u32,Detail>=include_str!("../../scene-assets/reward-details.tsv").lines().chain(include_str!("../../scene-assets/affix-details.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-details.tsv").lines()).chain(include_str!("../../scene-assets/talisman-details.tsv").lines()).map(|line| {
         let p:Vec<_>=line.split('\t').collect();
         (p[0].parse().unwrap(),Detail{icon:p[1].parse().unwrap(),name:p[2].into(),info:p[3].replace("\\n","\n"),caption:p[4].replace("\\n","\n"),stats:p[5].replace("\\n","\n"),skill:p[6].replace("\\n","\n")})
     }).collect();
@@ -524,6 +524,14 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
     }
     for detail in DETAILS.values(){panel.textures.insert(detail.icon,Some(TextureId::new(detail.icon as usize+1)));}
     if let Some(path)=&output {
+        let mut talismans=run.clone();
+        talismans.phase=Phase::Reward{id:0,offers:[("生命护符",2),("汲灵护符",3),("雷龙爆发护符",3)].into_iter().map(|(name,tier)|Reward::Item(erdtree_tower::talismans::CATALOG.iter().find(|i|i.name.ends_with(name)&&erdtree_tower::talismans::tier(i.id)==Some(tier)).unwrap().id)).collect()};
+        context.io_mut().display_size=[1920.0,1080.0];
+        for details in [false,true] {
+            for _ in 0..4 {panel.draw(context.frame(),&talismans,&view);context.render();panel.selection.selected=1;panel.selection.details=details;}
+            panel.draw(context.frame(),&talismans,&view);let data=context.render();
+            write_frame(&path.join(if details{"talisman-details-1920.draw"}else{"talismans-1920.draw"}),data,1920,1080);
+        }
         let mut colored=run.clone();
         colored.phase=Phase::Reward{id:0,offers:(1..=3).map(|tier|Reward::Item(erdtree_tower::affixes::CATALOG.iter().find(|i|erdtree_tower::affixes::base(i.id)==1000000&&erdtree_tower::affixes::tier(i.id)==Some(tier)&&erdtree_tower::affixes::profile(i.id)==Some(0)).unwrap().id)).collect()};
         context.io_mut().display_size=[1920.0,1080.0];
@@ -688,6 +696,24 @@ pub fn test_pad_frames(context:&mut hudhook::imgui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn talisman_variants_have_chinese_details_icons_and_matching_rarity() {
+        for item in erdtree_tower::talismans::CATALOG.iter() {
+            let d=&DETAILS[&item.id];assert_eq!(d.name,item.name);assert!(!d.info.is_empty()&&!d.caption.is_empty());
+            assert_eq!(item_quality(item.id),erdtree_tower::talismans::tier(item.id).unwrap());
+            assert_eq!(std::fs::metadata(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scene-assets/reward-icons").join(format!("{}.rgba",d.icon))).unwrap().len(),102400);
+        }
+    }
+    #[test]
+    fn fixed_skill_crossbows_keep_their_real_description() {
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        for id in [43000000,44000000] {
+            assert!(!crate::random_ashes::eligible(id));
+            let detail=offer_detail(&run,3,0,&Reward::Item(id)).unwrap();
+            assert!(!detail.skill.is_empty());assert!(!detail.skill.contains("获得时独立随机"));
+            assert_eq!(detail.skill,DETAILS[&id].skill);
+        }
+    }
     #[test]
     fn card_and_details_show_the_same_gem_used_by_delivery() {
         let run=Run::new(42,erdtree_tower::Class::Samurai);

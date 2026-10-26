@@ -1,0 +1,3332 @@
+[
+  {
+    "id": 960100,
+    "sourceEffect": 7002000,
+    "effect": 57002000,
+    "kind": "strength",
+    "tier": 0,
+    "onHit": false,
+    "group": 25388
+  },
+  {
+    "id": 960101,
+    "sourceEffect": 7002010,
+    "effect": 57002010,
+    "kind": "strength",
+    "tier": 1,
+    "onHit": false,
+    "group": 25389
+  },
+  {
+    "id": 960102,
+    "sourceEffect": 7002020,
+    "effect": 57002020,
+    "kind": "strength",
+    "tier": 2,
+    "onHit": false,
+    "group": 25390
+  },
+  {
+    "id": 960103,
+    "sourceEffect": 7002030,
+    "effect": 57002030,
+    "kind": "strength",
+    "tier": 3,
+    "onHit": false,
+    "group": 25391
+  },
+  {
+    "id": 960104,
+    "sourceEffect": 7002040,
+    "effect": 57002040,
+    "kind": "agility",
+    "tier": 0,
+    "onHit": false,
+    "group": 25000
+  },
+  {
+    "id": 960105,
+    "sourceEffect": 7002050,
+    "effect": 57002050,
+    "kind": "agility",
+    "tier": 1,
+    "onHit": false,
+    "group": 25001
+  },
+  {
+    "id": 960106,
+    "sourceEffect": 7002060,
+    "effect": 57002060,
+    "kind": "agility",
+    "tier": 2,
+    "onHit": false,
+    "group": 25002
+  },
+  {
+    "id": 960107,
+    "sourceEffect": 7002070,
+    "effect": 57002070,
+    "kind": "agility",
+    "tier": 3,
+    "onHit": false,
+    "group": 25003
+  },
+  {
+    "id": 960108,
+    "sourceEffect": 7002080,
+    "effect": 57002080,
+    "kind": "intelligence",
+    "tier": 0,
+    "onHit": false,
+    "group": 25216
+  },
+  {
+    "id": 960109,
+    "sourceEffect": 7002090,
+    "effect": 57002090,
+    "kind": "intelligence",
+    "tier": 1,
+    "onHit": false,
+    "group": 25217
+  },
+  {
+    "id": 960110,
+    "sourceEffect": 7002100,
+    "effect": 57002100,
+    "kind": "intelligence",
+    "tier": 2,
+    "onHit": false,
+    "group": 25218
+  },
+  {
+    "id": 960111,
+    "sourceEffect": 7002110,
+    "effect": 57002110,
+    "kind": "intelligence",
+    "tier": 3,
+    "onHit": false,
+    "group": 25219
+  },
+  {
+    "id": 960112,
+    "sourceEffect": 7002120,
+    "effect": 57002120,
+    "kind": "praying",
+    "tier": 0,
+    "onHit": false,
+    "group": 25316
+  },
+  {
+    "id": 960113,
+    "sourceEffect": 7002130,
+    "effect": 57002130,
+    "kind": "praying",
+    "tier": 1,
+    "onHit": false,
+    "group": 25317
+  },
+  {
+    "id": 960114,
+    "sourceEffect": 7002140,
+    "effect": 57002140,
+    "kind": "praying",
+    "tier": 2,
+    "onHit": false,
+    "group": 25318
+  },
+  {
+    "id": 960115,
+    "sourceEffect": 7002150,
+    "effect": 57002150,
+    "kind": "praying",
+    "tier": 3,
+    "onHit": false,
+    "group": 25319
+  },
+  {
+    "id": 960116,
+    "sourceEffect": 7002160,
+    "effect": 57002160,
+    "kind": "arcanum",
+    "tier": 0,
+    "onHit": false,
+    "group": 25004
+  },
+  {
+    "id": 960117,
+    "sourceEffect": 7002170,
+    "effect": 57002170,
+    "kind": "arcanum",
+    "tier": 1,
+    "onHit": false,
+    "group": 25005
+  },
+  {
+    "id": 960118,
+    "sourceEffect": 7002180,
+    "effect": 57002180,
+    "kind": "arcanum",
+    "tier": 2,
+    "onHit": false,
+    "group": 25006
+  },
+  {
+    "id": 960119,
+    "sourceEffect": 7002190,
+    "effect": 57002190,
+    "kind": "arcanum",
+    "tier": 3,
+    "onHit": false,
+    "group": 25007
+  },
+  {
+    "id": 960120,
+    "sourceEffect": 7002200,
+    "effect": 57002200,
+    "kind": "faster breath",
+    "tier": 0,
+    "onHit": false,
+    "group": 25120
+  },
+  {
+    "id": 960121,
+    "sourceEffect": 7002210,
+    "effect": 57002210,
+    "kind": "faster breath",
+    "tier": 1,
+    "onHit": false,
+    "group": 25121
+  },
+  {
+    "id": 960122,
+    "sourceEffect": 7002220,
+    "effect": 57002220,
+    "kind": "faster breath",
+    "tier": 2,
+    "onHit": false,
+    "group": 25122
+  },
+  {
+    "id": 960123,
+    "sourceEffect": 7002230,
+    "effect": 57002230,
+    "kind": "faster breath",
+    "tier": 3,
+    "onHit": false,
+    "group": 25123
+  },
+  {
+    "id": 960124,
+    "sourceEffect": 7002240,
+    "effect": 57002240,
+    "kind": "long shoot",
+    "tier": 0,
+    "onHit": false,
+    "group": 25252
+  },
+  {
+    "id": 960125,
+    "sourceEffect": 7002250,
+    "effect": 57002250,
+    "kind": "long shoot",
+    "tier": 1,
+    "onHit": false,
+    "group": 25253
+  },
+  {
+    "id": 960126,
+    "sourceEffect": 7002260,
+    "effect": 57002260,
+    "kind": "long shoot",
+    "tier": 2,
+    "onHit": false,
+    "group": 25254
+  },
+  {
+    "id": 960127,
+    "sourceEffect": 7002270,
+    "effect": 57002270,
+    "kind": "long shoot",
+    "tier": 3,
+    "onHit": false,
+    "group": 25255
+  },
+  {
+    "id": 960128,
+    "sourceEffect": 7002280,
+    "effect": 57002280,
+    "kind": "faster casting",
+    "tier": 0,
+    "onHit": false,
+    "group": 25124
+  },
+  {
+    "id": 960129,
+    "sourceEffect": 7002290,
+    "effect": 57002290,
+    "kind": "faster casting",
+    "tier": 1,
+    "onHit": false,
+    "group": 25125
+  },
+  {
+    "id": 960130,
+    "sourceEffect": 7002300,
+    "effect": 57002300,
+    "kind": "faster casting",
+    "tier": 2,
+    "onHit": false,
+    "group": 25126
+  },
+  {
+    "id": 960131,
+    "sourceEffect": 7002310,
+    "effect": 57002310,
+    "kind": "faster casting",
+    "tier": 3,
+    "onHit": false,
+    "group": 25127
+  },
+  {
+    "id": 960132,
+    "sourceEffect": 7002320,
+    "effect": 57002320,
+    "kind": "everlasting memory",
+    "tier": 0,
+    "onHit": false,
+    "group": 25100
+  },
+  {
+    "id": 960133,
+    "sourceEffect": 7002330,
+    "effect": 57002330,
+    "kind": "everlasting memory",
+    "tier": 1,
+    "onHit": false,
+    "group": 25101
+  },
+  {
+    "id": 960134,
+    "sourceEffect": 7002340,
+    "effect": 57002340,
+    "kind": "everlasting memory",
+    "tier": 2,
+    "onHit": false,
+    "group": 25102
+  },
+  {
+    "id": 960135,
+    "sourceEffect": 7002350,
+    "effect": 57002350,
+    "kind": "everlasting memory",
+    "tier": 3,
+    "onHit": false,
+    "group": 25103
+  },
+  {
+    "id": 960136,
+    "sourceEffect": 7002360,
+    "effect": 57002360,
+    "kind": "mottled skin",
+    "tier": 0,
+    "onHit": false,
+    "group": 25288
+  },
+  {
+    "id": 960137,
+    "sourceEffect": 7002370,
+    "effect": 57002370,
+    "kind": "mottled skin",
+    "tier": 1,
+    "onHit": false,
+    "group": 25289
+  },
+  {
+    "id": 960138,
+    "sourceEffect": 7002380,
+    "effect": 57002380,
+    "kind": "mottled skin",
+    "tier": 2,
+    "onHit": false,
+    "group": 25290
+  },
+  {
+    "id": 960139,
+    "sourceEffect": 7002390,
+    "effect": 57002390,
+    "kind": "mottled skin",
+    "tier": 3,
+    "onHit": false,
+    "group": 25291
+  },
+  {
+    "id": 960140,
+    "sourceEffect": 7002400,
+    "effect": 57002400,
+    "kind": "second breath",
+    "tier": 0,
+    "onHit": false,
+    "group": 25336
+  },
+  {
+    "id": 960141,
+    "sourceEffect": 7002410,
+    "effect": 57002410,
+    "kind": "second breath",
+    "tier": 1,
+    "onHit": false,
+    "group": 25337
+  },
+  {
+    "id": 960142,
+    "sourceEffect": 7002420,
+    "effect": 57002420,
+    "kind": "second breath",
+    "tier": 2,
+    "onHit": false,
+    "group": 25338
+  },
+  {
+    "id": 960143,
+    "sourceEffect": 7002430,
+    "effect": 57002430,
+    "kind": "second breath",
+    "tier": 3,
+    "onHit": false,
+    "group": 25339
+  },
+  {
+    "id": 960144,
+    "sourceEffect": 7002440,
+    "effect": 57002440,
+    "kind": "vitality",
+    "tier": 0,
+    "onHit": false,
+    "group": 25420
+  },
+  {
+    "id": 960145,
+    "sourceEffect": 7002450,
+    "effect": 57002450,
+    "kind": "vitality",
+    "tier": 1,
+    "onHit": false,
+    "group": 25421
+  },
+  {
+    "id": 960146,
+    "sourceEffect": 7002460,
+    "effect": 57002460,
+    "kind": "vitality",
+    "tier": 2,
+    "onHit": false,
+    "group": 25422
+  },
+  {
+    "id": 960147,
+    "sourceEffect": 7002470,
+    "effect": 57002470,
+    "kind": "vitality",
+    "tier": 3,
+    "onHit": false,
+    "group": 25423
+  },
+  {
+    "id": 960148,
+    "sourceEffect": 7002480,
+    "effect": 57002480,
+    "kind": "mana",
+    "tier": 0,
+    "onHit": false,
+    "group": 25276
+  },
+  {
+    "id": 960149,
+    "sourceEffect": 7002490,
+    "effect": 57002490,
+    "kind": "mana",
+    "tier": 1,
+    "onHit": false,
+    "group": 25277
+  },
+  {
+    "id": 960150,
+    "sourceEffect": 7002500,
+    "effect": 57002500,
+    "kind": "mana",
+    "tier": 2,
+    "onHit": false,
+    "group": 25278
+  },
+  {
+    "id": 960151,
+    "sourceEffect": 7002510,
+    "effect": 57002510,
+    "kind": "mana",
+    "tier": 3,
+    "onHit": false,
+    "group": 25279
+  },
+  {
+    "id": 960152,
+    "sourceEffect": 7002520,
+    "effect": 57002520,
+    "kind": "hard smashing",
+    "tier": 0,
+    "onHit": false,
+    "group": 25200
+  },
+  {
+    "id": 960153,
+    "sourceEffect": 7002530,
+    "effect": 57002530,
+    "kind": "hard smashing",
+    "tier": 1,
+    "onHit": false,
+    "group": 25201
+  },
+  {
+    "id": 960154,
+    "sourceEffect": 7002540,
+    "effect": 57002540,
+    "kind": "hard smashing",
+    "tier": 2,
+    "onHit": false,
+    "group": 25202
+  },
+  {
+    "id": 960155,
+    "sourceEffect": 7002550,
+    "effect": 57002550,
+    "kind": "hard smashing",
+    "tier": 3,
+    "onHit": false,
+    "group": 25203
+  },
+  {
+    "id": 960156,
+    "sourceEffect": 7002560,
+    "effect": 57002560,
+    "kind": "falling sword",
+    "tier": 0,
+    "onHit": false,
+    "group": 25116
+  },
+  {
+    "id": 960157,
+    "sourceEffect": 7002570,
+    "effect": 57002570,
+    "kind": "falling sword",
+    "tier": 1,
+    "onHit": false,
+    "group": 25117
+  },
+  {
+    "id": 960158,
+    "sourceEffect": 7002580,
+    "effect": 57002580,
+    "kind": "falling sword",
+    "tier": 2,
+    "onHit": false,
+    "group": 25118
+  },
+  {
+    "id": 960159,
+    "sourceEffect": 7002590,
+    "effect": 57002590,
+    "kind": "falling sword",
+    "tier": 3,
+    "onHit": false,
+    "group": 25119
+  },
+  {
+    "id": 960160,
+    "sourceEffect": 7002600,
+    "effect": 57002600,
+    "kind": "spiked shell",
+    "tier": 0,
+    "onHit": false,
+    "group": 25368
+  },
+  {
+    "id": 960161,
+    "sourceEffect": 7002610,
+    "effect": 57002610,
+    "kind": "spiked shell",
+    "tier": 1,
+    "onHit": false,
+    "group": 25369
+  },
+  {
+    "id": 960162,
+    "sourceEffect": 7002620,
+    "effect": 57002620,
+    "kind": "spiked shell",
+    "tier": 2,
+    "onHit": false,
+    "group": 25370
+  },
+  {
+    "id": 960163,
+    "sourceEffect": 7002630,
+    "effect": 57002630,
+    "kind": "spiked shell",
+    "tier": 3,
+    "onHit": false,
+    "group": 25371
+  },
+  {
+    "id": 960164,
+    "sourceEffect": 7002640,
+    "effect": 57002640,
+    "kind": "deadly spear",
+    "tier": 0,
+    "onHit": false,
+    "group": 25068
+  },
+  {
+    "id": 960165,
+    "sourceEffect": 7002650,
+    "effect": 57002650,
+    "kind": "deadly spear",
+    "tier": 1,
+    "onHit": false,
+    "group": 25069
+  },
+  {
+    "id": 960166,
+    "sourceEffect": 7002660,
+    "effect": 57002660,
+    "kind": "deadly spear",
+    "tier": 2,
+    "onHit": false,
+    "group": 25070
+  },
+  {
+    "id": 960167,
+    "sourceEffect": 7002670,
+    "effect": 57002670,
+    "kind": "deadly spear",
+    "tier": 3,
+    "onHit": false,
+    "group": 25071
+  },
+  {
+    "id": 960168,
+    "sourceEffect": 7002680,
+    "effect": 57002680,
+    "kind": "quick learning",
+    "tier": 0,
+    "onHit": false,
+    "group": 25320
+  },
+  {
+    "id": 960169,
+    "sourceEffect": 7002690,
+    "effect": 57002690,
+    "kind": "quick learning",
+    "tier": 1,
+    "onHit": false,
+    "group": 25321
+  },
+  {
+    "id": 960170,
+    "sourceEffect": 7002700,
+    "effect": 57002700,
+    "kind": "quick learning",
+    "tier": 2,
+    "onHit": false,
+    "group": 25322
+  },
+  {
+    "id": 960171,
+    "sourceEffect": 7002710,
+    "effect": 57002710,
+    "kind": "quick learning",
+    "tier": 3,
+    "onHit": false,
+    "group": 25323
+  },
+  {
+    "id": 960172,
+    "sourceEffect": 7002720,
+    "effect": 57002720,
+    "kind": "finding",
+    "tier": 0,
+    "onHit": false,
+    "group": 25128
+  },
+  {
+    "id": 960173,
+    "sourceEffect": 7002730,
+    "effect": 57002730,
+    "kind": "finding",
+    "tier": 1,
+    "onHit": false,
+    "group": 25129
+  },
+  {
+    "id": 960174,
+    "sourceEffect": 7002740,
+    "effect": 57002740,
+    "kind": "finding",
+    "tier": 2,
+    "onHit": false,
+    "group": 25130
+  },
+  {
+    "id": 960175,
+    "sourceEffect": 7002750,
+    "effect": 57002750,
+    "kind": "finding",
+    "tier": 3,
+    "onHit": false,
+    "group": 25131
+  },
+  {
+    "id": 960176,
+    "sourceEffect": 7002760,
+    "effect": 57002760,
+    "kind": "backstabbing",
+    "tier": 0,
+    "onHit": false,
+    "group": 25008
+  },
+  {
+    "id": 960177,
+    "sourceEffect": 7002770,
+    "effect": 57002770,
+    "kind": "backstabbing",
+    "tier": 1,
+    "onHit": false,
+    "group": 25009
+  },
+  {
+    "id": 960178,
+    "sourceEffect": 7002780,
+    "effect": 57002780,
+    "kind": "backstabbing",
+    "tier": 2,
+    "onHit": false,
+    "group": 25010
+  },
+  {
+    "id": 960179,
+    "sourceEffect": 7002790,
+    "effect": 57002790,
+    "kind": "backstabbing",
+    "tier": 3,
+    "onHit": false,
+    "group": 25011
+  },
+  {
+    "id": 960180,
+    "sourceEffect": 7002800,
+    "effect": 57002800,
+    "kind": "commitment",
+    "tier": 0,
+    "onHit": false,
+    "group": 25048
+  },
+  {
+    "id": 960181,
+    "sourceEffect": 7002810,
+    "effect": 57002810,
+    "kind": "commitment",
+    "tier": 1,
+    "onHit": false,
+    "group": 25049
+  },
+  {
+    "id": 960182,
+    "sourceEffect": 7002820,
+    "effect": 57002820,
+    "kind": "commitment",
+    "tier": 2,
+    "onHit": false,
+    "group": 25050
+  },
+  {
+    "id": 960183,
+    "sourceEffect": 7002830,
+    "effect": 57002830,
+    "kind": "commitment",
+    "tier": 3,
+    "onHit": false,
+    "group": 25051
+  },
+  {
+    "id": 960184,
+    "sourceEffect": 7002840,
+    "effect": 57002840,
+    "kind": "heavy lifting",
+    "tier": 0,
+    "onHit": false,
+    "group": 25208
+  },
+  {
+    "id": 960185,
+    "sourceEffect": 7002850,
+    "effect": 57002850,
+    "kind": "heavy lifting",
+    "tier": 1,
+    "onHit": false,
+    "group": 25209
+  },
+  {
+    "id": 960186,
+    "sourceEffect": 7002860,
+    "effect": 57002860,
+    "kind": "heavy lifting",
+    "tier": 2,
+    "onHit": false,
+    "group": 25210
+  },
+  {
+    "id": 960187,
+    "sourceEffect": 7002870,
+    "effect": 57002870,
+    "kind": "heavy lifting",
+    "tier": 3,
+    "onHit": false,
+    "group": 25211
+  },
+  {
+    "id": 960188,
+    "sourceEffect": 7002880,
+    "effect": 57002880,
+    "kind": "closing wounds",
+    "tier": 0,
+    "onHit": false,
+    "group": 25044
+  },
+  {
+    "id": 960189,
+    "sourceEffect": 7002890,
+    "effect": 57002890,
+    "kind": "closing wounds",
+    "tier": 1,
+    "onHit": false,
+    "group": 25045
+  },
+  {
+    "id": 960190,
+    "sourceEffect": 7002900,
+    "effect": 57002900,
+    "kind": "closing wounds",
+    "tier": 2,
+    "onHit": false,
+    "group": 25046
+  },
+  {
+    "id": 960191,
+    "sourceEffect": 7002910,
+    "effect": 57002910,
+    "kind": "closing wounds",
+    "tier": 3,
+    "onHit": false,
+    "group": 25047
+  },
+  {
+    "id": 960192,
+    "sourceEffect": 7002920,
+    "effect": 57002920,
+    "kind": "stars wind",
+    "tier": 0,
+    "onHit": false,
+    "group": 25376
+  },
+  {
+    "id": 960193,
+    "sourceEffect": 7002930,
+    "effect": 57002930,
+    "kind": "stars wind",
+    "tier": 1,
+    "onHit": false,
+    "group": 25377
+  },
+  {
+    "id": 960194,
+    "sourceEffect": 7002940,
+    "effect": 57002940,
+    "kind": "stars wind",
+    "tier": 2,
+    "onHit": false,
+    "group": 25378
+  },
+  {
+    "id": 960195,
+    "sourceEffect": 7002950,
+    "effect": 57002950,
+    "kind": "stars wind",
+    "tier": 3,
+    "onHit": false,
+    "group": 25379
+  },
+  {
+    "id": 960196,
+    "sourceEffect": 7002960,
+    "effect": 57002960,
+    "kind": "vigorous strength",
+    "tier": 0,
+    "onHit": false,
+    "group": 25416
+  },
+  {
+    "id": 960197,
+    "sourceEffect": 7002970,
+    "effect": 57002970,
+    "kind": "vigorous strength",
+    "tier": 1,
+    "onHit": false,
+    "group": 25417
+  },
+  {
+    "id": 960198,
+    "sourceEffect": 7002980,
+    "effect": 57002980,
+    "kind": "vigorous strength",
+    "tier": 2,
+    "onHit": false,
+    "group": 25418
+  },
+  {
+    "id": 960199,
+    "sourceEffect": 7002990,
+    "effect": 57002990,
+    "kind": "vigorous strength",
+    "tier": 3,
+    "onHit": false,
+    "group": 25419
+  },
+  {
+    "id": 960200,
+    "sourceEffect": 7003000,
+    "effect": 57003000,
+    "kind": "fully charged power",
+    "tier": 0,
+    "onHit": false,
+    "group": 25144
+  },
+  {
+    "id": 960201,
+    "sourceEffect": 7003010,
+    "effect": 57003010,
+    "kind": "fully charged power",
+    "tier": 1,
+    "onHit": false,
+    "group": 25145
+  },
+  {
+    "id": 960202,
+    "sourceEffect": 7003020,
+    "effect": 57003020,
+    "kind": "fully charged power",
+    "tier": 2,
+    "onHit": false,
+    "group": 25146
+  },
+  {
+    "id": 960203,
+    "sourceEffect": 7003030,
+    "effect": 57003030,
+    "kind": "fully charged power",
+    "tier": 3,
+    "onHit": false,
+    "group": 25147
+  },
+  {
+    "id": 960204,
+    "sourceEffect": 7003040,
+    "effect": 57003040,
+    "kind": "strong weapon ash",
+    "tier": 0,
+    "onHit": false,
+    "group": 25392
+  },
+  {
+    "id": 960205,
+    "sourceEffect": 7003050,
+    "effect": 57003050,
+    "kind": "strong weapon ash",
+    "tier": 1,
+    "onHit": false,
+    "group": 25393
+  },
+  {
+    "id": 960206,
+    "sourceEffect": 7003060,
+    "effect": 57003060,
+    "kind": "strong weapon ash",
+    "tier": 2,
+    "onHit": false,
+    "group": 25394
+  },
+  {
+    "id": 960207,
+    "sourceEffect": 7003070,
+    "effect": 57003070,
+    "kind": "strong weapon ash",
+    "tier": 3,
+    "onHit": false,
+    "group": 25395
+  },
+  {
+    "id": 960208,
+    "sourceEffect": 7003080,
+    "effect": 57003080,
+    "kind": "optimized casting",
+    "tier": 0,
+    "onHit": false,
+    "group": 25296
+  },
+  {
+    "id": 960209,
+    "sourceEffect": 7003090,
+    "effect": 57003090,
+    "kind": "optimized casting",
+    "tier": 1,
+    "onHit": false,
+    "group": 25297
+  },
+  {
+    "id": 960210,
+    "sourceEffect": 7003100,
+    "effect": 57003100,
+    "kind": "optimized casting",
+    "tier": 2,
+    "onHit": false,
+    "group": 25298
+  },
+  {
+    "id": 960211,
+    "sourceEffect": 7003110,
+    "effect": 57003110,
+    "kind": "optimized casting",
+    "tier": 3,
+    "onHit": false,
+    "group": 25299
+  },
+  {
+    "id": 960212,
+    "sourceEffect": 7003120,
+    "effect": 57003120,
+    "kind": "optimized slashing",
+    "tier": 0,
+    "onHit": false,
+    "group": 25300
+  },
+  {
+    "id": 960213,
+    "sourceEffect": 7003130,
+    "effect": 57003130,
+    "kind": "optimized slashing",
+    "tier": 1,
+    "onHit": false,
+    "group": 25301
+  },
+  {
+    "id": 960214,
+    "sourceEffect": 7003140,
+    "effect": 57003140,
+    "kind": "optimized slashing",
+    "tier": 2,
+    "onHit": false,
+    "group": 25302
+  },
+  {
+    "id": 960215,
+    "sourceEffect": 7003150,
+    "effect": 57003150,
+    "kind": "optimized slashing",
+    "tier": 3,
+    "onHit": false,
+    "group": 25303
+  },
+  {
+    "id": 960216,
+    "sourceEffect": 7003160,
+    "effect": 57003160,
+    "kind": "spiritual drink",
+    "tier": 0,
+    "onHit": false,
+    "group": 25372
+  },
+  {
+    "id": 960217,
+    "sourceEffect": 7003170,
+    "effect": 57003170,
+    "kind": "spiritual drink",
+    "tier": 1,
+    "onHit": false,
+    "group": 25373
+  },
+  {
+    "id": 960218,
+    "sourceEffect": 7003180,
+    "effect": 57003180,
+    "kind": "spiritual drink",
+    "tier": 2,
+    "onHit": false,
+    "group": 25374
+  },
+  {
+    "id": 960219,
+    "sourceEffect": 7003190,
+    "effect": 57003190,
+    "kind": "spiritual drink",
+    "tier": 3,
+    "onHit": false,
+    "group": 25375
+  },
+  {
+    "id": 960220,
+    "sourceEffect": 7003200,
+    "effect": 57003200,
+    "kind": "revitalizing drink",
+    "tier": 0,
+    "onHit": false,
+    "group": 25328
+  },
+  {
+    "id": 960221,
+    "sourceEffect": 7003210,
+    "effect": 57003210,
+    "kind": "revitalizing drink",
+    "tier": 1,
+    "onHit": false,
+    "group": 25329
+  },
+  {
+    "id": 960222,
+    "sourceEffect": 7003220,
+    "effect": 57003220,
+    "kind": "revitalizing drink",
+    "tier": 2,
+    "onHit": false,
+    "group": 25330
+  },
+  {
+    "id": 960223,
+    "sourceEffect": 7003230,
+    "effect": 57003230,
+    "kind": "revitalizing drink",
+    "tier": 3,
+    "onHit": false,
+    "group": 25331
+  },
+  {
+    "id": 960224,
+    "sourceEffect": 7003240,
+    "effect": 57003240,
+    "kind": "heavy guard",
+    "tier": 0,
+    "onHit": false,
+    "group": 25204
+  },
+  {
+    "id": 960225,
+    "sourceEffect": 7003250,
+    "effect": 57003250,
+    "kind": "heavy guard",
+    "tier": 1,
+    "onHit": false,
+    "group": 25205
+  },
+  {
+    "id": 960226,
+    "sourceEffect": 7003260,
+    "effect": 57003260,
+    "kind": "heavy guard",
+    "tier": 2,
+    "onHit": false,
+    "group": 25206
+  },
+  {
+    "id": 960227,
+    "sourceEffect": 7003270,
+    "effect": 57003270,
+    "kind": "heavy guard",
+    "tier": 3,
+    "onHit": false,
+    "group": 25207
+  },
+  {
+    "id": 960228,
+    "sourceEffect": 7003280,
+    "effect": 57003280,
+    "kind": "lingering magic",
+    "tier": 0,
+    "onHit": false,
+    "group": 25244
+  },
+  {
+    "id": 960229,
+    "sourceEffect": 7003290,
+    "effect": 57003290,
+    "kind": "lingering magic",
+    "tier": 1,
+    "onHit": false,
+    "group": 25245
+  },
+  {
+    "id": 960230,
+    "sourceEffect": 7003300,
+    "effect": 57003300,
+    "kind": "lingering magic",
+    "tier": 2,
+    "onHit": false,
+    "group": 25246
+  },
+  {
+    "id": 960231,
+    "sourceEffect": 7003310,
+    "effect": 57003310,
+    "kind": "lingering magic",
+    "tier": 3,
+    "onHit": false,
+    "group": 25247
+  },
+  {
+    "id": 960232,
+    "sourceEffect": 7003320,
+    "effect": 57003320,
+    "kind": "earth dragon scales",
+    "tier": 0,
+    "onHit": false,
+    "group": 25096
+  },
+  {
+    "id": 960233,
+    "sourceEffect": 7003330,
+    "effect": 57003330,
+    "kind": "earth dragon scales",
+    "tier": 1,
+    "onHit": false,
+    "group": 25097
+  },
+  {
+    "id": 960234,
+    "sourceEffect": 7003340,
+    "effect": 57003340,
+    "kind": "earth dragon scales",
+    "tier": 2,
+    "onHit": false,
+    "group": 25098
+  },
+  {
+    "id": 960235,
+    "sourceEffect": 7003350,
+    "effect": 57003350,
+    "kind": "earth dragon scales",
+    "tier": 3,
+    "onHit": false,
+    "group": 25099
+  },
+  {
+    "id": 960236,
+    "sourceEffect": 7003360,
+    "effect": 57003360,
+    "kind": "glintstone dragon scales",
+    "tier": 0,
+    "onHit": false,
+    "group": 25164
+  },
+  {
+    "id": 960237,
+    "sourceEffect": 7003370,
+    "effect": 57003370,
+    "kind": "glintstone dragon scales",
+    "tier": 1,
+    "onHit": false,
+    "group": 25165
+  },
+  {
+    "id": 960238,
+    "sourceEffect": 7003380,
+    "effect": 57003380,
+    "kind": "glintstone dragon scales",
+    "tier": 2,
+    "onHit": false,
+    "group": 25166
+  },
+  {
+    "id": 960239,
+    "sourceEffect": 7003390,
+    "effect": 57003390,
+    "kind": "glintstone dragon scales",
+    "tier": 3,
+    "onHit": false,
+    "group": 25167
+  },
+  {
+    "id": 960240,
+    "sourceEffect": 7003400,
+    "effect": 57003400,
+    "kind": "fire dragon scales",
+    "tier": 0,
+    "onHit": false,
+    "group": 25132
+  },
+  {
+    "id": 960241,
+    "sourceEffect": 7003410,
+    "effect": 57003410,
+    "kind": "fire dragon scales",
+    "tier": 1,
+    "onHit": false,
+    "group": 25133
+  },
+  {
+    "id": 960242,
+    "sourceEffect": 7003420,
+    "effect": 57003420,
+    "kind": "fire dragon scales",
+    "tier": 2,
+    "onHit": false,
+    "group": 25134
+  },
+  {
+    "id": 960243,
+    "sourceEffect": 7003430,
+    "effect": 57003430,
+    "kind": "fire dragon scales",
+    "tier": 3,
+    "onHit": false,
+    "group": 25135
+  },
+  {
+    "id": 960244,
+    "sourceEffect": 7003440,
+    "effect": 57003440,
+    "kind": "thunder dragon scales",
+    "tier": 0,
+    "onHit": false,
+    "group": 25412
+  },
+  {
+    "id": 960245,
+    "sourceEffect": 7003450,
+    "effect": 57003450,
+    "kind": "thunder dragon scales",
+    "tier": 1,
+    "onHit": false,
+    "group": 25413
+  },
+  {
+    "id": 960246,
+    "sourceEffect": 7003460,
+    "effect": 57003460,
+    "kind": "thunder dragon scales",
+    "tier": 2,
+    "onHit": false,
+    "group": 25414
+  },
+  {
+    "id": 960247,
+    "sourceEffect": 7003470,
+    "effect": 57003470,
+    "kind": "thunder dragon scales",
+    "tier": 3,
+    "onHit": false,
+    "group": 25415
+  },
+  {
+    "id": 960248,
+    "sourceEffect": 7003480,
+    "effect": 57003480,
+    "kind": "golden dragon scales",
+    "tier": 0,
+    "onHit": false,
+    "group": 25180
+  },
+  {
+    "id": 960249,
+    "sourceEffect": 7003490,
+    "effect": 57003490,
+    "kind": "golden dragon scales",
+    "tier": 1,
+    "onHit": false,
+    "group": 25181
+  },
+  {
+    "id": 960250,
+    "sourceEffect": 7003500,
+    "effect": 57003500,
+    "kind": "golden dragon scales",
+    "tier": 2,
+    "onHit": false,
+    "group": 25182
+  },
+  {
+    "id": 960251,
+    "sourceEffect": 7003510,
+    "effect": 57003510,
+    "kind": "golden dragon scales",
+    "tier": 3,
+    "onHit": false,
+    "group": 25183
+  },
+  {
+    "id": 960252,
+    "sourceEffect": 7003520,
+    "effect": 57003520,
+    "kind": "long forgotten dragon scales",
+    "tier": 0,
+    "onHit": false,
+    "group": 25248
+  },
+  {
+    "id": 960253,
+    "sourceEffect": 7003530,
+    "effect": 57003530,
+    "kind": "long forgotten dragon scales",
+    "tier": 1,
+    "onHit": false,
+    "group": 25249
+  },
+  {
+    "id": 960254,
+    "sourceEffect": 7003540,
+    "effect": 57003540,
+    "kind": "long forgotten dragon scales",
+    "tier": 2,
+    "onHit": false,
+    "group": 25250
+  },
+  {
+    "id": 960255,
+    "sourceEffect": 7003550,
+    "effect": 57003550,
+    "kind": "long forgotten dragon scales",
+    "tier": 3,
+    "onHit": false,
+    "group": 25251
+  },
+  {
+    "id": 960256,
+    "sourceEffect": 7003560,
+    "effect": 57003560,
+    "kind": "deadly dance",
+    "tier": 0,
+    "onHit": false,
+    "group": 25064
+  },
+  {
+    "id": 960257,
+    "sourceEffect": 7003570,
+    "effect": 57003570,
+    "kind": "deadly dance",
+    "tier": 1,
+    "onHit": false,
+    "group": 25065
+  },
+  {
+    "id": 960258,
+    "sourceEffect": 7003580,
+    "effect": 57003580,
+    "kind": "deadly dance",
+    "tier": 2,
+    "onHit": false,
+    "group": 25066
+  },
+  {
+    "id": 960259,
+    "sourceEffect": 7003590,
+    "effect": 57003590,
+    "kind": "deadly dance",
+    "tier": 3,
+    "onHit": false,
+    "group": 25067
+  },
+  {
+    "id": 960260,
+    "sourceEffect": 7003600,
+    "effect": 57003600,
+    "kind": "furious roar",
+    "tier": 0,
+    "onHit": false,
+    "group": 25148
+  },
+  {
+    "id": 960261,
+    "sourceEffect": 7003610,
+    "effect": 57003610,
+    "kind": "furious roar",
+    "tier": 1,
+    "onHit": false,
+    "group": 25149
+  },
+  {
+    "id": 960262,
+    "sourceEffect": 7003620,
+    "effect": 57003620,
+    "kind": "furious roar",
+    "tier": 2,
+    "onHit": false,
+    "group": 25150
+  },
+  {
+    "id": 960263,
+    "sourceEffect": 7003630,
+    "effect": 57003630,
+    "kind": "furious roar",
+    "tier": 3,
+    "onHit": false,
+    "group": 25151
+  },
+  {
+    "id": 960264,
+    "sourceEffect": 7003640,
+    "effect": 57003640,
+    "kind": "perfumer",
+    "tier": 0,
+    "onHit": false,
+    "group": 25304
+  },
+  {
+    "id": 960265,
+    "sourceEffect": 7003650,
+    "effect": 57003650,
+    "kind": "perfumer",
+    "tier": 1,
+    "onHit": false,
+    "group": 25305
+  },
+  {
+    "id": 960266,
+    "sourceEffect": 7003660,
+    "effect": 57003660,
+    "kind": "perfumer",
+    "tier": 2,
+    "onHit": false,
+    "group": 25306
+  },
+  {
+    "id": 960267,
+    "sourceEffect": 7003670,
+    "effect": 57003670,
+    "kind": "perfumer",
+    "tier": 3,
+    "onHit": false,
+    "group": 25307
+  },
+  {
+    "id": 960268,
+    "sourceEffect": 7003680,
+    "effect": 57003680,
+    "kind": "bull",
+    "tier": 0,
+    "onHit": false,
+    "group": 25028
+  },
+  {
+    "id": 960269,
+    "sourceEffect": 7003690,
+    "effect": 57003690,
+    "kind": "bull",
+    "tier": 1,
+    "onHit": false,
+    "group": 25029
+  },
+  {
+    "id": 960270,
+    "sourceEffect": 7003700,
+    "effect": 57003700,
+    "kind": "bull",
+    "tier": 2,
+    "onHit": false,
+    "group": 25030
+  },
+  {
+    "id": 960271,
+    "sourceEffect": 7003710,
+    "effect": 57003710,
+    "kind": "bull",
+    "tier": 3,
+    "onHit": false,
+    "group": 25031
+  },
+  {
+    "id": 960272,
+    "sourceEffect": 7003720,
+    "effect": 57003720,
+    "kind": "silent approach",
+    "tier": 0,
+    "onHit": false,
+    "group": 25340
+  },
+  {
+    "id": 960273,
+    "sourceEffect": 7003730,
+    "effect": 57003730,
+    "kind": "silent approach",
+    "tier": 1,
+    "onHit": false,
+    "group": 25341
+  },
+  {
+    "id": 960274,
+    "sourceEffect": 7003740,
+    "effect": 57003740,
+    "kind": "silent approach",
+    "tier": 2,
+    "onHit": false,
+    "group": 25342
+  },
+  {
+    "id": 960275,
+    "sourceEffect": 7003750,
+    "effect": 57003750,
+    "kind": "silent approach",
+    "tier": 3,
+    "onHit": false,
+    "group": 25343
+  },
+  {
+    "id": 960276,
+    "sourceEffect": 7003760,
+    "effect": 57003760,
+    "kind": "robust jar",
+    "tier": 0,
+    "onHit": false,
+    "group": 25332
+  },
+  {
+    "id": 960277,
+    "sourceEffect": 7003770,
+    "effect": 57003770,
+    "kind": "robust jar",
+    "tier": 1,
+    "onHit": false,
+    "group": 25333
+  },
+  {
+    "id": 960278,
+    "sourceEffect": 7003780,
+    "effect": 57003780,
+    "kind": "robust jar",
+    "tier": 2,
+    "onHit": false,
+    "group": 25334
+  },
+  {
+    "id": 960279,
+    "sourceEffect": 7003790,
+    "effect": 57003790,
+    "kind": "robust jar",
+    "tier": 3,
+    "onHit": false,
+    "group": 25335
+  },
+  {
+    "id": 960280,
+    "sourceEffect": 7003800,
+    "effect": 57003800,
+    "kind": "experienced rider",
+    "tier": 0,
+    "onHit": false,
+    "group": 25104
+  },
+  {
+    "id": 960281,
+    "sourceEffect": 7003810,
+    "effect": 57003810,
+    "kind": "experienced rider",
+    "tier": 1,
+    "onHit": false,
+    "group": 25105
+  },
+  {
+    "id": 960282,
+    "sourceEffect": 7003820,
+    "effect": 57003820,
+    "kind": "experienced rider",
+    "tier": 2,
+    "onHit": false,
+    "group": 25106
+  },
+  {
+    "id": 960283,
+    "sourceEffect": 7003830,
+    "effect": 57003830,
+    "kind": "experienced rider",
+    "tier": 3,
+    "onHit": false,
+    "group": 25107
+  },
+  {
+    "id": 960284,
+    "sourceEffect": 7003840,
+    "effect": 57003840,
+    "kind": "Moon Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25284
+  },
+  {
+    "id": 960285,
+    "sourceEffect": 7003850,
+    "effect": 57003850,
+    "kind": "Moon Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25285
+  },
+  {
+    "id": 960286,
+    "sourceEffect": 7003860,
+    "effect": 57003860,
+    "kind": "Moon Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25286
+  },
+  {
+    "id": 960287,
+    "sourceEffect": 7003870,
+    "effect": 57003870,
+    "kind": "Moon Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25287
+  },
+  {
+    "id": 960288,
+    "sourceEffect": 7003880,
+    "effect": 57003880,
+    "kind": "Carian Blade Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25032
+  },
+  {
+    "id": 960289,
+    "sourceEffect": 7003890,
+    "effect": 57003890,
+    "kind": "Carian Blade Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25033
+  },
+  {
+    "id": 960290,
+    "sourceEffect": 7003900,
+    "effect": 57003900,
+    "kind": "Carian Blade Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25034
+  },
+  {
+    "id": 960291,
+    "sourceEffect": 7003910,
+    "effect": 57003910,
+    "kind": "Carian Blade Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25035
+  },
+  {
+    "id": 960292,
+    "sourceEffect": 7003920,
+    "effect": 57003920,
+    "kind": "Glintblade Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25160
+  },
+  {
+    "id": 960293,
+    "sourceEffect": 7003930,
+    "effect": 57003930,
+    "kind": "Glintblade Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25161
+  },
+  {
+    "id": 960294,
+    "sourceEffect": 7003940,
+    "effect": 57003940,
+    "kind": "Glintblade Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25162
+  },
+  {
+    "id": 960295,
+    "sourceEffect": 7003950,
+    "effect": 57003950,
+    "kind": "Glintblade Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25163
+  },
+  {
+    "id": 960296,
+    "sourceEffect": 7003960,
+    "effect": 57003960,
+    "kind": "Digger Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25080
+  },
+  {
+    "id": 960297,
+    "sourceEffect": 7003970,
+    "effect": 57003970,
+    "kind": "Digger Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25081
+  },
+  {
+    "id": 960298,
+    "sourceEffect": 7003980,
+    "effect": 57003980,
+    "kind": "Digger Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25082
+  },
+  {
+    "id": 960299,
+    "sourceEffect": 7003990,
+    "effect": 57003990,
+    "kind": "Digger Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25083
+  },
+  {
+    "id": 960300,
+    "sourceEffect": 7004000,
+    "effect": 57004000,
+    "kind": "Crystal Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25060
+  },
+  {
+    "id": 960301,
+    "sourceEffect": 7004010,
+    "effect": 57004010,
+    "kind": "Crystal Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25061
+  },
+  {
+    "id": 960302,
+    "sourceEffect": 7004020,
+    "effect": 57004020,
+    "kind": "Crystal Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25062
+  },
+  {
+    "id": 960303,
+    "sourceEffect": 7004030,
+    "effect": 57004030,
+    "kind": "Crystal Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25063
+  },
+  {
+    "id": 960304,
+    "sourceEffect": 7004040,
+    "effect": 57004040,
+    "kind": "Lustat Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25256
+  },
+  {
+    "id": 960305,
+    "sourceEffect": 7004050,
+    "effect": 57004050,
+    "kind": "Lustat Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25257
+  },
+  {
+    "id": 960306,
+    "sourceEffect": 7004060,
+    "effect": 57004060,
+    "kind": "Lustat Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25258
+  },
+  {
+    "id": 960307,
+    "sourceEffect": 7004070,
+    "effect": 57004070,
+    "kind": "Lustat Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25259
+  },
+  {
+    "id": 960308,
+    "sourceEffect": 7004080,
+    "effect": 57004080,
+    "kind": "Lava Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25232
+  },
+  {
+    "id": 960309,
+    "sourceEffect": 7004090,
+    "effect": 57004090,
+    "kind": "Lava Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25233
+  },
+  {
+    "id": 960310,
+    "sourceEffect": 7004100,
+    "effect": 57004100,
+    "kind": "Lava Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25234
+  },
+  {
+    "id": 960311,
+    "sourceEffect": 7004110,
+    "effect": 57004110,
+    "kind": "Lava Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25235
+  },
+  {
+    "id": 960312,
+    "sourceEffect": 7004120,
+    "effect": 57004120,
+    "kind": "Thorn Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25400
+  },
+  {
+    "id": 960313,
+    "sourceEffect": 7004130,
+    "effect": 57004130,
+    "kind": "Thorn Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25401
+  },
+  {
+    "id": 960314,
+    "sourceEffect": 7004140,
+    "effect": 57004140,
+    "kind": "Thorn Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25402
+  },
+  {
+    "id": 960315,
+    "sourceEffect": 7004150,
+    "effect": 57004150,
+    "kind": "Thorn Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25403
+  },
+  {
+    "id": 960316,
+    "sourceEffect": 7004160,
+    "effect": 57004160,
+    "kind": "Death Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25072
+  },
+  {
+    "id": 960317,
+    "sourceEffect": 7004170,
+    "effect": 57004170,
+    "kind": "Death Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25073
+  },
+  {
+    "id": 960318,
+    "sourceEffect": 7004180,
+    "effect": 57004180,
+    "kind": "Death Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25074
+  },
+  {
+    "id": 960319,
+    "sourceEffect": 7004190,
+    "effect": 57004190,
+    "kind": "Death Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25075
+  },
+  {
+    "id": 960320,
+    "sourceEffect": 7004200,
+    "effect": 57004200,
+    "kind": "Meteorite Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25280
+  },
+  {
+    "id": 960321,
+    "sourceEffect": 7004210,
+    "effect": 57004210,
+    "kind": "Meteorite Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25281
+  },
+  {
+    "id": 960322,
+    "sourceEffect": 7004220,
+    "effect": 57004220,
+    "kind": "Meteorite Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25282
+  },
+  {
+    "id": 960323,
+    "sourceEffect": 7004230,
+    "effect": 57004230,
+    "kind": "Meteorite Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25283
+  },
+  {
+    "id": 960324,
+    "sourceEffect": 7004240,
+    "effect": 57004240,
+    "kind": "Invisibility Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25220
+  },
+  {
+    "id": 960325,
+    "sourceEffect": 7004250,
+    "effect": 57004250,
+    "kind": "Invisibility Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25221
+  },
+  {
+    "id": 960326,
+    "sourceEffect": 7004260,
+    "effect": 57004260,
+    "kind": "Invisibility Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25222
+  },
+  {
+    "id": 960327,
+    "sourceEffect": 7004270,
+    "effect": 57004270,
+    "kind": "Invisibility Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25223
+  },
+  {
+    "id": 960328,
+    "sourceEffect": 7004280,
+    "effect": 57004280,
+    "kind": "God slayer Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25176
+  },
+  {
+    "id": 960329,
+    "sourceEffect": 7004290,
+    "effect": 57004290,
+    "kind": "God slayer Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25177
+  },
+  {
+    "id": 960330,
+    "sourceEffect": 7004300,
+    "effect": 57004300,
+    "kind": "God slayer Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25178
+  },
+  {
+    "id": 960331,
+    "sourceEffect": 7004310,
+    "effect": 57004310,
+    "kind": "God slayer Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25179
+  },
+  {
+    "id": 960332,
+    "sourceEffect": 7004320,
+    "effect": 57004320,
+    "kind": "Giant Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25152
+  },
+  {
+    "id": 960333,
+    "sourceEffect": 7004330,
+    "effect": 57004330,
+    "kind": "Giant Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25153
+  },
+  {
+    "id": 960334,
+    "sourceEffect": 7004340,
+    "effect": 57004340,
+    "kind": "Giant Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25154
+  },
+  {
+    "id": 960335,
+    "sourceEffect": 7004350,
+    "effect": 57004350,
+    "kind": "Giant Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25155
+  },
+  {
+    "id": 960336,
+    "sourceEffect": 7004360,
+    "effect": 57004360,
+    "kind": "Dragoncult Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25092
+  },
+  {
+    "id": 960337,
+    "sourceEffect": 7004370,
+    "effect": 57004370,
+    "kind": "Dragoncult Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25093
+  },
+  {
+    "id": 960338,
+    "sourceEffect": 7004380,
+    "effect": 57004380,
+    "kind": "Dragoncult Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25094
+  },
+  {
+    "id": 960339,
+    "sourceEffect": 7004390,
+    "effect": 57004390,
+    "kind": "Dragoncult Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25095
+  },
+  {
+    "id": 960340,
+    "sourceEffect": 7004400,
+    "effect": 57004400,
+    "kind": "Beast Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25016
+  },
+  {
+    "id": 960341,
+    "sourceEffect": 7004410,
+    "effect": 57004410,
+    "kind": "Beast Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25017
+  },
+  {
+    "id": 960342,
+    "sourceEffect": 7004420,
+    "effect": 57004420,
+    "kind": "Beast Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25018
+  },
+  {
+    "id": 960343,
+    "sourceEffect": 7004430,
+    "effect": 57004430,
+    "kind": "Beast Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25019
+  },
+  {
+    "id": 960344,
+    "sourceEffect": 7004440,
+    "effect": 57004440,
+    "kind": "Golden Order Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25184
+  },
+  {
+    "id": 960345,
+    "sourceEffect": 7004450,
+    "effect": 57004450,
+    "kind": "Golden Order Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25185
+  },
+  {
+    "id": 960346,
+    "sourceEffect": 7004460,
+    "effect": 57004460,
+    "kind": "Golden Order Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25186
+  },
+  {
+    "id": 960347,
+    "sourceEffect": 7004470,
+    "effect": 57004470,
+    "kind": "Golden Order Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25187
+  },
+  {
+    "id": 960348,
+    "sourceEffect": 7004480,
+    "effect": 57004480,
+    "kind": "Dragon Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25088
+  },
+  {
+    "id": 960349,
+    "sourceEffect": 7004490,
+    "effect": 57004490,
+    "kind": "Dragon Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25089
+  },
+  {
+    "id": 960350,
+    "sourceEffect": 7004500,
+    "effect": 57004500,
+    "kind": "Dragon Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25090
+  },
+  {
+    "id": 960351,
+    "sourceEffect": 7004510,
+    "effect": 57004510,
+    "kind": "Dragon Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25091
+  },
+  {
+    "id": 960352,
+    "sourceEffect": 7004520,
+    "effect": 57004520,
+    "kind": "Frenzied Flame Expert",
+    "tier": 0,
+    "onHit": false,
+    "group": 25140
+  },
+  {
+    "id": 960353,
+    "sourceEffect": 7004530,
+    "effect": 57004530,
+    "kind": "Frenzied Flame Expert",
+    "tier": 1,
+    "onHit": false,
+    "group": 25141
+  },
+  {
+    "id": 960354,
+    "sourceEffect": 7004540,
+    "effect": 57004540,
+    "kind": "Frenzied Flame Expert",
+    "tier": 2,
+    "onHit": false,
+    "group": 25142
+  },
+  {
+    "id": 960355,
+    "sourceEffect": 7004550,
+    "effect": 57004550,
+    "kind": "Frenzied Flame Expert",
+    "tier": 3,
+    "onHit": false,
+    "group": 25143
+  },
+  {
+    "id": 960356,
+    "sourceEffect": 7004560,
+    "effect": 57004560,
+    "kind": "stomp",
+    "tier": 0,
+    "onHit": false,
+    "group": 25380
+  },
+  {
+    "id": 960357,
+    "sourceEffect": 7004570,
+    "effect": 57004570,
+    "kind": "stomp",
+    "tier": 1,
+    "onHit": false,
+    "group": 25381
+  },
+  {
+    "id": 960358,
+    "sourceEffect": 7004580,
+    "effect": 57004580,
+    "kind": "stomp",
+    "tier": 2,
+    "onHit": false,
+    "group": 25382
+  },
+  {
+    "id": 960359,
+    "sourceEffect": 7004590,
+    "effect": 57004590,
+    "kind": "stomp",
+    "tier": 3,
+    "onHit": false,
+    "group": 25383
+  },
+  {
+    "id": 960360,
+    "sourceEffect": 7004600,
+    "effect": 57004600,
+    "kind": "giga grip",
+    "tier": 0,
+    "onHit": false,
+    "group": 25156
+  },
+  {
+    "id": 960361,
+    "sourceEffect": 7004610,
+    "effect": 57004610,
+    "kind": "giga grip",
+    "tier": 1,
+    "onHit": false,
+    "group": 25157
+  },
+  {
+    "id": 960362,
+    "sourceEffect": 7004620,
+    "effect": 57004620,
+    "kind": "giga grip",
+    "tier": 2,
+    "onHit": false,
+    "group": 25158
+  },
+  {
+    "id": 960363,
+    "sourceEffect": 7004630,
+    "effect": 57004630,
+    "kind": "giga grip",
+    "tier": 3,
+    "onHit": false,
+    "group": 25159
+  },
+  {
+    "id": 960364,
+    "sourceEffect": 7004640,
+    "effect": 57004640,
+    "kind": "thrower",
+    "tier": 0,
+    "onHit": false,
+    "group": 25408
+  },
+  {
+    "id": 960365,
+    "sourceEffect": 7004650,
+    "effect": 57004650,
+    "kind": "thrower",
+    "tier": 1,
+    "onHit": false,
+    "group": 25409
+  },
+  {
+    "id": 960366,
+    "sourceEffect": 7004660,
+    "effect": 57004660,
+    "kind": "thrower",
+    "tier": 2,
+    "onHit": false,
+    "group": 25410
+  },
+  {
+    "id": 960367,
+    "sourceEffect": 7004670,
+    "effect": 57004670,
+    "kind": "thrower",
+    "tier": 3,
+    "onHit": false,
+    "group": 25411
+  },
+  {
+    "id": 960368,
+    "sourceEffect": 7004680,
+    "effect": 57004680,
+    "kind": "retaliation",
+    "tier": 0,
+    "onHit": false,
+    "group": 25324
+  },
+  {
+    "id": 960369,
+    "sourceEffect": 7004690,
+    "effect": 57004690,
+    "kind": "retaliation",
+    "tier": 1,
+    "onHit": false,
+    "group": 25325
+  },
+  {
+    "id": 960370,
+    "sourceEffect": 7004700,
+    "effect": 57004700,
+    "kind": "retaliation",
+    "tier": 2,
+    "onHit": false,
+    "group": 25326
+  },
+  {
+    "id": 960371,
+    "sourceEffect": 7004710,
+    "effect": 57004710,
+    "kind": "retaliation",
+    "tier": 3,
+    "onHit": false,
+    "group": 25327
+  },
+  {
+    "id": 960372,
+    "sourceEffect": 7004720,
+    "effect": 57004720,
+    "kind": "laceration",
+    "tier": 0,
+    "onHit": false,
+    "group": 25224
+  },
+  {
+    "id": 960373,
+    "sourceEffect": 7004730,
+    "effect": 57004730,
+    "kind": "laceration",
+    "tier": 1,
+    "onHit": false,
+    "group": 25225
+  },
+  {
+    "id": 960374,
+    "sourceEffect": 7004740,
+    "effect": 57004740,
+    "kind": "laceration",
+    "tier": 2,
+    "onHit": false,
+    "group": 25226
+  },
+  {
+    "id": 960375,
+    "sourceEffect": 7004750,
+    "effect": 57004750,
+    "kind": "laceration",
+    "tier": 3,
+    "onHit": false,
+    "group": 25227
+  },
+  {
+    "id": 960376,
+    "sourceEffect": 7004760,
+    "effect": 57004760,
+    "kind": "blood fever",
+    "tier": 0,
+    "onHit": false,
+    "group": 25024
+  },
+  {
+    "id": 960377,
+    "sourceEffect": 7004770,
+    "effect": 57004770,
+    "kind": "blood fever",
+    "tier": 1,
+    "onHit": false,
+    "group": 25025
+  },
+  {
+    "id": 960378,
+    "sourceEffect": 7004780,
+    "effect": 57004780,
+    "kind": "blood fever",
+    "tier": 2,
+    "onHit": false,
+    "group": 25026
+  },
+  {
+    "id": 960379,
+    "sourceEffect": 7004790,
+    "effect": 57004790,
+    "kind": "blood fever",
+    "tier": 3,
+    "onHit": false,
+    "group": 25027
+  },
+  {
+    "id": 960380,
+    "sourceEffect": 7004800,
+    "effect": 57004800,
+    "kind": "poisonous injection",
+    "tier": 0,
+    "onHit": false,
+    "group": 25312
+  },
+  {
+    "id": 960381,
+    "sourceEffect": 7004810,
+    "effect": 57004810,
+    "kind": "poisonous injection",
+    "tier": 1,
+    "onHit": false,
+    "group": 25313
+  },
+  {
+    "id": 960382,
+    "sourceEffect": 7004820,
+    "effect": 57004820,
+    "kind": "poisonous injection",
+    "tier": 2,
+    "onHit": false,
+    "group": 25314
+  },
+  {
+    "id": 960383,
+    "sourceEffect": 7004830,
+    "effect": 57004830,
+    "kind": "poisonous injection",
+    "tier": 3,
+    "onHit": false,
+    "group": 25315
+  },
+  {
+    "id": 960384,
+    "sourceEffect": 7004840,
+    "effect": 57004840,
+    "kind": "extracting spirit",
+    "tier": 0,
+    "onHit": true,
+    "group": 24900
+  },
+  {
+    "id": 960385,
+    "sourceEffect": 7004850,
+    "effect": 57004850,
+    "kind": "extracting spirit",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960386,
+    "sourceEffect": 7004860,
+    "effect": 57004860,
+    "kind": "extracting spirit",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960387,
+    "sourceEffect": 7004870,
+    "effect": 57004870,
+    "kind": "extracting spirit",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960388,
+    "sourceEffect": 7004880,
+    "effect": 57004880,
+    "kind": "extracting vitality",
+    "tier": 0,
+    "onHit": true,
+    "group": 24900
+  },
+  {
+    "id": 960389,
+    "sourceEffect": 7004890,
+    "effect": 57004890,
+    "kind": "extracting vitality",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960390,
+    "sourceEffect": 7004900,
+    "effect": 57004900,
+    "kind": "extracting vitality",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960391,
+    "sourceEffect": 7004910,
+    "effect": 57004910,
+    "kind": "extracting vitality",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960392,
+    "sourceEffect": 7004920,
+    "effect": 57004920,
+    "kind": "crusade",
+    "tier": 0,
+    "onHit": false,
+    "group": 25056
+  },
+  {
+    "id": 960393,
+    "sourceEffect": 7004930,
+    "effect": 57004930,
+    "kind": "crusade",
+    "tier": 1,
+    "onHit": false,
+    "group": 25057
+  },
+  {
+    "id": 960394,
+    "sourceEffect": 7004940,
+    "effect": 57004940,
+    "kind": "crusade",
+    "tier": 2,
+    "onHit": false,
+    "group": 25058
+  },
+  {
+    "id": 960395,
+    "sourceEffect": 7004950,
+    "effect": 57004950,
+    "kind": "crusade",
+    "tier": 3,
+    "onHit": false,
+    "group": 25059
+  },
+  {
+    "id": 960396,
+    "sourceEffect": 7004960,
+    "effect": 57004960,
+    "kind": "madness",
+    "tier": 0,
+    "onHit": false,
+    "group": 25260
+  },
+  {
+    "id": 960397,
+    "sourceEffect": 7004970,
+    "effect": 57004970,
+    "kind": "madness",
+    "tier": 1,
+    "onHit": false,
+    "group": 25261
+  },
+  {
+    "id": 960398,
+    "sourceEffect": 7004980,
+    "effect": 57004980,
+    "kind": "madness",
+    "tier": 2,
+    "onHit": false,
+    "group": 25262
+  },
+  {
+    "id": 960399,
+    "sourceEffect": 7004990,
+    "effect": 57004990,
+    "kind": "madness",
+    "tier": 3,
+    "onHit": false,
+    "group": 25263
+  },
+  {
+    "id": 960400,
+    "sourceEffect": 7005000,
+    "effect": 57005000,
+    "kind": "soaring arrow",
+    "tier": 0,
+    "onHit": false,
+    "group": 25360
+  },
+  {
+    "id": 960401,
+    "sourceEffect": 7005010,
+    "effect": 57005010,
+    "kind": "soaring arrow",
+    "tier": 1,
+    "onHit": false,
+    "group": 25361
+  },
+  {
+    "id": 960402,
+    "sourceEffect": 7005020,
+    "effect": 57005020,
+    "kind": "soaring arrow",
+    "tier": 2,
+    "onHit": false,
+    "group": 25362
+  },
+  {
+    "id": 960403,
+    "sourceEffect": 7005030,
+    "effect": 57005030,
+    "kind": "soaring arrow",
+    "tier": 3,
+    "onHit": false,
+    "group": 25363
+  },
+  {
+    "id": 960404,
+    "sourceEffect": 7005040,
+    "effect": 57005040,
+    "kind": "sorrow",
+    "tier": 0,
+    "onHit": false,
+    "group": 25364
+  },
+  {
+    "id": 960405,
+    "sourceEffect": 7005050,
+    "effect": 57005050,
+    "kind": "sorrow",
+    "tier": 1,
+    "onHit": false,
+    "group": 25365
+  },
+  {
+    "id": 960406,
+    "sourceEffect": 7005060,
+    "effect": 57005060,
+    "kind": "sorrow",
+    "tier": 2,
+    "onHit": false,
+    "group": 25366
+  },
+  {
+    "id": 960407,
+    "sourceEffect": 7005070,
+    "effect": 57005070,
+    "kind": "sorrow",
+    "tier": 3,
+    "onHit": false,
+    "group": 25367
+  },
+  {
+    "id": 960408,
+    "sourceEffect": 7005080,
+    "effect": 57005080,
+    "kind": "sleepiness focus",
+    "tier": 0,
+    "onHit": false,
+    "group": 25352
+  },
+  {
+    "id": 960409,
+    "sourceEffect": 7005090,
+    "effect": 57005090,
+    "kind": "sleepiness focus",
+    "tier": 1,
+    "onHit": false,
+    "group": 25353
+  },
+  {
+    "id": 960410,
+    "sourceEffect": 7005100,
+    "effect": 57005100,
+    "kind": "sleepiness focus",
+    "tier": 2,
+    "onHit": false,
+    "group": 25354
+  },
+  {
+    "id": 960411,
+    "sourceEffect": 7005110,
+    "effect": 57005110,
+    "kind": "sleepiness focus",
+    "tier": 3,
+    "onHit": false,
+    "group": 25355
+  },
+  {
+    "id": 960412,
+    "sourceEffect": 7005120,
+    "effect": 57005120,
+    "kind": "magic explosion",
+    "tier": 0,
+    "onHit": false,
+    "group": 25264
+  },
+  {
+    "id": 960413,
+    "sourceEffect": 7005130,
+    "effect": 57005130,
+    "kind": "magic explosion",
+    "tier": 1,
+    "onHit": false,
+    "group": 25265
+  },
+  {
+    "id": 960414,
+    "sourceEffect": 7005140,
+    "effect": 57005140,
+    "kind": "magic explosion",
+    "tier": 2,
+    "onHit": false,
+    "group": 25266
+  },
+  {
+    "id": 960415,
+    "sourceEffect": 7005150,
+    "effect": 57005150,
+    "kind": "magic explosion",
+    "tier": 3,
+    "onHit": false,
+    "group": 25267
+  },
+  {
+    "id": 960416,
+    "sourceEffect": 7005160,
+    "effect": 57005160,
+    "kind": "smelly taunting",
+    "tier": 0,
+    "onHit": false,
+    "group": 25356
+  },
+  {
+    "id": 960417,
+    "sourceEffect": 7005170,
+    "effect": 57005170,
+    "kind": "smelly taunting",
+    "tier": 1,
+    "onHit": false,
+    "group": 25356
+  },
+  {
+    "id": 960418,
+    "sourceEffect": 7005180,
+    "effect": 57005180,
+    "kind": "smelly taunting",
+    "tier": 2,
+    "onHit": false,
+    "group": 25356
+  },
+  {
+    "id": 960419,
+    "sourceEffect": 7005190,
+    "effect": 57005190,
+    "kind": "smelly taunting",
+    "tier": 3,
+    "onHit": false,
+    "group": 25356
+  },
+  {
+    "id": 960420,
+    "sourceEffect": 7005200,
+    "effect": 57005200,
+    "kind": "draconic discharge",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960421,
+    "sourceEffect": 7005210,
+    "effect": 57005210,
+    "kind": "draconic discharge",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960422,
+    "sourceEffect": 7005220,
+    "effect": 57005220,
+    "kind": "flame fell God",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960423,
+    "sourceEffect": 7005230,
+    "effect": 57005230,
+    "kind": "black flame",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960424,
+    "sourceEffect": 7005240,
+    "effect": 57005240,
+    "kind": "summoners grace",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960425,
+    "sourceEffect": 7005250,
+    "effect": 57005250,
+    "kind": "summoners grace",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960426,
+    "sourceEffect": 7005260,
+    "effect": 57005260,
+    "kind": "beast claw",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960427,
+    "sourceEffect": 7005270,
+    "effect": 57005270,
+    "kind": "beast claw",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960428,
+    "sourceEffect": 7005280,
+    "effect": 57005280,
+    "kind": "magical ground",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960429,
+    "sourceEffect": 7005290,
+    "effect": 57005290,
+    "kind": "glintstone pebble",
+    "tier": 0,
+    "onHit": true,
+    "group": 24900
+  },
+  {
+    "id": 960430,
+    "sourceEffect": 7005300,
+    "effect": 57005300,
+    "kind": "glintstone pebble",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960431,
+    "sourceEffect": 7005310,
+    "effect": 57005310,
+    "kind": "glintstone shards",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960432,
+    "sourceEffect": 7005320,
+    "effect": 57005320,
+    "kind": "death ground",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960433,
+    "sourceEffect": 7005330,
+    "effect": 57005330,
+    "kind": "death ground",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960434,
+    "sourceEffect": 7005340,
+    "effect": 57005340,
+    "kind": "phalanx guard",
+    "tier": 0,
+    "onHit": true,
+    "group": 24900
+  },
+  {
+    "id": 960435,
+    "sourceEffect": 7005350,
+    "effect": 57005350,
+    "kind": "phalanx guard",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960436,
+    "sourceEffect": 7005360,
+    "effect": 57005360,
+    "kind": "greater phalanx guard",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960437,
+    "sourceEffect": 7005370,
+    "effect": 57005370,
+    "kind": "greater phalanx guard",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960438,
+    "sourceEffect": 7005380,
+    "effect": 57005380,
+    "kind": "thorns",
+    "tier": 0,
+    "onHit": true,
+    "group": 24900
+  },
+  {
+    "id": 960439,
+    "sourceEffect": 7005390,
+    "effect": 57005390,
+    "kind": "thorns",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960440,
+    "sourceEffect": 7005400,
+    "effect": 57005400,
+    "kind": "magma ball",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960441,
+    "sourceEffect": 7005410,
+    "effect": 57005410,
+    "kind": "wind blast",
+    "tier": 2,
+    "onHit": false,
+    "group": 25424
+  },
+  {
+    "id": 960442,
+    "sourceEffect": 7005420,
+    "effect": 57005420,
+    "kind": "wind blast",
+    "tier": 3,
+    "onHit": false,
+    "group": 25424
+  },
+  {
+    "id": 960443,
+    "sourceEffect": 7005430,
+    "effect": 57005430,
+    "kind": "wind shield",
+    "tier": 3,
+    "onHit": false,
+    "group": 25428
+  },
+  {
+    "id": 960444,
+    "sourceEffect": 7005440,
+    "effect": 57005440,
+    "kind": "sky spear",
+    "tier": 2,
+    "onHit": false,
+    "group": 25344
+  },
+  {
+    "id": 960445,
+    "sourceEffect": 7005450,
+    "effect": 57005450,
+    "kind": "sky spear",
+    "tier": 3,
+    "onHit": false,
+    "group": 25344
+  },
+  {
+    "id": 960446,
+    "sourceEffect": 7005460,
+    "effect": 57005460,
+    "kind": "wind spear",
+    "tier": 0,
+    "onHit": false,
+    "group": 25432
+  },
+  {
+    "id": 960447,
+    "sourceEffect": 7005470,
+    "effect": 57005470,
+    "kind": "Gravity Hammer",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960448,
+    "sourceEffect": 7005480,
+    "effect": 57005480,
+    "kind": "sky spear assault",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960449,
+    "sourceEffect": 7005490,
+    "effect": 57005490,
+    "kind": "lava exhaust",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960450,
+    "sourceEffect": 7005500,
+    "effect": 57005500,
+    "kind": "lava exhaust",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960451,
+    "sourceEffect": 7005510,
+    "effect": 57005510,
+    "kind": "chilly breath",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960452,
+    "sourceEffect": 7005520,
+    "effect": 57005520,
+    "kind": "chilly breath",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960453,
+    "sourceEffect": 7005530,
+    "effect": 57005530,
+    "kind": "lighting call",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960454,
+    "sourceEffect": 7005540,
+    "effect": 57005540,
+    "kind": "light rings",
+    "tier": 1,
+    "onHit": true,
+    "group": 24901
+  },
+  {
+    "id": 960455,
+    "sourceEffect": 7005550,
+    "effect": 57005550,
+    "kind": "light rings",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960456,
+    "sourceEffect": 7005560,
+    "effect": 57005560,
+    "kind": "immortal will",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960457,
+    "sourceEffect": 7005570,
+    "effect": 57005570,
+    "kind": "chilling circle",
+    "tier": 3,
+    "onHit": true,
+    "group": 24903
+  },
+  {
+    "id": 960458,
+    "sourceEffect": 7005580,
+    "effect": 57005580,
+    "kind": "stomping dragon",
+    "tier": 2,
+    "onHit": true,
+    "group": 24902
+  },
+  {
+    "id": 960459,
+    "sourceEffect": 7005590,
+    "effect": 57005590,
+    "kind": "crucible knight",
+    "tier": 1,
+    "onHit": false,
+    "group": 25052
+  },
+  {
+    "id": 960460,
+    "sourceEffect": 7005600,
+    "effect": 57005600,
+    "kind": "crucible knight",
+    "tier": 2,
+    "onHit": false,
+    "group": 25052
+  },
+  {
+    "id": 960461,
+    "sourceEffect": 7005610,
+    "effect": 57005610,
+    "kind": "crucible knight",
+    "tier": 3,
+    "onHit": false,
+    "group": 25052
+  },
+  {
+    "id": 960462,
+    "sourceEffect": 7005620,
+    "effect": 57005620,
+    "kind": "opal shield",
+    "tier": 0,
+    "onHit": false,
+    "group": 25292
+  },
+  {
+    "id": 960463,
+    "sourceEffect": 7005630,
+    "effect": 57005630,
+    "kind": "opal shield",
+    "tier": 1,
+    "onHit": false,
+    "group": 25293
+  },
+  {
+    "id": 960464,
+    "sourceEffect": 7005640,
+    "effect": 57005640,
+    "kind": "opal shield",
+    "tier": 2,
+    "onHit": false,
+    "group": 25294
+  },
+  {
+    "id": 960465,
+    "sourceEffect": 7005650,
+    "effect": 57005650,
+    "kind": "opal shield",
+    "tier": 3,
+    "onHit": false,
+    "group": 25295
+  },
+  {
+    "id": 960470,
+    "sourceEffect": 7005700,
+    "effect": 57005700,
+    "kind": "golden squat",
+    "tier": 0,
+    "onHit": false,
+    "group": 25188
+  },
+  {
+    "id": 960471,
+    "sourceEffect": 7005710,
+    "effect": 57005710,
+    "kind": "golden squat",
+    "tier": 1,
+    "onHit": false,
+    "group": 25189
+  },
+  {
+    "id": 960472,
+    "sourceEffect": 7005720,
+    "effect": 57005720,
+    "kind": "golden squat",
+    "tier": 2,
+    "onHit": false,
+    "group": 25190
+  },
+  {
+    "id": 960473,
+    "sourceEffect": 7005730,
+    "effect": 57005730,
+    "kind": "golden squat",
+    "tier": 3,
+    "onHit": false,
+    "group": 25191
+  }
+]

@@ -40,7 +40,7 @@ fn parse(text:&'static str)->Vec<Item> {text.lines().map(|line| {
 static SPIRIT_LEVELS:LazyLock<Vec<Item>>=LazyLock::new(||CATALOG.iter().filter(|i|i.kind==ItemKind::Spirit).flat_map(|i|(1..=10).map(move |level|Item{
     id:i.id+level,name:Box::leak(format!("{} +{level}",i.name).into_boxed_str()),kind:ItemKind::Spirit,
 })).collect());
-pub fn lookup(id:u32)->Option<&'static Item> {crate::affixes::lookup(id).or_else(||CATALOG.iter().find(|item|item.id==id)).or_else(||SPIRIT_LEVELS.iter().find(|item|item.id==id))}
+pub fn lookup(id:u32)->Option<&'static Item> {crate::affixes::lookup(id).or_else(||crate::talismans::lookup(id)).or_else(||CATALOG.iter().find(|item|item.id==id)).or_else(||SPIRIT_LEVELS.iter().find(|item|item.id==id))}
 pub fn spirit_base(id:u32)->u32 {
     let base=id-(id&0x0fffffff)%1000;
     if id-base<=10&&CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit){base}else{id}
