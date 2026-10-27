@@ -7,21 +7,84 @@ use fromsoftware_shared::FromStatic;
 pub const GOODS: u32 = 9500000;
 pub const STOCK_COUNT: u32 = 37;
 fn key_offer(roll:u64)->bool {roll%100<20}
+fn tear_offer(roll:u64)->bool {roll%100<50}
+fn whetblade_offer(roll:u64,claimed:&[u32])->Option<i32> {
+    if roll%100>=30{return None;}
+    let pool:Vec<_>=(8970..=8974).filter(|id|!claimed.contains(&(0x40000000|*id))).collect();
+    if pool.is_empty(){None}else{Some(pool[(roll/100) as usize%pool.len()] as i32)}
+}
+fn withdraw_owned_whetblades(stock:&mut [Stock],run:&Run) {
+    for item in stock.iter_mut().filter(|s|s.kind==3&&(8970..=8974).contains(&s.id)) {
+        if run.claimed_items.contains(&(0x40000000|item.id as u32)){item.quantity=0;}
+    }
+}
+fn refresh_special_prices(stock:&mut [Stock],run:&Run) {
+    for item in stock.iter_mut().filter(|s|s.kind==3) {
+        let base=match item.id {8000=>2500,8970..=8974=>6000,id if id==erdtree_tower::elite::TEAR as i32=>5000,_=>continue};
+        item.price=super::law::shop_price(run.law,super::passives::shop_price(run.class,base));
+    }
+}
 #[test]
-fn key_shop_roll_has_exact_twenty_percent_and_one_key_for_5000() {
+fn key_shop_roll_has_exact_twenty_percent_and_one_key_for_2500() {
     assert_eq!((0..100).filter(|&r|key_offer(r)).count(),20);
     let mut count=0;
     for seed in 0..1000 {
         let run=Run::new(seed,erdtree_tower::Class::Samurai);
         let rows=stock(&run);
         if let Some(key)=rows.iter().find(|s|s.kind==3&&s.id==8000) {
-            count+=1;assert_eq!((key.price,key.quantity),(5000,1));
+            count+=1;assert_eq!((key.price,key.quantity),(2500,1));
         }
         assert_eq!(rows,stock(&run));
     }
     assert!((160..=240).contains(&count));
 }
+#[test]
+fn sacred_tear_has_half_chance_one_stock_and_is_independent_of_keys() {
+    assert_eq!((0..100).filter(|&r|tear_offer(r)).count(),50);
+    let mut count=0;let mut combinations=std::collections::HashSet::new();
+    for seed in 0..1000 {
+        let run=Run::new(seed,erdtree_tower::Class::Samurai);let rows=stock(&run);
+        assert_eq!(rows.len(),STOCK_COUNT as usize);assert_eq!(rows,stock(&run));
+        let tears:Vec<_>=rows.iter().filter(|s|s.kind==3&&s.id==erdtree_tower::elite::TEAR as i32).collect();
+        assert!(tears.len()<=1);
+        if let Some(tear)=tears.first(){count+=1;assert_eq!((tear.price,tear.quantity),(5000,1));}
+        combinations.insert((!tears.is_empty(),rows.iter().any(|s|s.kind==3&&s.id==8000)));
+    }
+    assert!((440..=560).contains(&count),"Tear frequency: {count}/1000");assert_eq!(combinations.len(),4);
+}
+#[test]
+fn saved_special_prices_update_without_restocking_or_double_discounting() {
+    let run=Run::new(42,erdtree_tower::Class::Prisoner);
+    let mut saved=vec![Stock{kind:3,id:8000,price:4000,quantity:0},Stock{kind:3,id:10020,price:5000,quantity:1},Stock{kind:3,id:900,price:123,quantity:3}];
+    refresh_special_prices(&mut saved,&run);
+    assert_eq!((saved[0].price,saved[0].quantity),(2000,0));assert_eq!((saved[1].price,saved[1].quantity),(4000,1));
+    let once=saved.clone();refresh_special_prices(&mut saved,&run);assert_eq!(saved,once);assert_eq!(saved[2].price,123);
+}
 const STOCK_FLAGS: u32 = 45020800;
+#[test]
+fn whetblades_have_thirty_percent_chance_cost_6000_and_skip_owned_blades() {
+    assert_eq!((0..100).filter(|&roll|whetblade_offer(roll,&[]).is_some()).count(),30);
+    let all=(8970..=8974).map(|id|0x40000000|id).collect::<Vec<u32>>();
+    assert!((0..1000).all(|roll|whetblade_offer(roll,&all).is_none()));
+    let mut seen=std::collections::HashSet::new();let mut count=0;let mut combinations=std::collections::HashSet::new();
+    for seed in 0..1000 {
+        let mut run=Run::new(seed,erdtree_tower::Class::Samurai);let rows=stock(&run);
+        let blades:Vec<_>=rows.iter().filter(|s|s.kind==3&&(8970..=8974).contains(&s.id)).collect();assert!(blades.len()<=1);
+        assert_eq!(rows.len(),STOCK_COUNT as usize);assert_eq!(rows,stock(&run));
+        if let Some(blade)=blades.first(){count+=1;seen.insert(blade.id);assert_eq!((blade.price,blade.quantity),(6000,1));}
+        combinations.insert((!blades.is_empty(),rows.iter().any(|s|s.kind==3&&s.id==10020),rows.iter().any(|s|s.kind==3&&s.id==8000)));
+        run.claimed_items.extend(all.iter().copied());assert!(stock(&run).iter().all(|s|s.kind!=3||!(8970..=8974).contains(&s.id)));
+    }
+    assert!((240..=360).contains(&count),"Whetblade frequency: {count}/1000");assert_eq!(seen.len(),5);assert_eq!(combinations.len(),8);
+    for id in 8970..=8974 {let owned=all.iter().copied().filter(|v|*v!=(0x40000000|id)).collect::<Vec<_>>();assert_eq!(whetblade_offer(0,&owned),Some(id as i32));}
+}
+#[test]
+fn owned_whetblades_are_hidden_without_refilling_other_saved_stock() {
+    let mut run=Run::new(42,erdtree_tower::Class::Prisoner);run.claimed_items.push(0x40000000|8970);
+    let mut rows=vec![Stock{kind:3,id:8970,price:6000,quantity:1},Stock{kind:3,id:8971,price:6000,quantity:0},Stock{kind:3,id:900,price:123,quantity:3}];
+    withdraw_owned_whetblades(&mut rows,&run);refresh_special_prices(&mut rows,&run);
+    assert_eq!((rows[0].price,rows[0].quantity),(4800,0));assert_eq!((rows[1].price,rows[1].quantity),(4800,0));assert_eq!((rows[2].price,rows[2].quantity),(123,3));
+}
 fn withdrawn(item:&Stock)->bool {item.kind==3&&matches!(item.id,1150|1160|1170|1180|1190|1200)}
 fn withdraw_goods(stock:&mut [Stock]) {
     for item in stock.iter_mut().filter(|item|withdrawn(item)) {item.quantity=0;}
@@ -170,9 +233,14 @@ pub fn stock(run:&Run)->Vec<Stock> {
         result.extend(select(CATALOG.iter().filter(|s|s.kind==kind).map(|s|Stock{kind:equip,id:(s.id&0x0fffffff) as i32,price,quantity:1}).collect(),3,run.seed,visit));
     }
     // 原来卖投掷壶的一格改卖第二种飞刀：投掷壶要有龟裂壶才能持有，商店不再发放龟裂壶
-    for group in ["food","knife"] {result.extend(select(extras(group),1,run.seed,visit));}
+    if tear_offer(hash(run.seed ^ visit as u64 ^ 0x74656172)) {
+        result.push(Stock{kind:3,id:erdtree_tower::elite::TEAR as i32,price:5000,quantity:1});
+    } else {result.extend(select(extras("food"),1,run.seed,visit));}
+    result.extend(select(extras("knife"),1,run.seed,visit));
     let knives=extras("knife").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
-    result.extend(select(knives,1,run.seed^0x6b6e_6966,visit));
+    if let Some(id)=whetblade_offer(hash(run.seed ^ visit as u64 ^ 0x77686574),&run.claimed_items) {
+        result.push(Stock{kind:3,id,price:6000,quantity:1});
+    } else {result.extend(select(knives,1,run.seed^0x6b6e_6966,visit));}
     result.extend(select(catalog.iter().filter(|s|s.kind==4).cloned().collect(),2,run.seed,visit));
     let pool=CATALOG.iter().filter(|s|s.kind==ItemKind::Talisman&&s.random_eligible()).map(|s|Stock{kind:2,id:(s.id&0x0fffffff) as i32,price:talisman_price(super::reward_ui::item_quality(s.id)),quantity:1}).collect();
     result.extend(select(pool,2,run.seed,visit));
@@ -190,7 +258,7 @@ pub fn stock(run:&Run)->Vec<Stock> {
         result[21]=Stock{kind:3,id:(id&0x0fffffff) as i32,price:6000,quantity:1};
     }
     if key_offer(hash(run.seed ^ visit as u64 ^ 0x8000cafe)) {
-        result.push(Stock{kind:3,id:8000,price:5000,quantity:1});
+        result.push(Stock{kind:3,id:8000,price:2500,quantity:1});
     } else {
         let pool=extras("food").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
         result.extend(select(pool,1,run.seed ^ 0x8000cafe,visit));
@@ -239,6 +307,8 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
         stock
     };
     withdraw_goods(&mut stock);
+    withdraw_owned_whetblades(&mut stock,run);
+    refresh_special_prices(&mut stock,run);
     if stock.len()!=STOCK_COUNT as usize {return Err("商店货单数量与原生商品槽位不符".into());}
     for i in 0..STOCK_COUNT {
         if params.get::<ShopLineupParam>(GOODS + i).is_none() {
@@ -434,7 +504,7 @@ mod tests {
                 for (group,quantity) in [("food",5),("knife",20)] {
                     let pool=extras(group);
                     let selected:Vec<_>=rows.iter().filter(|s|pool.iter().any(|p|p.kind==s.kind&&p.id==s.id)).collect();
-                    assert_eq!(selected.len(),if group=="knife"{2}else{1+usize::from(spirit==0&&!crystal)+usize::from(!rows.iter().any(|s|s.kind==3&&s.id==8000))});
+                    assert_eq!(selected.len(),if group=="knife"{2-usize::from(rows.iter().any(|s|s.kind==3&&(8970..=8974).contains(&s.id)))}else{usize::from(!rows.iter().any(|s|s.kind==3&&s.id==erdtree_tower::elite::TEAR as i32))+usize::from(spirit==0&&!crystal)+usize::from(!rows.iter().any(|s|s.kind==3&&s.id==8000))});
                     assert!(selected.iter().all(|s|s.quantity==quantity));
                 }
                 assert!(rows.iter().all(|s|!extras("pot").iter().any(|p|p.kind==s.kind&&p.id==s.id)),"the shop no longer sells throwing pots");
