@@ -31,6 +31,7 @@ pub mod legacy;
 pub mod music;
 pub mod options;
 pub mod dlc;
+pub mod stat_summary;
 
 pub type RuleResult<T> = Result<T, String>;
 

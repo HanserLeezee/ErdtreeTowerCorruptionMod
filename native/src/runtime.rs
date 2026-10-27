@@ -89,10 +89,12 @@ pub struct View {
     pub build: Vec<super::reward_ui::Gear>,
     /// 篝火营地的测伤假人统计（单人、在营地时才有）
     pub dummy: Option<super::dummy::View>,
+    /// 构筑面板的数值加成（身上生效的特效按项连乘）
+    pub stats: super::stats::Summary,
 }
 fn initial_view()->View {
     View{shared_event:false,ballots:vec![],run:None,status:"进入角色后，从金色入口开始旅程。".into(),
-        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None}
+        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None,stats:Default::default()}
 }
 
 struct Foe {
@@ -1157,7 +1159,10 @@ fn tick_locked() {
     };
     let player_data = unsafe { &mut *player.player_game_data.as_ptr() };
     state.view.runes = player_data.rune_count;
-    if state.build_checked.is_none_or(|t|t.elapsed()>=Duration::from_secs(1)) {state.build_checked=Some(Instant::now());state.view.build=equipped_build(player_data);}
+    if state.build_checked.is_none_or(|t|t.elapsed()>=Duration::from_secs(1)) {
+        state.build_checked=Some(Instant::now());state.view.build=equipped_build(player_data);
+        state.view.stats=super::stats::collect(&player.chr_ins);
+    }
     if let Some(run)=state.view.run.as_mut(){run.gold=player_data.rune_count;}
     let deepen_due=state.deepen_retry.is_none_or(|t|t.elapsed()>=Duration::from_secs(2));
     if deepen_due&&state.view.run.as_ref().is_some_and(|r|r.contract.as_ref().is_some_and(|c|c.deepened&&!c.gear_done)) {state.deepen_retry=Some(Instant::now());}
@@ -3098,7 +3103,7 @@ mod tests {
     }
     fn ui_view()->super::View {
         super::View{shared_event:false,ballots:vec![],run:Some(erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai)),
-            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None}
+            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None,stats:Default::default()}
     }
     #[test]
     fn queued_selection_is_bounded_and_consumed_once_on_the_game_thread() {

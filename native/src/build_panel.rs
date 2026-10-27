@@ -54,6 +54,38 @@ fn entry(ui: &Ui, s: f32, badge: Badge, title: &str, title_color: [f32; 4], line
     for (line, color) in lines {y = wrapped(ui, [x, y], right, line, *color, 0.84 * s) + 1.0 * s;}
     ui.set_cursor_screen_pos([start[0], y.max(start[1] + side) + 10.0 * s]);ui.dummy([0.0, 0.0]);
 }
+/// 数值加成：按组两列排开，左边名称、右边数值（有利金色、不利红色）
+fn stats(ui: &Ui, s: f32, summary: &crate::stats::Summary) {
+    heading(ui, s, "数值加成", None);
+    if summary.lines.is_empty() {empty(ui, s, "身上暂时没有数值加成");}
+    let left = ui.cursor_screen_pos()[0];
+    let width = ui.window_size()[0] - 14.0 * s;
+    let column = (width - 18.0 * s) * 0.5;
+    let mut y = ui.cursor_screen_pos()[1];
+    let mut group = "";
+    let mut index = 0;
+    for line in &summary.lines {
+        if line.group != group {
+            if index % 2 == 1 {y += 22.0 * s;}
+            group = line.group;index = 0;
+            ui.set_window_font_scale(0.78 * s);ui.set_cursor_screen_pos([left, y]);ui.text_colored(MUTED, group);
+            y += 20.0 * s;
+        }
+        let x = left + if index % 2 == 0 {0.0} else {column + 18.0 * s};
+        ui.set_window_font_scale(0.84 * s);
+        ui.set_cursor_screen_pos([x, y]);ui.text_colored(WHITE, line.label);
+        let w = ui.calc_text_size(&line.value)[0];
+        ui.set_cursor_screen_pos([x + column - w, y]);ui.text_colored(if line.good {BOON} else {RED}, &line.value);
+        if index % 2 == 1 {y += 22.0 * s;}
+        index += 1;
+    }
+    if index % 2 == 1 {y += 22.0 * s;}
+    if summary.conditional > 0 {
+        let right = left + width;
+        y = wrapped(ui, [left, y + 2.0 * s], right, &format!("另有 {} 个带触发条件的效果（低血量、只对某类攻击生效等）未计入", summary.conditional), MUTED, 0.78 * s);
+    }
+    ui.set_cursor_screen_pos([left, y + 6.0 * s]);ui.dummy([0.0, 0.0]);
+}
 fn empty(ui: &Ui, s: f32, text: &str) {
     let pos = ui.cursor_screen_pos();let right = ui.window_pos()[0] + ui.window_size()[0] - 14.0 * s;
     let y = wrapped(ui, pos, right, text, MUTED, 0.84 * s);
@@ -81,7 +113,8 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
         let (a, b) = ([corner[0] + 9.0 * s, corner[1] + 9.0 * s], [corner[0] + 21.0 * s, corner[1] + 21.0 * s]);
         let draw = ui.get_window_draw_list();
         draw.add_line(a, b, color).thickness(1.8 * s).build();draw.add_line([a[0], b[1]], [b[0], a[1]], color).thickness(1.8 * s).build();drop(draw);
-        ui.set_window_font_scale(0.75 * s);ui.set_cursor_screen_pos([pos[0] + 26.0 * s, pos[1] + 28.0 * s]);ui.text_colored(MUTED, "C / Y 开关");
+        ui.set_window_font_scale(0.75 * s);ui.set_cursor_screen_pos([pos[0] + 26.0 * s, pos[1] + 28.0 * s]);
+        ui.text_colored(MUTED, format!("{} / Y 开关", crate::options::label(erdtree_tower::options::Hotkey::Build)));
         ui.set_cursor_screen_pos([pos[0] + 22.0 * s, pos[1] + 84.0 * s]);
         let _child = ui.push_style_color(StyleColor::ChildBg, [0.0, 0.0, 0.0, 0.0]);
         let _track = ui.push_style_color(StyleColor::ScrollbarBg, [0.0, 0.0, 0.0, 0.0]);
@@ -91,6 +124,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             // 手柄右摇杆与鼠标滚轮：指针不在面板上时也滚动面板
             let wheel = ui.io().mouse_wheel;
             if wheel != 0.0 && !ui.is_window_hovered() {ui.set_scroll_y((ui.scroll_y() - wheel * 48.0 * s).clamp(0.0, ui.scroll_max_y()));}
+            stats(ui, s, &view.stats);
             // 职业与机制（旧存档的旧职业只显示名字）
             heading(ui, s, "职业", None);
             let role = (run.class_rules >= 1).then(|| erdtree_tower::Class::PLAYABLE.iter().position(|c| *c == run.class)).flatten().map(|i| &crate::class_ui::ROLES[i]);

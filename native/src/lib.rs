@@ -22,6 +22,7 @@ use hudhook::{
 
 mod blessings;
 mod options;
+mod stats;
 mod enemies;
 mod chariot;
 mod map_guards;
