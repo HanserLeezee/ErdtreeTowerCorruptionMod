@@ -212,11 +212,17 @@ fn select(mut pool:Vec<Stock>,count:usize,seed:u64,visit:usize)->Vec<Stock> {
     pool.sort_by_key(|s|hash(seed^s.id as u64));
     (0..count).map(|i|pool[(visit*count+i)%pool.len()].clone()).collect()
 }
+/// 没有 DLC 时不进货的物品（按商店类别换回带标记的物品编号再判断；战灰单独判断）
+fn offered(item:&Stock)->bool {
+    let id=item.id as u32;
+    match item.kind {0=>erdtree_tower::dlc::item_allowed(id),1=>erdtree_tower::dlc::item_allowed(0x10000000|id),2=>erdtree_tower::dlc::item_allowed(0x20000000|id),
+        3=>erdtree_tower::dlc::item_allowed(0x40000000|id),4=>erdtree_tower::dlc::gem_allowed(id),_=>true}
+}
 fn extras(group:&str)->Vec<Stock> {
     include_str!("../../scene-assets/shop-extras.txt").lines().filter_map(|line| {
         let p:Vec<_>=line.split('|').collect();
         (p[0]==group).then(||Stock{kind:p[1].parse().unwrap(),id:p[2].parse().unwrap(),price:p[3].parse().unwrap(),quantity:p[4].parse().unwrap()})
-    }).filter(|item|group!="food"||!withdrawn(item)).collect()
+    }).filter(|item|(group!="food"||!withdrawn(item))&&offered(item)).collect()
 }
 pub fn stock(run:&Run)->Vec<Stock> {
     use erdtree_tower::{Class,rewards::{CATALOG,ItemKind}};
@@ -224,13 +230,13 @@ pub fn stock(run:&Run)->Vec<Stock> {
     let catalog:Vec<_>=include_str!("../../scene-assets/shop-catalog.txt").lines().map(|line| {
         let p:Vec<_>=line.split('|').collect();
         Stock{kind:p[0].parse().unwrap(),id:p[1].parse().unwrap(),price:p[2].parse().unwrap(),quantity:1}
-    }).collect();
+    }).filter(offered).collect();
     let mut result=Vec::new();
     let catalyst=match run.class {Class::Astrologer|Class::Prisoner=>Some("staff"),Class::Prophet|Class::Confessor=>Some("seal"),_=>None};
     if let Some(group)=catalyst {result.extend(select(extras(group),2,run.seed,visit));}
     result.extend(select(catalog.iter().filter(|s|s.kind==0).cloned().collect(),if catalyst.is_some(){3}else{5},run.seed,visit));
     for (kind,equip,price) in [(ItemKind::Sorcery,3,1800),(ItemKind::Incantation,3,1800),(ItemKind::Armor,1,1500)] {
-        result.extend(select(CATALOG.iter().filter(|s|s.kind==kind).map(|s|Stock{kind:equip,id:(s.id&0x0fffffff) as i32,price,quantity:1}).collect(),3,run.seed,visit));
+        result.extend(select(CATALOG.iter().filter(|s|s.kind==kind&&erdtree_tower::dlc::item_allowed(s.id)).map(|s|Stock{kind:equip,id:(s.id&0x0fffffff) as i32,price,quantity:1}).collect(),3,run.seed,visit));
     }
     // 原来卖投掷壶的一格改卖第二种飞刀：投掷壶要有龟裂壶才能持有，商店不再发放龟裂壶
     if tear_offer(hash(run.seed ^ visit as u64 ^ 0x74656172)) {
@@ -246,7 +252,7 @@ pub fn stock(run:&Run)->Vec<Stock> {
     result.extend(select(pool,2,run.seed,visit));
     // 召唤师的商店常备骨灰
     if !run.law.lone_wolf()&&(run.summoner()||hash(run.seed ^ visit as u64 ^ 0xa549)%4==0) {
-        result.extend(select(CATALOG.iter().filter(|s|s.kind==ItemKind::Spirit).map(|s|Stock{kind:3,id:(s.id&0x0fffffff) as i32,price:2000,quantity:1}).collect(),1,run.seed,visit));
+        result.extend(select(CATALOG.iter().filter(|s|s.kind==ItemKind::Spirit&&erdtree_tower::dlc::item_allowed(s.id)).map(|s|Stock{kind:3,id:(s.id&0x0fffffff) as i32,price:2000,quantity:1}).collect(),1,run.seed,visit));
     } else {
         let pool=extras("food").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
         result.extend(select(pool,1,run.seed,visit));

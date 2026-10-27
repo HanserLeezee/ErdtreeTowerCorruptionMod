@@ -29,7 +29,7 @@ pub fn chest_roll(roll: u64) -> Outcome {
 }
 pub fn kind(seed: u64, node: usize) -> u8 { (crate::mix(seed ^ node as u64) % 2) as u8 }
 pub fn descent_reward(seed:u64,node:usize)->u32 {
-    let pool:Vec<_>=crate::elite::LEGENDARY.iter().copied().filter(|id|*id>>28==0).collect();
+    let pool:Vec<_>=crate::elite::LEGENDARY.iter().copied().filter(|id|*id>>28==0&&crate::dlc::item_allowed(*id)).collect();
     pool[crate::mix(seed^(node as u64).wrapping_mul(7919)^0xde5ce17) as usize%pool.len()]
 }
 pub fn outcome(seed: u64, node: usize, chest: usize) -> Outcome {

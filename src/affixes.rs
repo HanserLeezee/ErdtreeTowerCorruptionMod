@@ -47,7 +47,7 @@ pub fn rewards(run:&Run,node:usize,mut offers:Vec<Reward>)->Vec<Reward> {
     let normal=run.nodes.get(node).is_some_and(|n|matches!(n.kind,crate::NodeKind::Monster|crate::NodeKind::Chest));
     if normal&&crate::mix(run.reward_seed()^entropy^0xa420)%4==0 {
         if let Some(slot)=offers.iter().position(|r|matches!(r,Reward::Item(id) if crate::rewards::lookup(*id).is_some_and(|i|i.kind==ItemKind::Weapon))) {
-            let armor:Vec<_>=crate::rewards::CATALOG.iter().filter(|i|i.kind==ItemKind::Armor).collect();
+            let armor:Vec<_>=crate::rewards::CATALOG.iter().filter(|i|i.kind==ItemKind::Armor&&crate::dlc::item_allowed(i.id)).collect();
             let start=crate::mix(entropy^run.reward_seed()) as usize%armor.len();
             if let Some(item)=(0..armor.len()).map(|n|armor[(start+n)%armor.len()]).find(|i|roll(run,i.id,entropy^slot as u64,false).is_some()){offers[slot]=Reward::Item(item.id);}
         }
@@ -67,7 +67,7 @@ pub fn mystery_box(run:&Run,node:usize,premium:bool)->Option<u32> {
     // 奖励装备的最低品质为稀有：普通盲盒 稀有 65／史诗 30／传说 5，高级盲盒 稀有 15／史诗 55／传说 30
     let tier:u8=if premium {match value {0..=14=>1,15..=69=>2,_=>3}} else {match value {0..=64=>1,65..=94=>2,_=>3}};
     // 先定品质，再只从能以该品质出现的装备里抽，说明里写的概率就是实际概率
-    let pool:Vec<_>=crate::rewards::CATALOG.iter().filter(|i|(i.kind==ItemKind::Weapon&&i.random_eligible()||i.kind==ItemKind::Armor)&&i.kind.allowed(run.class)
+    let pool:Vec<_>=crate::rewards::CATALOG.iter().filter(|i|(i.kind==ItemKind::Weapon&&i.random_eligible()||i.kind==ItemKind::Armor&&crate::dlc::item_allowed(i.id))&&i.kind.allowed(run.class)
         &&BY_BASE.contains_key(&i.id)&&(run.affix_rules>=3||BASE_RARITY.get(&i.id).copied().unwrap_or(0)<=tier)).collect();
     if pool.is_empty() {return None;}
     let start=(roll%pool.len() as u64) as usize;

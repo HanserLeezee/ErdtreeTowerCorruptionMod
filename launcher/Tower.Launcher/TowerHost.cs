@@ -151,7 +151,7 @@ namespace Tower.Launcher
         void Change(string key, JsonElement value)
         {
             // 调试与改键写进模组目录的 tower-options.ini（游戏读它），不进启动器自己的设置
-            if (key == "debug" || key.StartsWith("key.", StringComparison.Ordinal))
+            if (key == "debug" || key == "dlc" || key.StartsWith("key.", StringComparison.Ordinal))
             {
                 ChangeOption(key, value);
                 return;
@@ -179,8 +179,11 @@ namespace Tower.Launcher
         void ChangeOption(string key, JsonElement value)
         {
             var hotkey = TowerOptions.Hotkeys.FirstOrDefault(h => "key." + h.Id == key);
-            if (key != "debug" && hotkey.Id == null) return;
-            var text = key == "debug" ? (value.ValueKind == JsonValueKind.True ? "1" : "0") : value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+            if (key != "debug" && key != "dlc" && hotkey.Id == null) return;
+            var label = value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+            var text = key == "debug" ? (value.ValueKind == JsonValueKind.True ? "1" : "0")
+                : key == "dlc" ? TowerOptions.DlcModes.FirstOrDefault(m => m.Label == label).Id ?? ""
+                : label;
             if (text.Length == 0) return;
             try
             {
@@ -201,7 +204,8 @@ namespace Tower.Launcher
                 var clash = TowerOptions.Hotkeys.Where(h => h.Id != hotkey.Id && TowerOptions.Key(values, h.Id, h.Default).Equals(text, StringComparison.OrdinalIgnoreCase)).Select(h => h.Label).ToList();
                 if (clash.Count > 0) Toast($"「{hotkey.Label}」和「{string.Join("」「", clash)}」都是 {text}，按一下会同时触发", "warn", 6000);
             }
-            if (GameRunning()) Toast("已保存，下次启动游戏生效", "info");
+            if (key == "dlc" && text != "full" && settings.Mode == HostSettings.Seamless) Toast("无缝联机时仍按有 DLC 处理，这个设置只对单人生效", "info", 6000);
+            else if (GameRunning()) Toast("已保存，下次启动游戏生效", "info");
         }
 
         void Run(string name)
@@ -254,6 +258,7 @@ namespace Tower.Launcher
             var values = new Dictionary<string, object?>
             {
                 ["debug"] = TowerOptions.Debug(options) || File.Exists(Path.Combine(paths.InstallDir, "tower-debug.enable")),
+                ["dlc"] = TowerOptions.DlcLabel(options),
                 ["mode"] = settings.Mode == HostSettings.Seamless ? "无缝联机" : "单人",
                 ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : "国内镜像",
                 ["mirrorInfo"] = mirror == null ? "未配置（只从 GitHub 更新）" : new Uri(mirror).Host,

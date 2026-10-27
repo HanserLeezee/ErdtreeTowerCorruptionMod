@@ -1,6 +1,7 @@
 //! 启动参数：模组目录（DLL 所在目录）里的 tower-options.ini，由启动器写入，也可以手动改；下次启动游戏生效。
 //! 每行 `名字=值`，`#` 或 `;` 开头是注释，不认识的行原样忽略：
 //!   debug=1              打开调试菜单（和放一个 tower-debug.enable 文件效果相同）
+//!   dlc=full             DLC 内容：full 有 DLC；none 没有 DLC；weapons 没有 DLC 但保留 DLC 武器（实验）。只对单人生效，见 dlc.rs
 //!   key.settle=Home      快速结算（暂离结束本局）
 //!   key.overlay=F10      显示/隐藏爬塔界面
 //!   key.archive=J        旅程档案
@@ -52,12 +53,13 @@ pub const KEYS: &[&str] = &[
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Options {
     pub debug: bool,
+    pub dlc: crate::dlc::Mode,
     keys: [&'static str; 5],
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { debug: false, keys: Hotkey::ALL.map(Hotkey::default_key) }
+        Options { debug: false, dlc: crate::dlc::Mode::Full, keys: Hotkey::ALL.map(Hotkey::default_key) }
     }
 }
 
@@ -82,6 +84,10 @@ pub fn parse(text: &str) -> Options {
         let (name, value) = (name.trim().to_ascii_lowercase(), value.trim());
         if name == "debug" {
             options.debug = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes");
+        } else if name == "dlc" {
+            if let Some(mode) = crate::dlc::Mode::parse(value) {
+                options.dlc = mode;
+            }
         } else if let Some(id) = name.strip_prefix("key.")
             && let Some(hotkey) = Hotkey::ALL.into_iter().find(|h| h.id() == id)
             && let Some(key) = canonical_key(value)
@@ -105,9 +111,10 @@ mod tests {
 
     #[test]
     fn launcher_file_rebinds_keys_and_enables_debug() {
-        let text = "\u{feff}# 黄金树爬塔启动参数\r\ndebug = 1\r\nkey.settle=end\r\nKEY.Overlay= f9 \r\nkey.archive=num5\r\n; key.build=X\r\n";
+        let text = "\u{feff}# 黄金树爬塔启动参数\r\ndebug = 1\r\ndlc=Weapons\r\nkey.settle=end\r\nKEY.Overlay= f9 \r\nkey.archive=num5\r\n; key.build=X\r\n";
         let options = parse(text);
         assert!(options.debug);
+        assert_eq!(options.dlc, crate::dlc::Mode::Weapons);
         assert_eq!(options.key(Hotkey::Settle), "End");
         assert_eq!(options.key(Hotkey::Overlay), "F9");
         assert_eq!(options.key(Hotkey::Archive), "Num5");
@@ -116,7 +123,7 @@ mod tests {
 
     #[test]
     fn unknown_keys_values_and_lines_are_ignored() {
-        let options = parse("debug=maybe\nkey.settle=Ctrl\nkey.jump=F1\nnonsense\nkey.debug=");
+        let options = parse("debug=maybe\ndlc=sometimes\nkey.settle=Ctrl\nkey.jump=F1\nnonsense\nkey.debug=");
         assert_eq!(options, Options::default());
     }
 }

@@ -24,6 +24,17 @@ namespace Tower.Launcher
             ("debug", "调试菜单", "F8"),
         };
 
+        /// <summary>DLC 模式：设置页显示的文字 ↔ 文件里的 dlc= 值（src/dlc.rs 的 Mode）</summary>
+        public static readonly (string Id, string Label)[] DlcModes =
+        {
+            ("full", "有 DLC"),
+            ("none", "没有 DLC"),
+            ("weapons", "没有 DLC，保留 DLC 武器（实验）"),
+        };
+
+        public static string DlcLabel(Dictionary<string, string> values) =>
+            DlcModes.FirstOrDefault(m => values.TryGetValue("dlc", out var v) && m.Id.Equals(v, StringComparison.OrdinalIgnoreCase)).Label ?? DlcModes[0].Label;
+
         static readonly string Header = "# 黄金树爬塔启动参数：启动器会改写这个文件，也可以手动改，下次启动游戏生效。说明见 src/options.rs";
 
         /// <summary>名字一律小写；不存在或读不了返回空表</summary>

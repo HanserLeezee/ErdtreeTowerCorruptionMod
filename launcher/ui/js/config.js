@@ -211,6 +211,13 @@ window.HOYO_CONFIG = {
           },
           /* 下面两组写进模组目录的 tower-options.ini，游戏启动时读取（用 .cmd 启动也生效） */
           {
+            title: 'DLC（下次启动游戏生效）',
+            rows: [
+              { type: 'select', key: 'dlc', label: '黄金树之影 DLC', hint: '只对单人生效；无缝联机时双方都要有 DLC',
+                value: '有 DLC', options: ['有 DLC', '没有 DLC', '没有 DLC，保留 DLC 武器（实验）'] },
+            ],
+          },
+          {
             title: '调试（下次启动游戏生效）',
             rows: [
               { type: 'switch', key: 'debug', label: '调试模式', hint: '游戏里按「调试菜单」键打开；联机时调试命令不执行', value: false },

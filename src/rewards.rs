@@ -14,7 +14,7 @@ impl ItemKind {
 pub struct Item {pub id:u32,pub name:&'static str,pub kind:ItemKind}
 impl Item {
     pub fn random_eligible(&self)->bool {
-        self.id!=(0x40000000|11019)&&self.kind!=ItemKind::Armor&&(self.kind!=ItemKind::Talisman||(!self.name.contains(['+','＋'])
+        crate::dlc::item_allowed(self.id)&&self.id!=(0x40000000|11019)&&self.kind!=ItemKind::Armor&&(self.kind!=ItemKind::Talisman||(!self.name.contains(['+','＋'])
             &&!matches!(self.id&0x0fffffff,1100|2140|4060|6040|6060|6070|6080|6090)))
     }
 }
@@ -192,7 +192,7 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
     for (index,kind) in [ItemKind::Weapon,ItemKind::Armor,ItemKind::Sorcery,ItemKind::Incantation,ItemKind::Spirit,ItemKind::Talisman,ItemKind::Tool].into_iter().enumerate() {
         if kind==ItemKind::Tool&&!base_only {continue;}
         if kind==ItemKind::Spirit&&!spirits {continue;}
-        let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&(!base_only||item.random_eligible())).collect();
+        let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&crate::dlc::item_allowed(item.id)&&(!base_only||item.random_eligible())).collect();
         // 职业规则 1：武器约七成从职业擅长的类型里出
         if kind==ItemKind::Weapon&&run.class_rules>=1&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
             let favored:Vec<_>=pool.iter().copied().filter(|i|run.class.weapon_types().contains(&((i.id&0x0fffffff)/1_000_000))).collect();

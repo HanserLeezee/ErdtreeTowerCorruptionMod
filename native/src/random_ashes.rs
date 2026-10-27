@@ -3,10 +3,11 @@ use eldenring::cs::{EquipParamCustomWeapon,EquipParamGem,SoloParamRepository};
 use fromsoftware_shared::FromStatic;
 
 pub const SHOP_FIRST:u32=9500000;
-static POOL:LazyLock<Vec<i32>>=LazyLock::new(||include_str!("../../scene-assets/unrestricted-ashes.txt").lines().map(|s|s.parse().unwrap()).collect());
+// 没有 DLC 时 DLC 战灰不进池（DLL 启动时已按启动参数设好 DLC 模式，池子第一次用到时才建）
+static POOL:LazyLock<Vec<i32>>=LazyLock::new(||include_str!("../../scene-assets/unrestricted-ashes.txt").lines().map(|s|s.parse().unwrap()).filter(|gem:&i32|erdtree_tower::dlc::gem_allowed(*gem as u32)).collect());
 static WEAPONS:LazyLock<HashSet<u32>>=LazyLock::new(||include_str!("../../scene-assets/random-ash-weapon-rows.txt").lines().map(|s|s.parse().unwrap()).collect());
 static PROTECTED:LazyLock<std::collections::HashMap<u32,Vec<i32>>>=LazyLock::new(||include_str!("../../scene-assets/protected-ash-pools.tsv").lines().map(|line|{
-    let p:Vec<_>=line.split('\t').collect();(p[0].parse().unwrap(),p[2].split(',').filter(|s|!s.is_empty()).map(|s|s.parse().unwrap()).collect())
+    let p:Vec<_>=line.split('\t').collect();(p[0].parse().unwrap(),p[2].split(',').filter(|s|!s.is_empty()).map(|s|s.parse().unwrap()).filter(|gem:&i32|erdtree_tower::dlc::gem_allowed(*gem as u32)).collect())
 }).collect());
 pub fn eligible(id:u32)->bool {id>>28==0&&WEAPONS.contains(&(id/100*100))&&PROTECTED.get(&(id/100*100)).is_none_or(|pool|!pool.is_empty())}
 fn choose(entropy:u64)->i32 {POOL[(entropy%POOL.len() as u64) as usize]}

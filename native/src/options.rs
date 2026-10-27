@@ -9,7 +9,11 @@ static DIR:OnceLock<PathBuf>=OnceLock::new();
 pub fn init(dll:Option<PathBuf>) {
     if let Some(dir)=dll.and_then(|p|p.parent().map(PathBuf::from)) {let _=DIR.set(dir);}
     let options=&*OPTIONS;
-    crate::log(format!("OPTIONS file={:?} debug={} keys={}",path(),options.debug,
+    // DLC 开关只对单人生效：无缝联机时双方必须抽到同样的敌人和奖励，一律按有 DLC 处理
+    let seamless=std::env::var("ERDTREE_TOWER_SEAMLESS_ENTRY").as_deref()==Ok("1");
+    let dlc=if seamless {erdtree_tower::dlc::Mode::Full} else {options.dlc};
+    erdtree_tower::dlc::set(dlc);
+    crate::log(format!("OPTIONS file={:?} debug={} dlc={}{} keys={}",path(),options.debug,dlc.id(),if seamless&&options.dlc!=dlc {"（无缝联机，忽略设置）"} else {""},
         Hotkey::ALL.map(|h|format!("{}={}",h.id(),options.key(h))).join(",")));
 }
 

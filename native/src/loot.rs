@@ -80,7 +80,7 @@ fn choose_for_run(run:&erdtree_tower::Run,seed:u64,node:usize)->Loot {
     let mut item=choose(seed,node);
     if run.affix_equipment {
         if erdtree_tower::rewards::lookup(item.id as u32).is_some_and(|i|i.kind==ItemKind::Weapon)&&seed%4==0 {
-            let armor:Vec<_>=CATALOG.iter().filter(|i|i.kind==ItemKind::Armor).collect();
+            let armor:Vec<_>=CATALOG.iter().filter(|i|i.kind==ItemKind::Armor&&erdtree_tower::dlc::item_allowed(i.id)).collect();
             let a=armor[(seed as usize^node)%armor.len()];item=Loot{id:a.id as i32,name:a.name};
         }
         if let Some(id)=erdtree_tower::affixes::roll(run,item.id as u32,seed^node as u64,true) {

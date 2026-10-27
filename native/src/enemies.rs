@@ -21,8 +21,8 @@ pub struct Enemy {
 static PARTY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub fn set_party(active:bool) {PARTY.store(active,std::sync::atomic::Ordering::Relaxed);}
 fn party()->bool {PARTY.load(std::sync::atomic::Ordering::Relaxed)}
-/// 停用的不抽；仅单人的（地图里没有联机实体）联机时不抽
-fn selectable(e:&Enemy,party:bool)->bool {!e.retired&&!(party&&e.solo)}
+/// 停用的不抽；仅单人的（地图里没有联机实体）联机时不抽；没有 DLC 时不抽 DLC 敌人
+fn selectable(e:&Enemy,party:bool)->bool {!e.retired&&!(party&&e.solo)&&(!e.dlc||erdtree_tower::dlc::enemies_allowed())}
 /// Boss 与精英版 Boss 的参数编号段（BossAssets.Npc）；DLC 怪物池的编号也在 950000000 之上，不能只比大小
 pub fn boss_npc(npc:i32)->bool {(950000000..950100000).contains(&npc)}
 fn enemy(name: &'static str, model: i32,act:u8,kind:NodeKind) -> Enemy {
