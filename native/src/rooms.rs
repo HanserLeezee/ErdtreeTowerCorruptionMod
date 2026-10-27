@@ -88,7 +88,7 @@ impl Room {
     }
     pub fn event_menu(&mut self,run:&erdtree_tower::Run,party_ready:bool,party_busy:bool,solo:bool) {
         let progress=&run.regional_event;
-        let menu=super::native_talk::EventMenu{gamble:solo&&run.gamble(self.node).is_some(),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
+        let menu=super::native_talk::EventMenu{gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
             altar:run.altar(self.node),used:progress.opened!=0||progress.stormveil.is_some_and(|s|s!=erdtree_tower::stormveil::Progress::Choosing),
             busy:progress.guards||self.scarabs.active()||party_busy,ready:self.scarabs.ready()||party_ready,attempts:progress.attempts};
         for talk in &mut self.talks {talk.set_event_menu(menu);}

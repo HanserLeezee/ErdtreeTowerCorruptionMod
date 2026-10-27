@@ -85,6 +85,7 @@ mod rest_end;
 mod party_death;
 mod seamless_revival;
 mod weapon_glow;
+mod dummy;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -337,11 +338,7 @@ impl ImguiRenderLoop for TowerPreview {
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
         if run_screen {return;}
         if let Some(view) = &view {
-            // 问号房的赌运事件：房间里与 NPC 交谈后弹出事件卡片
-            if view.room.is_some()&&view.gamble&&!view.shared_event {
-                if let Some(run)=&view.run {self.rewards.draw_story(ui,run,view);}
-                return;
-            }
+            if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
             if view.room.is_some()||view.shared_event {
                 return;
             }

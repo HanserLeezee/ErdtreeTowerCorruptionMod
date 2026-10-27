@@ -150,7 +150,7 @@ impl Selection {
     }
 }
 #[derive(Default)]
-pub struct Panel {selection:Selection,textures:HashMap<u32,Option<TextureId>>,wanted:Vec<u32>,card:Option<TextureId>,rarity_cards:Option<TextureId>,rare_blue:Option<TextureId>,story:Option<(Run,u32,[Option<String>;3])>}
+pub struct Panel {selection:Selection,textures:HashMap<u32,Option<TextureId>>,wanted:Vec<u32>,card:Option<TextureId>,rarity_cards:Option<TextureId>,rare_blue:Option<TextureId>}
 impl Panel {
     pub fn icon(&mut self,icon:u32)->Option<TextureId> {
         let texture=self.textures.get(&icon).copied();if texture.is_none()&&!self.wanted.contains(&icon){self.wanted.push(icon);}texture.flatten()
@@ -243,73 +243,6 @@ impl Panel {
             let skip={let _disabled=ui.begin_disabled(!ready);ui.button("跳过誓约   Esc / B")};
             if (skip||key(&[Key::Escape,Key::GamepadFaceRight]))&&self.selection.claim(now,ready).is_some() {runtime::submit(Action::SkipContract);}
             if !crate::oath_art::ready(){ui.set_window_font_scale(s*0.8);center(ui,mid,oy+866.0*s,"誓约贴图缺失，请重启更新后的启动器",[0.91,0.49,0.40,1.0]);}
-        });
-    }
-    pub fn draw_story(&mut self,ui:&Ui,run:&Run,view:&View) {
-        let Ok(index)=run.story_index() else{return;};
-        let story=&erdtree_tower::events::STORIES[index];
-        let now=ui.time();
-        self.selection.sync(format!("event:{}:{}:{:?}",run.seed,run.act,run.phase),now);
-        let ready=view.ready&&!view.busy&&now>=self.selection.armed_at;
-        let key=|keys:&[Key]|keys.iter().any(|k|ui.is_key_pressed_no_repeat(*k));
-        if ready {
-            if key(&[Key::A,Key::LeftArrow,Key::GamepadDpadLeft]){self.selection.step(-1,3);}
-            if key(&[Key::D,Key::RightArrow,Key::GamepadDpadRight]){self.selection.step(1,3);}
-        }
-        if !self.story.as_ref().is_some_and(|(cached,runes,_)|*runes==view.runes&&cached==run) {
-            // 第三张是“离开”：只关闭卡片，之后还能再来交谈
-            let errors=std::array::from_fn(|i|if i==2 {None}else{let mut preview=run.clone();preview.gold=view.runes;preview.resolve_story(i).err()});
-            self.story=Some((run.clone(),view.runes,errors));
-        }
-        let errors=&self.story.as_ref().unwrap().2;
-        let size=ui.io().display_size;
-        let s=(size[0]/1600.0).min(size[1]/900.0).min(1.7);
-        let gold=[0.86,0.72,0.43,1.0];let ink=[0.18,0.15,0.10,1.0];
-        let _bg=ui.push_style_color(StyleColor::WindowBg,[0.025,0.03,0.025,0.97]);
-        let _text=ui.push_style_color(StyleColor::Text,gold);
-        let _button=ui.push_style_color(StyleColor::Button,[0.25,0.20,0.12,1.0]);
-        let _hover=ui.push_style_color(StyleColor::ButtonHovered,[0.40,0.30,0.16,1.0]);
-        ui.window("旅途奇遇##story").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
-            .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
-            let mid=size[0]*0.5;
-            ui.set_window_font_scale(s);
-            center(ui,mid,32.0*s,"黄 金 树 爬 塔  ·  旅 途 奇 遇",gold);
-            ui.set_window_font_scale(s*1.8);center(ui,mid,77.0*s,story.title,gold);
-            ui.set_window_font_scale(s);
-            ui.set_cursor_pos([mid-490.0*s,142.0*s]);
-            {let _wrap=ui.push_text_wrap_pos_with_pos(mid+490.0*s);let _cjk=crate::fancy_text::wrap_at(mid+490.0*s);crate::fancy_text::text_wrapped(ui,story.text);}
-            center(ui,mid,224.0*s,&format!("持有卢恩  {}　·　每个事件只能选择一项",view.runes),gold);
-            let w=330.0*s;let h=370.0*s;let gap=34.0*s;let top=278.0*s;
-            let labels=match index {
-                erdtree_tower::events::DICE=>["押小注","押大注","暂时离开"],
-                erdtree_tower::events::MYSTERY=>["普通盲盒","高级盲盒","暂时离开"],
-                _=>["重铸","精炼","暂时离开"],
-            };
-            for i in 0..3 {
-                let x=mid-(3.0*w+2.0*gap)*0.5+i as f32*(w+gap);
-                ui.set_cursor_pos([x,top]);
-                {let _disabled=ui.begin_disabled(!ready);if ui.invisible_button(format!("story-card-{i}"),[w,h]){self.selection.selected=i;}}
-                let hovered=ui.is_item_hovered();let selected=self.selection.selected==i;
-                let draw=ui.get_window_draw_list();
-                draw.add_rect([x,top],[x+w,top+h],ImColor32::from_rgb(218,204,170)).filled(true).build();
-                for inset in [0.0,7.0*s] {draw.add_rect([x+inset,top+inset],[x+w-inset,top+h-inset],if selected||hovered{ImColor32::from_rgb(239,191,90)}else{ImColor32::from_rgb(117,97,60)}).thickness(if selected{3.0*s}else{1.0*s}).build();}
-                draw.add_line([x+26.0*s,top+110.0*s],[x+w-26.0*s,top+110.0*s],ImColor32::from_rgb(155,127,78)).build();
-                drop(draw);
-                center(ui,x+w*0.5,top+24.0*s,&format!("0{}",i+1),ink);
-                ui.set_window_font_scale(s*1.3);center(ui,x+w*0.5,top+63.0*s,labels[i],ink);ui.set_window_font_scale(s);
-                let description=if i==2{"不支付卢恩。\n关闭卡片，之后可以再与 NPC 交谈；\n也可以直接从传送门离开。"}else{story.choices[i]};
-                ui.set_cursor_pos([x+26.0*s,top+137.0*s]);
-                {let _color=ui.push_style_color(StyleColor::Text,ink);let _wrap=ui.push_text_wrap_pos_with_pos(x+w-26.0*s);let _cjk=crate::fancy_text::wrap_at(x+w-26.0*s);crate::fancy_text::text_wrapped(ui,description);}
-                center(ui,x+w*0.5,top+h-43.0*s,if errors[i].is_some(){"条件不足"}else if selected{"已选中 · 等待确认"}else{"点击选择"},ink);
-            }
-            ui.set_cursor_pos([mid-190.0*s,688.0*s]);
-            let available=ready&&errors[self.selection.selected].is_none();
-            let confirm={let _disabled=ui.begin_disabled(!available);ui.button_with_size("确认选择  [Enter / A]",[380.0*s,48.0*s])};
-            if confirm||key(&[Key::Enter,Key::GamepadFaceDown]) {if let Some(choice)=self.selection.claim(now,available){runtime::submit(Action::Story(choice));}}
-            if ready&&key(&[Key::Escape,Key::GamepadFaceRight]) {runtime::submit(Action::Story(2));}
-            center(ui,mid,759.0*s,"A / D 或方向键切换　·　选中后确认　·　Esc / B 暂时离开",gold);
-            let status=errors[self.selection.selected].as_deref().unwrap_or(&view.status);
-            ui.set_cursor_pos([mid-500.0*s,812.0*s]);let _wrap=ui.push_text_wrap_pos_with_pos(mid+500.0*s);let _cjk=crate::fancy_text::wrap_at(mid+500.0*s);crate::fancy_text::text_wrapped(ui,status);
         });
     }
     pub fn initialize(&mut self,renderer:&mut dyn RenderContext) {
@@ -576,12 +509,6 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
     panel.rare_blue=Some(TextureId::new(200005));
     for (width,height) in [(1280,720),(1920,1080),(3440,1440)] {
         context.io_mut().display_size=[width as f32,height as f32];
-        for seed in 0..24 {
-            let mut event=Run::new(seed,erdtree_tower::Class::Samurai);
-            event.nodes[0].kind=erdtree_tower::NodeKind::Event;event.phase=Phase::Node{id:0};
-            panel.draw_story(context.frame(),&event,&view);
-            assert!(context.render().total_vtx_count>0);
-        }
     }
     for detail in DETAILS.values(){panel.textures.insert(detail.icon,Some(TextureId::new(detail.icon as usize+1)));}
     if let Some(path)=&output {

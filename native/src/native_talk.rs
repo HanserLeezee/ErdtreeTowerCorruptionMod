@@ -20,13 +20,30 @@ pub struct NativeTalk {
     talisman: Option<super::smith::TalismanOffer>,
 }
 #[derive(Clone,Copy,Default)]
-pub struct EventMenu {pub gamble:bool,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
+pub struct EventMenu {pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum EventRequest {Gamble,Trial(erdtree_tower::regional_events::Trial),Altar(usize),Scarabs,Recovery(usize),Descent,Stormveil(bool)}
+pub enum EventRequest {Gamble(usize),Trial(erdtree_tower::regional_events::Trial),Altar(usize),Scarabs,Recovery(usize),Descent,Stormveil(bool)}
+/// 问号房赌运事件的对话文字（scene-builder RecoveryText.GambleEntries）：
+/// 选项 = GAMBLE_OPTIONS + 事件×2 + 选项，确认说明 = GAMBLE_CONFIRM + 事件×2 + 选项（事件：0 骰子、1 盲盒、2 重铸）
+pub const GAMBLE_OPTIONS:i32=9500130;
+pub const GAMBLE_CONFIRM:i32=9500136;
+/// 结果：骰子赢 / 输（+选项），盲盒，重铸 / 精炼
+pub const GAMBLE_DICE_WIN:i32=9500142;
+pub const GAMBLE_DICE_LOSE:i32=9500144;
+pub const GAMBLE_MYSTERY:i32=9500146;
+pub const GAMBLE_REFORGE:i32=9500147;
+/// 未进行：卢恩不足、传说不能精炼、右手没有词条武器、没有其他词条组合、其他原因；已经用过
+pub const GAMBLE_NO_RUNES:i32=9500149;
+pub const GAMBLE_LEGENDARY:i32=9500150;
+pub const GAMBLE_NO_AFFIX:i32=9500151;
+pub const GAMBLE_NO_SIBLING:i32=9500152;
+pub const GAMBLE_FAILED:i32=9500153;
+pub const GAMBLE_USED:i32=9500154;
 impl EventMenu {
     fn confirmation(self,choice:i32)->Option<i32> {
         use erdtree_tower::regional_events::Trial;
         match self.request(choice)? {
+            EventRequest::Gamble(option)=>Some(GAMBLE_CONFIRM+i32::from(self.gamble?)*2+option as i32),
             EventRequest::Trial(Trial::Descent)|EventRequest::Descent=>Some(9500118),
             EventRequest::Trial(Trial::Stormveil)=>Some(9500119),
             EventRequest::Trial(Trial::Chariot)=>Some(9500120),
@@ -40,6 +57,7 @@ impl EventMenu {
         let choice=choice?;self.confirmation(choice)?;self.request(choice)
     }
     fn request(self,choice:i32)->Option<EventRequest> {
+        if self.gamble.is_some() {return (!self.used&&!self.busy&&(1..=2).contains(&choice)).then(||EventRequest::Gamble((choice-1) as usize));}
         if self.trial {
             return (!self.used&&!self.busy).then(||[erdtree_tower::regional_events::Trial::Descent,erdtree_tower::regional_events::Trial::Stormveil,erdtree_tower::regional_events::Trial::Chariot,erdtree_tower::regional_events::Trial::Skip].get(choice.wrapping_sub(1) as usize).copied()).flatten().map(EventRequest::Trial);
         }
@@ -132,10 +150,14 @@ impl NativeTalk {
                     self.event(19,&[1,9500080,-1])?;self.event(19,&[2,9500081,-1])?;self.event(19,&[99,9500003,-1])?;
                     self.event(10,&[1])?;self.state=1;return Ok(());
                 }
-                // 赌运事件：交谈后由界面弹出事件卡片，不打开原生菜单
-                if self.service==6 && self.event_menu.gamble {
-                    if !self.event_menu.used&&!self.event_menu.busy {self.event_request=Some(EventRequest::Gamble);}
-                    return Ok(());
+                // 赌运事件：原版对话菜单，两个选项各带确认说明
+                if self.service==6 && let Some(gamble)=self.event_menu.gamble {
+                    if self.event_menu.used {return self.dialog(GAMBLE_USED);}
+                    if self.event_menu.busy {return Ok(());}
+                    self.event(110,&[])?;self.event(20,&[])?;
+                    let first=GAMBLE_OPTIONS+i32::from(gamble)*2;
+                    self.event(19,&[1,first,-1])?;self.event(19,&[2,first+1,-1])?;self.event(19,&[99,9500003,-1])?;
+                    self.event(10,&[1])?;self.state=1;return Ok(());
                 }
                 if self.service==6 && self.event_menu.locked {return self.dialog(9500073);}
                 if self.service==6 && !self.event_menu.altar {return self.dialog(9500053);}
@@ -345,6 +367,20 @@ pub fn flag(id: u32) -> Result<bool, String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gamble_menus_confirm_each_option_and_close_once_used() {
+        use super::{EventMenu,EventRequest,GAMBLE_CONFIRM};
+        for gamble in 0..3u8 {
+            let menu=EventMenu{gamble:Some(gamble),..Default::default()};
+            for choice in 1..=2 {
+                assert_eq!(menu.request(choice),Some(EventRequest::Gamble((choice-1) as usize)));
+                assert_eq!(menu.confirmation(choice),Some(GAMBLE_CONFIRM+i32::from(gamble)*2+choice-1));
+                assert_eq!(EventMenu{used:true,..menu}.request(choice),None);
+                assert_eq!(EventMenu{busy:true,..menu}.confirmation(choice),None);
+            }
+            assert_eq!(menu.request(99),None);assert_eq!(menu.request(3),None);
+        }
+    }
     #[test]
     fn trial_confirmations_require_acceptance_and_recheck_availability() {
         let menu=super::EventMenu{trial:true,..Default::default()};

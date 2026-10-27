@@ -84,12 +84,12 @@ pub struct View {
     pub law_clock: Option<i64>,
     /// 身上词条装备的名称与词条（路线图的构筑面板）
     pub build: Vec<super::reward_ui::Gear>,
-    /// 问号房的赌运事件：与 NPC 交谈后在房间里弹出事件卡片
-    pub gamble: bool,
+    /// 篝火营地的测伤假人统计（单人、在营地时才有）
+    pub dummy: Option<super::dummy::View>,
 }
 fn initial_view()->View {
     View{shared_event:false,ballots:vec![],run:None,status:"进入角色后，从金色入口开始旅程。".into(),
-        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],gamble:false}
+        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None}
 }
 
 struct Foe {
@@ -248,6 +248,7 @@ struct Runtime {
     bout: super::debug_menu::Bout,
     pending: Option<Pending>,
     spawn_used: bool,
+    dummy: Option<super::dummy::Dummy>,
     last_player_probe: Option<(u32, i32, i32, u8, bool)>,
     pad_capture: super::input::PadCapture,
     travel: Option<(super::travel::Travel, Instant, i32, i32)>,
@@ -298,6 +299,7 @@ fn fresh_runtime()->Runtime {
         bout: Default::default(),
         pending: None,
         spawn_used: false,
+        dummy: None,
         last_player_probe: None,
         pad_capture: Default::default(),
         travel: None,
@@ -332,7 +334,7 @@ impl ActionContext {
 struct QueuedAction {action:Action,context:ActionContext}
 struct UiBridge {view:Option<View>,owner:Option<(u32,i32)>,pending:Option<QueuedAction>}
 fn accepts_ui_action(view:&View)->bool {
-    view.ready&&!view.busy&&!view.travelling&&!view.shared_event&&(view.room.is_none()||view.gamble)
+    view.ready&&!view.busy&&!view.travelling&&!view.shared_event&&view.room.is_none()
 }
 impl UiBridge {
     fn publish(&mut self,mut view:View,owner:Option<(u32,i32)>) {
@@ -1048,6 +1050,14 @@ fn tick_locked() {
         let texts=super::enemies::preview_texts(&roster);
         if let Some(room)=state.attendant.as_mut() {room.set_enemies(&texts);if let Err(e)=room.poll(world,game){super::log_repeating(format!("Arena attendant: {e}"));}}
     } else if let Some(room)=state.attendant.take() {room.retire(world);}
+    // 篝火营地的测伤假人（单人）：营地布置好后生成，离开营地撤下
+    let camp=state.party.is_none()&&!game.warp_requested&&state.room.as_ref().is_some_and(|r|r.kind==erdtree_tower::NodeKind::Camp&&!r.view.loading);
+    if camp {
+        let clock=super::weapon_glow::clock();
+        let dummy=state.dummy.get_or_insert_with(Default::default);
+        if let Err(error)=dummy.tick(world,clock){super::log_repeating(format!("Damage dummy: {error}"));}
+        state.view.dummy=Some(dummy.view(clock));
+    } else if let Some(dummy)=state.dummy.take() {dummy.retire(world);state.view.dummy=None;}
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
     if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());}
     if !game.warp_requested&&!state.view.travelling {
@@ -1924,7 +1934,6 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
     }
     let mut room = state.room.take().unwrap();
     if dead && !room.view.loading && !game.warp_requested {
-        state.view.gamble=false;
         room.retire(world);
         if let Some(run) = &mut state.view.run {
             run.hp = 0;
@@ -1948,8 +1957,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
         let trial_order=state.view.run.as_ref().filter(|r|r.regional_event.trial)
             .and_then(|_|state.party.as_ref().and_then(|p|p.event.trial_decision));
         if storm_order.is_none()&&trial_order.is_none(){room.poll(world, game)?;}
-        // 房间里只接受赌运事件卡片的选择，其余界面操作丢弃
-        let gamble_choice=match state.command.take() {Some(Action::Story(choice)) if state.view.gamble=>Some(choice),_=>None};
+        state.command = None;
         if room.view.loading&&storm_order.is_none()&&trial_order.is_none() {
             return Ok(false);
         }
@@ -2017,14 +2025,6 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
         let base = room.base();
         if room.kind==erdtree_tower::NodeKind::Event {
             tick_regional_event(state,world,&mut room)?;
-            if let Some(choice)=gamble_choice {
-                state.view.gamble=false;
-                if choice<2 {
-                    let message=state.view.run.as_ref().map(|r|erdtree_tower::events::story_outcome(r,choice)).unwrap_or_default();
-                    transact(state,world,Action::Story(choice),false)?;
-                    room.view.message=format!("{message}使用传送门继续旅程。");
-                }
-            }
         }
         if room.kind == erdtree_tower::NodeKind::Camp {
             let data=unsafe {world.main_player.as_mut().ok_or("角色未加载")?.player_game_data.as_mut()};
@@ -2083,7 +2083,6 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
         }
         Ok(false)
     })();
-    if transferred||matches!(result,Ok(true)) {state.view.gamble=false;}
     if transferred {room.retire(world);return;}
     if matches!(result, Ok(true)) {
         state.event_start=None;
@@ -2130,6 +2129,25 @@ fn tick_chest_award(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::r
     Ok(())
 }
 
+/// 赌运事件结算后的对话框（事件：0 骰子、1 盲盒、2 重铸；选项 0 / 1）
+fn gamble_result(index:usize,choice:usize,wins:bool)->i32 {
+    use super::native_talk::{GAMBLE_DICE_LOSE,GAMBLE_DICE_WIN,GAMBLE_MYSTERY,GAMBLE_REFORGE};
+    match index {
+        erdtree_tower::events::DICE=>(if wins {GAMBLE_DICE_WIN}else{GAMBLE_DICE_LOSE})+choice as i32,
+        erdtree_tower::events::MYSTERY=>GAMBLE_MYSTERY,
+        _=>GAMBLE_REFORGE+choice as i32,
+    }
+}
+/// 赌运事件没有进行时的对话框：按失败原因选一句，其余归为“暂时无法进行”
+fn gamble_refusal(error:&str)->i32 {
+    use super::native_talk::{GAMBLE_FAILED,GAMBLE_LEGENDARY,GAMBLE_NO_AFFIX,GAMBLE_NO_RUNES,GAMBLE_NO_SIBLING,GAMBLE_USED};
+    if error.contains("卢恩不足") {GAMBLE_NO_RUNES}
+    else if error.contains("不能精炼") {GAMBLE_LEGENDARY}
+    else if error.contains("没有词条")||error.contains("装备词条武器") {GAMBLE_NO_AFFIX}
+    else if error.contains("没有其他词条组合") {GAMBLE_NO_SIBLING}
+    else if error.contains("已经用过") {GAMBLE_USED}
+    else {GAMBLE_FAILED}
+}
 fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms::Room)->Result<(),String> {
     use erdtree_tower::regional_events::Outcome as EventOutcome;
     use super::native_talk::{flag,set_flag};
@@ -2174,14 +2192,21 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         }
         return Ok(());
     }
-    // 赌运事件（单人）：与 NPC 交谈弹出事件卡片，每处一次；联机时这一格按种子改为三重宝匣或贪欲祭坛
+    // 赌运事件（单人）：与 NPC 交谈打开原版对话菜单，选项确认后结算并弹出结果，每处一次；联机时这一格按种子改为三重宝匣或贪欲祭坛
     if let Some(index)=run.gamble(room.node).filter(|_|state.party.is_none()) {
         set_flag(45010965,false)?;set_flag(45010960,false)?;
         set_flag(45010941,true)?;set_flag(45010940,true)?;
         set_flag(45010942,false)?;set_flag(45010995,true)?;
-        let (title,used)=(erdtree_tower::events::STORIES[index].title,run.regional_event.opened!=0);
-        if !used&&!state.view.gamble {room.view.message=format!("{title}：与 NPC 交谈。");}
-        if matches!(room.take_event_request(),Some(super::native_talk::EventRequest::Gamble))&&!used {state.view.gamble=true;}
+        let title=erdtree_tower::events::STORIES[index].title;
+        let wins=erdtree_tower::events::dice_wins(run,room.node);
+        if run.regional_event.opened==0 {room.view.message=format!("{title}：与 NPC 交谈。");}
+        if let Some(super::native_talk::EventRequest::Gamble(choice))=room.take_event_request() {
+            let message=state.view.run.as_ref().map(|r|erdtree_tower::events::story_outcome(r,choice)).unwrap_or_default();
+            match transact(state,world,Action::Story(choice),false) {
+                Ok(())=>{room.notice(gamble_result(index,choice,wins))?;room.view.message=format!("{message}使用传送门继续旅程。");},
+                Err(error)=>{super::log(format!("Gamble not resolved: {error}"));room.notice(gamble_refusal(&error))?;room.view.message=error;},
+            }
+        }
         return Ok(());
     }
     let locked=run.regional_event.locked;
@@ -2951,7 +2976,7 @@ mod tests {
     }
     fn ui_view()->super::View {
         super::View{shared_event:false,ballots:vec![],run:Some(erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai)),
-            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],gamble:false}
+            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None}
     }
     #[test]
     fn queued_selection_is_bounded_and_consumed_once_on_the_game_thread() {
