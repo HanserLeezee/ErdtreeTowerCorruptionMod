@@ -1,3 +1,11 @@
+# 额外 DLL 插件 · 2026-10-27
+
+启动器 设置 → 插件：「添加 DLL…」（连同同名配置文件、同名文件夹）或「添加插件文件夹…」（整个复制，顶层每个 DLL 登记），列表里可以开关、移除。插件复制进模组目录的 `plugins/`，清单是 `plugins/natives.toml`（ME3 `[[natives]]` 格式，`enabled = false` 表示停用，也可以手动改，手动加的 `load_after` 等选项启用/停用时原样保留）。拒绝 `ersc.dll`、`dinput8.dll`、me3 与爬塔自己的 DLL；添加前提醒插件是第三方程序。
+
+两种启动方式都加载：单人原来直接用随包的 `preview.me3`、没有插件入口，现在 `Launch-Preview.ps1` 有插件时生成 `preview.launch.me3`（随包配置加上插件，绝对路径）再启动；无缝的 `Launch-Seamless-Tower.ps1` 在原有 `custom-natives.toml` 之外再合并 `plugins/natives.toml`，同一个 DLL 只加载一次。停用或文件不见的插件跳过并警告，不拦住启动。两个脚本里的合并函数 `Get-TowerPluginSections` 由 `tests/tower-plugins.ps1` 测试（PowerShell 7，在 Linux 上用 dotnet 全局工具版跑过）。
+
+`plugins/` 和 `preview.launch.me3` 是玩家自己的：打包拒绝、更新清单不能包含、更新器不写不删（`InstallPaths`、`release_pack.py`），也在 `.gitignore` 里。说明见包内“额外DLL插件说明.txt”。
+
 # 黄金树之影 DLC 开关 · 2026-10-27
 
 启动参数 `dlc=`（启动器 设置 → 游戏 → 黄金树之影 DLC），下次启动游戏生效，只对单人生效；无缝联机时 DLL 一律按有 DLC 处理，保证双方抽到同样的敌人和奖励（日志 `OPTIONS` 行会注明）。

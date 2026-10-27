@@ -17,6 +17,30 @@ function Get-NativeDllName([string]$Root) {
     if ($names.Count -ne 1) { return $null }
     return $names[0]
 }
+# Extra plugins (plugins/natives.toml, managed by the launcher)
+# Each enabled [[natives]] section becomes an absolute path for ME3; disabled or missing plugins are skipped with a warning.
+function Get-TowerPluginSections([string]$PackageRoot) {
+    $file = Join-Path $PackageRoot 'plugins'
+    $file = Join-Path $file 'natives.toml'
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return @() }
+    $sections = [regex]::Matches([IO.File]::ReadAllText($file), '(?ms)^\s*\[\[natives\]\][^\r\n]*\r?\n.*?(?=^\s*\[\[|\z)')
+    foreach ($section in $sections) {
+        $text = $section.Value
+        if ($text -match '(?m)^\s*enabled\s*=\s*false\b') { continue }
+        $match = [regex]::Match($text, '(?m)^(\s*path\s*=\s*)[''"]([^''"\r\n]+)[''"]')
+        if (-not $match.Success) { Write-Warning 'plugins/natives.toml: a [[natives]] entry has no single-line quoted path, skipped.'; continue }
+        $path = $match.Groups[2].Value.Replace('\', '/').Replace('/', [IO.Path]::DirectorySeparatorChar)
+        if (-not [IO.Path]::IsPathRooted($path)) { $path = Join-Path $PackageRoot $path }
+        $path = [IO.Path]::GetFullPath($path)
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Write-Warning "Plugin not found, skipped: $path"; continue }
+        if ($path.Contains("'")) { Write-Warning "Plugin path contains a quote, skipped: $path"; continue }
+        $text = $text.Substring(0, $match.Index) + $match.Groups[1].Value + "'" + $path.Replace('\', '/') + "'" + $text.Substring($match.Index + $match.Length)
+        # enabled is the launcher's switch, not an ME3 option
+        $text = [regex]::Replace($text, '(?m)^\s*enabled\s*=.*(\r?\n|\z)', '')
+        $text.TrimEnd()
+    }
+}
+# End extra plugins
 $packageRoot = $null
 $dllName = $null
 $candidates = @($PSScriptRoot, (Join-Path $PSScriptRoot 'release-preview'))
@@ -67,6 +91,15 @@ try {
     $logPath = Join-Path $packageRoot 'tower-preview.log'
     [System.IO.File]::WriteAllText($logPath, "Tower preview launch: $(Get-Date -Format o)`r`n")
     Write-Host "预览初始化日志：$logPath"
+    $plugins = @(Get-TowerPluginSections $packageRoot)
+    if ($plugins.Count -gt 0) {
+        # The shipped preview.me3 stays untouched (updates replace it); plugins go into a generated launch profile next to it
+        $launchProfile = Join-Path $packageRoot 'preview.launch.me3'
+        $text = [System.IO.File]::ReadAllText($profile).TrimEnd() + "`r`n`r`n" + ($plugins -join "`r`n`r`n") + "`r`n"
+        [System.IO.File]::WriteAllText($launchProfile, $text, (New-Object System.Text.UTF8Encoding($false)))
+        $profile = $launchProfile
+        Write-Host "额外 DLL 插件：$($plugins.Count) 个"
+    }
     & $loader launch --exe $exePath --profile $profile --auto-detect --online false
     if ($LASTEXITCODE -ne 0) { throw "加载器退出码：$LASTEXITCODE" }
 } finally {

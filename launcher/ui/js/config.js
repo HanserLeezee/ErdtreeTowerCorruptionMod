@@ -236,6 +236,28 @@ window.HOYO_CONFIG = {
         ],
       },
       {
+        key: 'plugins', name: '插件',
+        groups: [
+          {
+            title: '额外 DLL 插件（下次启动游戏生效，单人和无缝联机都会加载）',
+            rows: [
+              { type: 'plugins' },
+              { type: 'buttons', label: '',
+                items: [{ text: '添加 DLL…', action: 'addPluginDll', primary: true }, { text: '添加插件文件夹…', action: 'addPluginFolder' },
+                  { text: '打开插件文件夹', action: 'openPlugins' }] },
+            ],
+          },
+          {
+            title: '说明',
+            rows: [
+              { type: 'static', label: '单个 DLL', value: '连同同名的配置文件、同名文件夹一起复制' },
+              { type: 'static', label: '文件夹', value: '整个文件夹复制，顶层每个 DLL 都登记，用不到的关掉' },
+              { type: 'static', label: '手动配置', value: 'plugins\\natives.toml（ME3 的 [[natives]] 格式）' },
+            ],
+          },
+        ],
+      },
+      {
         key: 'update', name: '更新',
         groups: [
           {

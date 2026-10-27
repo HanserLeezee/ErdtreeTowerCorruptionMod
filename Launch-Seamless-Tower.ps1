@@ -10,6 +10,30 @@ function Set-TowerSpectatorMode([string]$Settings) {
     $newline = if ($Settings.Contains("`r`n")) {"`r`n"} else {"`n"}
     return $section.Replace($Settings,('[GAMEPLAY]'+$newline+'always_spectate_on_death = 1'+$newline),1)
 }
+# Extra plugins (plugins/natives.toml, managed by the launcher)
+# Each enabled [[natives]] section becomes an absolute path for ME3; disabled or missing plugins are skipped with a warning.
+function Get-TowerPluginSections([string]$PackageRoot) {
+    $file = Join-Path $PackageRoot 'plugins'
+    $file = Join-Path $file 'natives.toml'
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return @() }
+    $sections = [regex]::Matches([IO.File]::ReadAllText($file), '(?ms)^\s*\[\[natives\]\][^\r\n]*\r?\n.*?(?=^\s*\[\[|\z)')
+    foreach ($section in $sections) {
+        $text = $section.Value
+        if ($text -match '(?m)^\s*enabled\s*=\s*false\b') { continue }
+        $match = [regex]::Match($text, '(?m)^(\s*path\s*=\s*)[''"]([^''"\r\n]+)[''"]')
+        if (-not $match.Success) { Write-Warning 'plugins/natives.toml: a [[natives]] entry has no single-line quoted path, skipped.'; continue }
+        $path = $match.Groups[2].Value.Replace('\', '/').Replace('/', [IO.Path]::DirectorySeparatorChar)
+        if (-not [IO.Path]::IsPathRooted($path)) { $path = Join-Path $PackageRoot $path }
+        $path = [IO.Path]::GetFullPath($path)
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { Write-Warning "Plugin not found, skipped: $path"; continue }
+        if ($path.Contains("'")) { Write-Warning "Plugin path contains a quote, skipped: $path"; continue }
+        $text = $text.Substring(0, $match.Index) + $match.Groups[1].Value + "'" + $path.Replace('\', '/') + "'" + $text.Substring($match.Index + $match.Length)
+        # enabled is the launcher's switch, not an ME3 option
+        $text = [regex]::Replace($text, '(?m)^\s*enabled\s*=.*(\r?\n|\z)', '')
+        $text.TrimEnd()
+    }
+}
+# End extra plugins
 $base = & (Join-Path $PSScriptRoot 'Launch-Preview.ps1') -GameDir $GameDir -CheckOnly
 $root = $base.PackageDirectory
 if ($PartyConfig) {
@@ -88,6 +112,13 @@ foreach ($section in [regex]::Matches([IO.File]::ReadAllText($customPath),$nativ
 }
 $configPath = Join-Path $runtime ([IO.Path]::GetFileNameWithoutExtension($editableProfile) + '.launch.me3')
 # End custom DLL configuration
+foreach ($section in @(Get-TowerPluginSections $root)) {
+    $key = Get-NativeProfileKey $section
+    if (!$knownNatives.ContainsKey($key)) {
+        $config += "`r`n" + $section
+        $knownNatives[$key] = $true
+    }
+}
 # The editable profile keeps user entries; tower-owned paths always follow this installation.
 $config = [regex]::Replace($config,"(?m)^(\s*path\s*=\s*)['""][^'""\r\n]*[\\/]erdtree_tower_\w+\.dll['""]",('${1}'''+$native.Replace('\','/').Replace('$','$$')+''''))
 $config = [regex]::Replace($config,"(?m)^(\s*path\s*=\s*)['""][^'""\r\n]*[\\/]scene-assets['""]",('${1}'''+$assets.Replace('\','/').Replace('$','$$')+''''))

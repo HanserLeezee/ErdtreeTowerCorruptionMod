@@ -9,7 +9,10 @@ namespace Tower.Update
     {
         /// <summary>更新器自己的工作目录：暂存、备份、进度记录与哈希缓存，不属于任何版本</summary>
         public const string WorkDir = ".tower-update";
-        static readonly string[] Private = { InstallState.FileName, "GamePath.txt", "tower-options.ini" };
+        /// <summary>玩家自己的文件：发布清单里不能有，更新不会写也不会删</summary>
+        static readonly string[] Private = { InstallState.FileName, "GamePath.txt", "tower-options.ini", "preview.launch.me3" };
+        /// <summary>玩家自己的目录：额外 DLL 插件</summary>
+        static readonly string[] PrivateDirs = { "plugins" };
 
         public static void Check(string relative)
         {
@@ -21,7 +24,7 @@ namespace Tower.Update
                 throw new InvalidDataException($"文件路径无效：{relative}");
             if (relative.IndexOfAny(Path.GetInvalidPathChars()) >= 0 || parts.Any(p => p.IndexOfAny(new[] { '<', '>', '"', '|', '?', '*' }) >= 0 || p.Any(char.IsControl)))
                 throw new InvalidDataException($"文件路径无效：{relative}");
-            if (parts[0].Equals(WorkDir, StringComparison.OrdinalIgnoreCase) || Private.Any(p => p.Equals(relative, StringComparison.OrdinalIgnoreCase)))
+            if (parts[0].Equals(WorkDir, StringComparison.OrdinalIgnoreCase) || (parts.Length > 1 && PrivateDirs.Any(d => d.Equals(parts[0], StringComparison.OrdinalIgnoreCase))) || Private.Any(p => p.Equals(relative, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidDataException($"更新不能改动这个文件：{relative}");
         }
 

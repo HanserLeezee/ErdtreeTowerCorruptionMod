@@ -217,6 +217,8 @@ public sealed class UpdateTests : IDisposable
     [InlineData(".tower-update/journal.json")]
     [InlineData("tower-install.json")]
     [InlineData("tower-options.ini")]
+    [InlineData("plugins/fps/fps.dll")]
+    [InlineData("preview.launch.me3")]
     [InlineData("scene-assets/./x")]
     public void UnsafePathsAreRejected(string path) => Assert.Throws<InvalidDataException>(() => InstallPaths.Check(path));
 

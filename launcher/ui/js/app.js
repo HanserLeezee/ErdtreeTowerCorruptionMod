@@ -932,6 +932,40 @@
     return box;
   }
 
+  /* 额外 DLL 插件列表：数据由宿主推送（setState.plugins），开关与移除交回宿主处理 */
+  function pluginRows(grp) {
+    var list = setState.plugins || [];
+    if (!list.length) {
+      grp.appendChild(el('div', 'set-row', '<div class="label">还没有插件<span class="hint">' +
+        '用下面的按钮添加；插件会复制进模组目录的 plugins 文件夹，更新不会动它</span></div>'));
+      return;
+    }
+    list.forEach(function (p) {
+      var row = el('div', 'set-row');
+      row.appendChild(el('div', 'label', esc(p.name) + '<span class="hint">' +
+        esc(p.exists ? p.path : p.path + '（文件不见了，启动时会跳过）') + '</span>'));
+      var box = el('div', 'ctrl');
+      var sw = el('button', 'sw' + (p.enabled ? ' on' : ''));
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-checked', p.enabled ? 'true' : 'false');
+      sw.setAttribute('aria-label', '启用 ' + p.name);
+      sw.addEventListener('click', function () {
+        p.enabled = !p.enabled;
+        sw.classList.toggle('on', p.enabled);
+        sw.setAttribute('aria-checked', p.enabled ? 'true' : 'false');
+        bridge.settings.action('togglePlugin', { path: p.path, enabled: p.enabled });
+      });
+      var rm = el('button', 'btn-ghost', '移除');
+      rm.addEventListener('click', function () {
+        bridge.settings.action('removePlugin', { path: p.path });
+      });
+      box.appendChild(sw);
+      box.appendChild(rm);
+      row.appendChild(box);
+      grp.appendChild(row);
+    });
+  }
+
   function aboutBlock() {
     var S = settingsCfg();
     var wrap = el('div', '');
@@ -1004,6 +1038,10 @@
       (g.rows || []).forEach(function (r) {
         if (r.type === 'about') {
           grp.appendChild(aboutBlock());
+          return;
+        }
+        if (r.type === 'plugins') {
+          pluginRows(grp);
           return;
         }
         var row = el('div', 'set-row');

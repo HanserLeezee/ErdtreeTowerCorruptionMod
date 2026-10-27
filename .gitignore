@@ -23,3 +23,5 @@ host.json
 guest.json
 GamePath.txt
 tower-options.ini
+/plugins/
+preview.launch.me3

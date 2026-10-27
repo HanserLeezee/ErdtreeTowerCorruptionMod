@@ -30,6 +30,7 @@ namespace Tower.Launcher
         readonly HostSettings settings;
         readonly HttpClient http;
         readonly string? mirror;
+        readonly Plugins plugins;
         MultiSource source;
 
         ReleaseManifest? latest;
@@ -54,6 +55,7 @@ namespace Tower.Launcher
             http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5) };
             http.DefaultRequestHeaders.UserAgent.ParseAdd($"ErdtreeTowerLauncher/{typeof(TowerHost).Assembly.GetName().Version}");
             mirror = ReadMirror(paths.SourcesFile);
+            plugins = new Plugins(paths.InstallDir);
             source = CreateSource();
         }
 
@@ -140,7 +142,9 @@ namespace Tower.Launcher
                 case "settings.change":
                     Change(Text(payload, "key"), payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("value", out var value) ? value : default);
                     break;
-                case "settings.action": Run(Text(payload, "name")); break;
+                case "settings.action":
+                    Run(Text(payload, "name"), payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("payload", out var data) ? data : default);
+                    break;
                 case "shell.openExternal": OpenUrl(Text(payload, "url")); break;
             }
         }
@@ -176,6 +180,57 @@ namespace Tower.Launcher
 
         string OptionsFile => Path.Combine(paths.InstallDir, TowerOptions.FileName);
 
+        // ---------------- 额外 DLL 插件 ----------------
+
+        void AddPlugins(bool folder)
+        {
+            var answer = MessageBox.Show(form, "插件是第三方程序，会随游戏一起运行，可以做任何事。\n只添加你信任的来源；插件和无缝联机、爬塔之间的兼容性也无法保证。\n\n继续添加？",
+                MainForm.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (answer != DialogResult.Yes) return;
+            var added = new List<string>();
+            try
+            {
+                if (folder)
+                {
+                    using var dialog = new FolderBrowserDialog { Description = "选择插件自己的文件夹（顶层要有 .dll）", ShowNewFolderButton = false };
+                    if (dialog.ShowDialog(form) != DialogResult.OK) return;
+                    added.AddRange(plugins.AddFolder(dialog.SelectedPath));
+                }
+                else
+                {
+                    using var dialog = new OpenFileDialog { Title = "选择插件 DLL", Filter = "DLL 插件 (*.dll)|*.dll", Multiselect = true };
+                    if (dialog.ShowDialog(form) != DialogResult.OK) return;
+                    foreach (var file in dialog.FileNames) added.Add(plugins.AddDll(file));
+                }
+            }
+            catch (Exception e) when (e is InvalidOperationException || e is IOException || e is UnauthorizedAccessException)
+            {
+                Toast("添加插件失败：" + e.Message, "error", 6000);
+            }
+            if (added.Count > 0)
+            {
+                Log.Write("添加插件：" + string.Join(", ", added));
+                PluginsChanged($"已添加 {added.Count} 个插件" + (added.Count > 1 ? "；文件夹里的辅助 DLL 不需要加载的话，在列表里关掉" : ""));
+            }
+            else PluginsChanged(null);
+        }
+
+        void RemovePlugin(string path)
+        {
+            if (path.Length == 0) return;
+            if (MessageBox.Show(form, $"移除插件 {path}？\n复制进模组 plugins 文件夹的文件也会删除。", MainForm.Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            try { plugins.Remove(path); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { Toast("移除失败（游戏还在运行？）：" + e.Message, "error", 6000); }
+            PluginsChanged("已移除");
+        }
+
+        void PluginsChanged(string? message)
+        {
+            PushValues(InstallState.Load(paths.InstallDir));
+            if (message != null) Toast(message + (GameRunning() ? "，下次启动游戏生效" : ""), "success");
+            else if (GameRunning()) Toast("下次启动游戏生效", "info");
+        }
+
         void ChangeOption(string key, JsonElement value)
         {
             var hotkey = TowerOptions.Hotkeys.FirstOrDefault(h => "key." + h.Id == key);
@@ -208,10 +263,18 @@ namespace Tower.Launcher
             else if (GameRunning()) Toast("已保存，下次启动游戏生效", "info");
         }
 
-        void Run(string name)
+        void Run(string name, JsonElement data = default)
         {
             switch (name)
             {
+                case "addPluginDll": AddPlugins(false); break;
+                case "addPluginFolder": AddPlugins(true); break;
+                case "openPlugins": Directory.CreateDirectory(plugins.Dir); OpenFolder(plugins.Dir); break;
+                case "togglePlugin":
+                    plugins.SetEnabled(Text(data, "path"), data.ValueKind == JsonValueKind.Object && data.TryGetProperty("enabled", out var on) && on.ValueKind == JsonValueKind.True);
+                    PluginsChanged(null);
+                    break;
+                case "removePlugin": RemovePlugin(Text(data, "path")); break;
                 case "checkUpdate": _ = CheckAsync(true); break;
                 case "verify": _ = UpdateAsync(true); break;
                 case "chooseGameDir": ChooseGameDir(); break;
@@ -259,6 +322,7 @@ namespace Tower.Launcher
             {
                 ["debug"] = TowerOptions.Debug(options) || File.Exists(Path.Combine(paths.InstallDir, "tower-debug.enable")),
                 ["dlc"] = TowerOptions.DlcLabel(options),
+                ["plugins"] = plugins.List().Select(p => new Dictionary<string, object?> { ["path"] = p.Path, ["name"] = p.Name, ["enabled"] = p.Enabled, ["exists"] = p.Exists }).ToList(),
                 ["mode"] = settings.Mode == HostSettings.Seamless ? "无缝联机" : "单人",
                 ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : "国内镜像",
                 ["mirrorInfo"] = mirror == null ? "未配置（只从 GitHub 更新）" : new Uri(mirror).Host,

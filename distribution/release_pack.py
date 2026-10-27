@@ -20,7 +20,8 @@ from pathlib import Path
 SCHEMA = 1
 MANIFEST = 'tower-release.json'
 # Files that belong to the player or to a running session and are never part of a release
-PRIVATE = ('tower-install.json', 'GamePath.txt', 'tower-options.ini')
+PRIVATE = ('tower-install.json', 'GamePath.txt', 'tower-options.ini', 'preview.launch.me3')
+PRIVATE_DIRS = ('.tower-update/', 'plugins/')
 
 
 def pack_name(version):
@@ -37,7 +38,7 @@ def collect(stage):
     files = []
     for path in sorted(p for p in stage.rglob('*') if p.is_file()):
         rel = path.relative_to(stage).as_posix()
-        if rel in PRIVATE or rel.startswith('.tower-update/'):
+        if rel in PRIVATE or rel.startswith(PRIVATE_DIRS):
             raise ValueError(f'Private file in release stage: {rel}')
         data = path.read_bytes()
         files.append({'path': rel, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'data': data})

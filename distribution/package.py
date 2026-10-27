@@ -82,7 +82,7 @@ copy_tree(engine / 'bin', 'seamless-entry/modengine2/bin')
 copy_tree(engine / 'assets', 'seamless-entry/modengine2/assets')
 copy_tree(engine / 'crashpad', 'seamless-entry/modengine2/crashpad')
 copy_file(project.parents[1] / 'work/modengine2-package-LICENSE.txt', 'licenses/ModEngine2-MIT.txt')
-for name in ['Start-Tower.ps1', '安装教程.md']:
+for name in ['Start-Tower.ps1', '安装教程.md', '额外DLL插件说明.txt']:
     copy_file(Path(__file__).parent / name, name)
 copy_file(project / 'reference/联机战斗验证.md', '联机战斗验证.md')
 for name in ['ErdtreeTowerLauncher.exe', 'ErdtreeTowerLauncher.exe.config']:
