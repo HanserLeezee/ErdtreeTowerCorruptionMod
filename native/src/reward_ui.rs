@@ -380,8 +380,16 @@ impl Panel {
                 let top=(size[1]-900.0*scale)*0.5;
                 ui.set_window_font_scale(scale*1.45);
                 ui.set_cursor_pos([left,top+48.0*scale]);
-                let text_color=rarity_color(quality(run,reward));
-                ui.text_colored(text_color,d.map_or("奖励详情",|d|d.name.as_str()));
+                let tier=quality(run,reward);let text_color=rarity_color(tier);
+                {
+                    // 详情页标题：与奖励卡相同的品质特效
+                    let font=crate::fancy_text::title_font().map(|f|ui.push_font(f));
+                    if font.is_some() {ui.set_window_font_scale(scale*0.94);}
+                    let origin=ui.window_pos();let size=ui.current_font_size();
+                    let name=d.map_or("奖励详情",|d|d.name.as_str());
+                    crate::fancy_text::quality_name(crate::fancy_text::Layer::Window,origin[0]+left,origin[1]+top+48.0*scale,size,name,text_color,tier,0.0,ui.time() as f32);
+                    if let Some(font)=font {font.pop();}
+                }
                 ui.set_window_font_scale(scale);
                 let _child=ui.push_style_color(StyleColor::ChildBg,[0.035,0.04,0.035,0.92]);
                 ui.set_cursor_pos([left,top+115.0*scale]);
@@ -489,10 +497,22 @@ impl Panel {
                 } else {
                     center(ui,x+width*0.5,y+145.0*scale,match reward {Reward::UpgradeWeapon=>"强化",Reward::FlaskCapacity=>"圣杯",Reward::MemorySlot=>"记忆",Reward::StarStream=>"星流",_=>"卢恩"},gold);
                 }
-                ui.set_window_font_scale(scale*1.2);
-                let title_width=ui.calc_text_size(&title)[0];
-                if title_width>width-40.0*scale {ui.set_window_font_scale(scale*1.2*(width-40.0*scale)/title_width);}
-                center(ui,x+width*0.5,y+278.0*scale,&title,quality_color);
+                // 物品名用标题字体：传说整名金色流光，其他品质的前缀带特效；余烬与其他奖励保持原样
+                if ember||!matches!(reward,Reward::Item(_)) {
+                    ui.set_window_font_scale(scale*1.2);
+                    let title_width=ui.calc_text_size(&title)[0];
+                    if title_width>width-40.0*scale {ui.set_window_font_scale(scale*1.2*(width-40.0*scale)/title_width);}
+                    center(ui,x+width*0.5,y+278.0*scale,&title,quality_color);
+                } else {
+                    let font=crate::fancy_text::title_font().map(|f|ui.push_font(f));
+                    ui.set_window_font_scale(scale*if font.is_some(){0.78}else{1.2});
+                    let mut size=ui.current_font_size();
+                    let title_width=crate::fancy_text::measure(&title,size);
+                    if title_width>width-40.0*scale {size*=(width-40.0*scale)/title_width;}
+                    let origin=ui.window_pos();
+                    crate::fancy_text::quality_name(crate::fancy_text::Layer::Window,origin[0]+x+width*0.5,origin[1]+y+276.0*scale,size,&title,quality_color,tier,0.5,now as f32);
+                    if let Some(font)=font {font.pop();}
+                }
                 ui.set_window_font_scale(scale*0.90);
                 let summary=if summary.chars().count()>48 {format!("{}…",summary.chars().take(48).collect::<String>())}else{summary};
                 ui.set_cursor_pos([x+40.0*scale,y+329.0*scale]);

@@ -43,6 +43,7 @@ mod reward_delay;
 mod rebirth;
 mod elite;
 mod boss_affixes;
+mod fancy_text;
 mod scaling;
 #[allow(dead_code)]
 mod law;
@@ -248,15 +249,28 @@ impl ImguiRenderLoop for TowerPreview {
         log("UI_INIT stage=oath_art");
         oath_art::initialize(renderer);
         log("DX12 renderer initialized");
+        // 正文黑体与标题宋体都只加载界面字表里的字（缺字表时退回原来的范围），字体贴图不会因为多一套字体而翻倍
+        let ranges=|fallback:FontGlyphRanges|fancy_text::ui_glyph_ranges().map_or(fallback,FontGlyphRanges::from_slice);
         if let Ok(font) = std::fs::read("C:/Windows/Fonts/simhei.ttf") {
             ctx.fonts().add_font(&[FontSource::TtfData {
                 data: &font,
                 size_pixels: 20.0,
                 config: Some(FontConfig {
-                    glyph_ranges: FontGlyphRanges::chinese_full(),
+                    glyph_ranges: ranges(FontGlyphRanges::chinese_full()),
                     ..Default::default()
                 }),
             }]);
+        }
+        // 标题字体：思源宋体子集，按 32 像素加载，供带动态特效的标题文字使用
+        match std::fs::read(fancy_text::title_font_path()) {
+            Ok(font)=>{
+                fancy_text::set_title_font(fancy_text::TitleFont(ctx.fonts().add_font(&[FontSource::TtfData {
+                    data: &font,
+                    size_pixels: 32.0,
+                    config: Some(FontConfig {glyph_ranges: ranges(FontGlyphRanges::chinese_simplified_common()),..Default::default()}),
+                }])));
+            },
+            Err(error)=>log(format!("Title font missing: {error}")),
         }
     }
 
@@ -300,7 +314,17 @@ impl ImguiRenderLoop for TowerPreview {
                 draw.add_text([x+1.5,y+1.5],hudhook::imgui::ImColor32::from_rgba(0,0,0,200),text);draw.add_text([x,y],color,text);
             };
             let mut y=30.0;
-            if let Some(title)=&combat.boss_affixes {line(title,y,hudhook::imgui::ImColor32::from_rgb(232,190,92));y+=24.0;}
+            // Boss 词条：每个词条用自己的颜色与动态效果（与 Boss 身上的光效同色）
+            if !combat.boss_affix_list.is_empty() {
+                let font=fancy_text::title_font().map(|f|ui.push_font(f));
+                let size=if font.is_some(){32.0}else{ui.current_font_size()*1.6};
+                let parts:Vec<_>=combat.boss_affix_list.iter().map(|a|(a.name(),fancy_text::affix_style(*a))).collect();
+                fancy_text::draw_line(fancy_text::Layer::Foreground,ui.io().display_size[0]*0.5,y-2.0,size,&parts,(" · ",[150,140,120]),ui.time() as f32);
+                if let Some(font)=font {font.pop();}
+                y+=size+6.0;
+            } else if let Some(title)=&combat.boss_affixes {line(title,y,hudhook::imgui::ImColor32::from_rgb(232,190,92));y+=24.0;}
+            // 黄金律法的护盾：展开前橙色预警，展开中金色倒计时
+            if let Some((text,warning))=&combat.boss_alert {line(text,y,if *warning{hudhook::imgui::ImColor32::from_rgb(240,140,70)}else{hudhook::imgui::ImColor32::from_rgb(255,226,140)});y+=24.0;}
             if let Some(left)=combat.law_clock {
                 let (text,color)=if left>0 {(format!("苦难律法 · 限时 {}:{:02}",left/60,left%60),if left<=30{hudhook::imgui::ImColor32::from_rgb(235,110,90)}else{hudhook::imgui::ImColor32::from_rgb(232,214,180)})}
                     else {(format!("苦难律法 · 已超时 {}:{:02} · 持续失血",-left/60,-left%60),hudhook::imgui::ImColor32::from_rgb(235,80,70))};

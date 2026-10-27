@@ -8,8 +8,7 @@ fn starting_gift(class:Class)->&'static [(u32,i32)] {
     match class {
         Class::Vagabond=>&[(0x40000000|10020,1)],
         Class::Wretch=>&[(0x40000000|8185,5)],
-        // 狂战士多带一把巨斧；召唤师带离群野狼与骸骨民兵的骨灰
-        Class::Hero=>&[(15000000,1)],
+        // 召唤师带离群野狼与骸骨民兵的骨灰（狂战士的巨斧直接装在右手，见 loadout::starting_weapons）
         Class::Confessor=>&[(0x40000000|232000,1),(0x40000000|212000,1)],
         _=>&[],
     }
@@ -42,15 +41,17 @@ pub fn shop_price(class:Class,base:i32)->i32 {
 }
 /// 职业重做后的职业机制（scene-builder class-patch 写入的 9810000 段）
 const CLASS:i32=9810000;
-fn all()->impl Iterator<Item=i32> {(FIRST..=FIRST+4).chain([CLASS,CLASS+1,CLASS+10,CLASS+20,CLASS+21,CLASS+30,CLASS+40])}
+/// 运行时管理的常驻效果；举盾、致命一击后的效果由这些常驻效果自己触发，不在这里增删
+fn all()->impl Iterator<Item=i32> {(FIRST..=FIRST+4).chain([CLASS,CLASS+3,CLASS+10,CLASS+11,CLASS+20,CLASS+23,CLASS+30,CLASS+40])}
 /// 当前应挂的效果；low 为生命低于一半（狂战士的狂血）
 fn desired(run:Option<&Run>,low:bool)->Vec<i32> {
     let Some(run)=run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)) else{return vec![]};
     if run.class_rules>=1 {
         return match run.class {
-            Class::Vagabond=>vec![CLASS,CLASS+1],
-            Class::Hero=>if low {vec![CLASS+10]}else{vec![]},
-            Class::Samurai=>vec![CLASS+20,CLASS+21],
+            // 守誓骑士：举盾时减伤（常驻判定）与防御耗精；狂战士：削韧减免，低血时减伤；影刃：致命一击后增伤（常驻监视）与精力恢复
+            Class::Vagabond=>vec![CLASS,CLASS+3],
+            Class::Hero=>if low {vec![CLASS+10,CLASS+11]}else{vec![CLASS+11]},
+            Class::Samurai=>vec![CLASS+20,CLASS+23],
             Class::Astrologer=>vec![CLASS+30],
             Class::Prophet=>vec![CLASS+40],
             Class::Bandit=>vec![FIRST+3],
@@ -78,7 +79,7 @@ mod tests {
     fn class_gifts_are_exact() {
         assert_eq!(starting_gift(Class::Vagabond),&[(0x40000000|10020,1)]);
         assert_eq!(starting_gift(Class::Confessor),&[(0x40000000|232000,1),(0x40000000|212000,1)]);
-        assert_eq!(starting_gift(Class::Hero),&[(15000000,1)]);
+        assert!(starting_gift(Class::Hero).is_empty());
         assert!(starting_gift(Class::Samurai).is_empty());
     }
     #[test]
@@ -101,8 +102,8 @@ mod tests {
     #[test]
     fn class_effects_follow_rules_and_end_with_run() {
         let mut run=Run::new(1,Class::Vagabond);
-        assert_eq!(desired(Some(&run),false),vec![CLASS,CLASS+1]);
-        run.class=Class::Hero;assert_eq!((desired(Some(&run),false),desired(Some(&run),true)),(vec![],vec![CLASS+10]));
+        assert_eq!(desired(Some(&run),false),vec![CLASS,CLASS+3]);
+        run.class=Class::Hero;assert_eq!((desired(Some(&run),false),desired(Some(&run),true)),(vec![CLASS+11],vec![CLASS+10,CLASS+11]));
         run.class=Class::Confessor;assert!(desired(Some(&run),true).is_empty());
         run.class_rules=0;run.class=Class::Hero;assert_eq!(desired(Some(&run),false),vec![FIRST+2],"old saves keep the old passives");
         run.phase=Phase::Dead;assert!(desired(Some(&run),false).is_empty());

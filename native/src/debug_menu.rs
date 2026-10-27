@@ -121,6 +121,15 @@ impl Menu {
             if let Ok(mut bout)=BOUT.lock(){*bout=Some(BoutSetup{team:BOUT_TEAMS[self.bout_team.min(BOUT_TEAMS.len()-1)],both:self.bout_both});}
         }
         ui.separator();
+        // 血条颜色标签测试：需要先在 Windows 上运行 text-update 写入测试文字
+        let mut tags=crate::boss_affixes::bar_tag_test();
+        if ui.checkbox("血条颜色标签测试（主 Boss 血条换成带颜色标签的测试文字）",&mut tags) {crate::boss_affixes::set_bar_tag_test(tags);}
+        // 物品名颜色标签测试：text-update 把原版道具“饶舌头颅”（2207）改成带颜色标签的名字，领取后在背包里查看
+        ui.same_line();
+        if ui.small_button("发放颜色标签测试道具") {
+            match crate::items::give(&[(0x40000000|2207,1,-1)]) {Ok(())=>crate::log("Color tag test goods given"),Err(error)=>crate::log(format!("Color tag test goods failed: {error}"))}
+        }
+        ui.separator();
         ui.text(format!("下一场战斗的敌人：{}",pending_roster().unwrap_or_else(||"按路线正常抽取".into())));
         if ui.small_button("恢复正常抽取") {if let Ok(mut roster)=ROSTER.lock(){*roster=None;}if let Ok(mut bout)=BOUT.lock(){*bout=None;}}
         if self.count<1 {self.count=1;}

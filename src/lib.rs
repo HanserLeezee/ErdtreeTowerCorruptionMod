@@ -207,6 +207,9 @@ pub struct Run {
     pub ruby_spells: bool,
     #[serde(default)]
     pub boss_affixes: bool,
+    /// Boss 词条规则：1 起可以抽到新增的 3 种词条（吸血、荆棘、迅猛）；旧存档为 0，只用最早的 9 种
+    #[serde(default)]
+    pub boss_affix_rules: u8,
     #[serde(default)]
     pub scaling_rules: u8,
     #[serde(default,skip_serializing_if="no_law")]
@@ -510,6 +513,7 @@ impl Run {
             talisman_affixes: true,
             ruby_spells: false,
             boss_affixes: true,
+            boss_affix_rules: 1,
             scaling_rules: 1,
             law: law::Law::default(),
             start_talisman: 0,
@@ -955,7 +959,7 @@ impl Run {
 
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.class_rules>1||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.class_rules>1||self.boss_affix_rules>1||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))

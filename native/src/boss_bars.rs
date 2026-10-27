@@ -26,7 +26,8 @@ pub fn select(mut candidates:Vec<(u8,i32,eldenring::cs::FieldInsHandle)>)->Vec<(
 fn ours(name:i32)->bool {
     (crate::enemies::BOSS_NAME_FIRST..crate::enemies::BOSS_NAME_FIRST+crate::enemies::boss_name_count() as i32).contains(&name)
         ||(crate::enemies::POOL_NAME_FIRST..crate::enemies::POOL_NAME_FIRST+crate::enemies::pool_name_count() as i32).contains(&name)
-        ||(erdtree_tower::boss_affixes::BAR_NAME_FIRST..erdtree_tower::boss_affixes::BAR_NAME_FIRST+erdtree_tower::boss_affixes::combos().len() as i32*erdtree_tower::boss_affixes::BAR_NAME_STRIDE).contains(&name)
+        ||erdtree_tower::boss_affixes::bar_name_range().contains(&name)
+        ||name==crate::boss_affixes::BAR_TAG_TEST_NAME
 }
 pub fn sync(active:Vec<(usize,i32,eldenring::cs::FieldInsHandle)>) {
     use fromsoftware_shared::FromStatic;

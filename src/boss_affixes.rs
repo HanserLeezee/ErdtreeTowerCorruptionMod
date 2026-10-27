@@ -1,13 +1,16 @@
 use crate::{NodeKind,Run};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
-pub enum Affix {Stalwart,Bulwark,Frenzied,Regenerating,Rot,Envious,Proud,Golden,Reborn}
+pub enum Affix {Stalwart,Bulwark,Frenzied,Regenerating,Rot,Envious,Proud,Golden,Reborn,Leeching,Thorned,Swift}
 impl Affix {
-    pub const ALL:[Affix;9]=[Affix::Stalwart,Affix::Bulwark,Affix::Frenzied,Affix::Regenerating,Affix::Rot,Affix::Envious,Affix::Proud,Affix::Golden,Affix::Reborn];
+    /// 前 9 个是最早的词条（Boss 词条规则 0 只用这些），顺序不能变：血条名称按组合序号取
+    pub const ALL:[Affix;12]=[Affix::Stalwart,Affix::Bulwark,Affix::Frenzied,Affix::Regenerating,Affix::Rot,Affix::Envious,Affix::Proud,Affix::Golden,Affix::Reborn,
+        Affix::Leeching,Affix::Thorned,Affix::Swift];
     pub fn index(self)->usize {Self::ALL.iter().position(|a|*a==self).unwrap()}
     pub fn name(self)->&'static str {
         match self {Affix::Stalwart=>"坚毅的",Affix::Bulwark=>"铁壁的",Affix::Frenzied=>"狂暴的",Affix::Regenerating=>"再生的",Affix::Rot=>"腐败的",
-            Affix::Envious=>"嫉妒的",Affix::Proud=>"傲慢的",Affix::Golden=>"黄金律法的",Affix::Reborn=>"涅槃的"}
+            Affix::Envious=>"嫉妒的",Affix::Proud=>"傲慢的",Affix::Golden=>"黄金律法的",Affix::Reborn=>"涅槃的",
+            Affix::Leeching=>"吸血的",Affix::Thorned=>"荆棘的",Affix::Swift=>"迅猛的"}
     }
     pub fn description(self)->&'static str {
         match self {
@@ -20,31 +23,61 @@ impl Affix {
             Affix::Proud=>"8 秒没挨打时攻击 +20%，被打中后清除",
             Affix::Golden=>"每 20 秒展开 5 秒金色护盾，受到的伤害 -70%",
             Affix::Reborn=>"生命首次降到 10% 以下时回复至 40%，仅一次",
+            Affix::Leeching=>"每次打中你，回复其最大生命 1.5%",
+            Affix::Thorned=>"受到伤害的 8% 反弹给你（不会致死）",
+            Affix::Swift=>"动作速度 +20%：出招、收招、移动都更快，压得更紧",
         }
     }
-    pub fn cost(self)->u8 {match self {Affix::Bulwark|Affix::Regenerating|Affix::Envious|Affix::Golden=>2,Affix::Reborn=>3,_=>1}}
-    fn group(self)->u8 {match self {Affix::Bulwark|Affix::Golden=>1,Affix::Regenerating|Affix::Reborn=>2,_=>0}}
+    pub fn cost(self)->u8 {match self {Affix::Bulwark|Affix::Regenerating|Affix::Envious|Affix::Golden|Affix::Thorned=>2,Affix::Reborn=>3,_=>1}}
+    /// 互斥组：同组只能出一个。规则 0 的分组（只有防御、续航两组）用于还原最早的组合表
+    fn group(self)->u8 {
+        match self {
+            Affix::Bulwark|Affix::Golden=>1,
+            Affix::Regenerating|Affix::Reborn|Affix::Leeching=>2,
+            Affix::Frenzied|Affix::Envious|Affix::Proud|Affix::Swift=>5,
+            _=>0,
+        }
+    }
+    fn legacy_group(self)->u8 {match self {Affix::Bulwark|Affix::Golden=>1,Affix::Regenerating|Affix::Reborn=>2,_=>0}}
 }
 pub const MAX_AFFIXES:usize=3;
+/// 最早的 9 个词条的组合（规则 0）：序号与已生成的血条名称一一对应
+pub const LEGACY_AFFIXES:usize=9;
 pub const BAR_NAME_FIRST:i32=9700000;
 pub const BAR_NAME_STRIDE:i32=200;
-fn allowed(affixes:&[Affix])->bool {
-    affixes.len()<=MAX_AFFIXES&&points(affixes)<=budget(3)&&affixes.iter().filter(|a|a.group()!=0).all(|a|affixes.iter().filter(|b|b.group()==a.group()).count()==1)
+/// 新增词条后的组合接在最早的组合之后，血条名称从这里起每个组合 144 个编号（Boss 名称序号最大 139）
+pub const BAR_NAME_SECOND:i32=9722200;
+pub const BAR_NAME_SECOND_STRIDE:i32=144;
+fn allowed(affixes:&[Affix],group:fn(Affix)->u8)->bool {
+    affixes.len()<=MAX_AFFIXES&&points(affixes)<=budget(3)&&affixes.iter().filter(|a|group(**a)!=0).all(|a|affixes.iter().filter(|b|group(**b)==group(*a)).count()==1)
 }
-static COMBOS:std::sync::LazyLock<Vec<Vec<Affix>>>=std::sync::LazyLock::new(|| {
-    let mut combos=Vec::new();let n=Affix::ALL.len();
+fn enumerate(pool:&[Affix],group:fn(Affix)->u8)->Vec<Vec<Affix>> {
+    let mut combos=Vec::new();let n=pool.len();
     for size in 1..=MAX_AFFIXES {for mask in 1u32..(1<<n) {
         if mask.count_ones() as usize!=size {continue;}
-        let combo:Vec<_>=Affix::ALL.iter().copied().filter(|a|mask&(1<<a.index())!=0).collect();
-        if allowed(&combo){combos.push(combo);}
+        let combo:Vec<_>=pool.iter().copied().enumerate().filter(|(i,_)|mask&(1<<i)!=0).map(|(_,a)|a).collect();
+        if allowed(&combo,group){combos.push(combo);}
     }}
     combos
+}
+/// 先是最早的组合（顺序不变），再接上含新词条、按新分组允许的组合
+static COMBOS:std::sync::LazyLock<(Vec<Vec<Affix>>,usize)>=std::sync::LazyLock::new(|| {
+    let mut combos=enumerate(&Affix::ALL[..LEGACY_AFFIXES],Affix::legacy_group);let legacy=combos.len();
+    for combo in enumerate(&Affix::ALL,Affix::group) {if !combos.contains(&combo){combos.push(combo);}}
+    (combos,legacy)
 });
-pub fn combos()->&'static [Vec<Affix>] {&COMBOS}
+pub fn combos()->&'static [Vec<Affix>] {&COMBOS.0}
+/// 最早的组合数：之后的组合需要重新生成血条名称（text-update 写入第二个标记）后才显示带词条的名字
+pub fn legacy_combos()->usize {COMBOS.1}
+/// 所有带词条的血条名称编号
+pub fn bar_name_range()->std::ops::Range<i32> {BAR_NAME_FIRST..BAR_NAME_SECOND+(combos().len()-legacy_combos()) as i32*BAR_NAME_SECOND_STRIDE}
 pub fn combo_table()->String {combos().iter().enumerate().map(|(i,c)|format!("{i}|{}\n",title(c))).collect()}
+/// 血条名称：最早的组合 9700000 + 序号 × 200 + Boss 名称序号；之后的 9722200 + (序号 − 最早组合数) × 144 + Boss 名称序号
 pub fn bar_name(affixes:&[Affix],boss_name:i32,first:i32)->Option<i32> {
     let index=combos().iter().position(|c|c==affixes)?;let offset=boss_name-first;
-    (0..BAR_NAME_STRIDE).contains(&offset).then(||BAR_NAME_FIRST+index as i32*BAR_NAME_STRIDE+offset)
+    let legacy=legacy_combos();
+    if index<legacy {(0..BAR_NAME_STRIDE).contains(&offset).then(||BAR_NAME_FIRST+index as i32*BAR_NAME_STRIDE+offset)}
+    else {(0..BAR_NAME_SECOND_STRIDE).contains(&offset).then(||BAR_NAME_SECOND+(index-legacy) as i32*BAR_NAME_SECOND_STRIDE+offset)}
 }
 pub fn budget(act:u8)->u8 {match act {1=>2,2=>4,_=>6}}
 /// 本场的词条预算；苦难律法可以提高 Boss 预算并让精英战也带词条
@@ -58,12 +91,14 @@ pub fn node_budget(run:&Run,node:usize)->u8 {
 pub fn roll(run:&Run,node:usize)->Vec<Affix> {
     let budget=node_budget(run,node);
     if !run.boss_affixes||budget==0 {return vec![];}
-    let mut pool=Affix::ALL.to_vec();
+    // 规则 0（旧存档）只用最早的 9 个词条和原来的分组
+    let (count,group):(usize,fn(Affix)->u8)=if run.boss_affix_rules>=1 {(Affix::ALL.len(),Affix::group)}else{(LEGACY_AFFIXES,Affix::legacy_group)};
+    let mut pool=Affix::ALL[..count].to_vec();
     pool.sort_by_key(|a|crate::mix(run.seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^a.index() as u64^0xb055_af1c));
     let (mut left,mut chosen)=(budget,Vec::new());
     for affix in pool {
         if chosen.len()==MAX_AFFIXES {break;}
-        if affix.cost()<=left&&(affix.group()==0||!chosen.iter().any(|c:&Affix|c.group()==affix.group())) {left-=affix.cost();chosen.push(affix);}
+        if affix.cost()<=left&&(group(affix)==0||!chosen.iter().any(|c:&Affix|group(*c)==group(affix))) {left-=affix.cost();chosen.push(affix);}
     }
     chosen.sort_by_key(|a|a.index());chosen
 }
@@ -87,22 +122,33 @@ mod tests {
             let affixes=roll(&run,node);
             assert_eq!(affixes,roll(&run,node));
             assert!(!affixes.is_empty()&&affixes.len()<=MAX_AFFIXES&&points(&affixes)<=budget(act));
-            assert!(affixes.iter().filter(|a|a.group()!=0).all(|a|affixes.iter().filter(|b|b.group()==a.group()).count()==1));
+            assert!(allowed(&affixes,Affix::group));
             assert_eq!(bonus_runes(&run,node),[9000,18000,30000][usize::from(act)-1]*15*u32::from(points(&affixes))/100);
             seen.extend(affixes);
         }}
-        assert_eq!(seen.len(),Affix::ALL.len());
+        assert_eq!(seen.len(),Affix::ALL.len(),"new runs can roll every affix");
     }
     #[test]
     fn every_roll_has_a_bar_name_and_the_combo_table_is_current() {
         assert_eq!(include_str!("../scene-assets/boss-affix-combos.txt").replace("\r\n","\n"),combo_table(),"regenerate scene-assets/boss-affix-combos.txt from boss_affixes::combo_table()");
-        assert!(BAR_NAME_FIRST+combos().len() as i32*BAR_NAME_STRIDE<9800000);
-        for seed in 0..500 {for act in 1..=3 {
-            let mut run=Run::new(seed,Class::Samurai);run.act=act;let affixes=roll(&run,boss(&run));
-            let name=bar_name(&affixes,9600005,9600000).unwrap();assert_eq!((name-BAR_NAME_FIRST)%BAR_NAME_STRIDE,5);
-            assert_eq!(&combos()[((name-BAR_NAME_FIRST)/BAR_NAME_STRIDE) as usize],&affixes);
-        }}
+        assert_eq!(legacy_combos(),111,"the earliest combos keep their indices");
+        assert_eq!(BAR_NAME_FIRST+legacy_combos() as i32*BAR_NAME_STRIDE,BAR_NAME_SECOND);
+        assert!(BAR_NAME_SECOND+(combos().len()-legacy_combos()) as i32*BAR_NAME_SECOND_STRIDE<9800000);
+        let mut names=std::collections::HashSet::new();
+        for seed in 0..500 {for act in 1..=3 {for rules in [0,1] {
+            let mut run=Run::new(seed,Class::Samurai);run.act=act;run.boss_affix_rules=rules;let affixes=roll(&run,boss(&run));
+            let index=combos().iter().position(|c|c==&affixes).expect("every roll has a combo");
+            if rules==0 {assert!(index<legacy_combos(),"old saves only roll the earliest combos");}
+            let name=bar_name(&affixes,9600139,9600000).unwrap();names.insert(name);
+            let (first,stride)=if index<legacy_combos() {(BAR_NAME_FIRST,BAR_NAME_STRIDE)}else{(BAR_NAME_SECOND,BAR_NAME_SECOND_STRIDE)};
+            assert_eq!((name-first)%stride,139);
+        }}}
         assert_eq!(bar_name(&[],9600005,9600000),None);assert_eq!(bar_name(&[Affix::Rot],9600000+BAR_NAME_STRIDE,9600000),None);
+        assert_eq!(bar_name(&[Affix::Swift],9600000+BAR_NAME_SECOND_STRIDE,9600000),None);
+        // 所有组合的名称编号互不重叠
+        let all:std::collections::HashSet<_>=combos().iter().flat_map(|c|[bar_name(c,9600000,9600000).unwrap(),bar_name(c,9600139,9600000).unwrap()]).collect();
+        assert_eq!(all.len(),combos().len()*2);
+        assert!(all.iter().all(|id|bar_name_range().contains(id)));
     }
     #[test]
     fn only_new_runs_and_boss_nodes_get_affixes() {
@@ -134,6 +180,20 @@ mod tests {
             if let Some(e)=elite {let affixes=roll(&run,e);assert!(!affixes.is_empty()&&points(&affixes)<=2);assert_eq!(bonus_runes(&run,e),3000*15*u32::from(points(&affixes))/100);}
             run.law=law(&[19,20]);assert_eq!(bonus_runes(&run,node),9000*15*u32::from(points(&roll(&run,node)))/100/2);
         }
+    }
+    #[test]
+    fn old_saves_keep_the_original_nine_affixes() {
+        let mut new_seen=std::collections::HashSet::new();
+        for seed in 0..300 {for act in 1..=3 {
+            let mut run=Run::new(seed,Class::Samurai);run.act=act;let node=boss(&run);
+            new_seen.extend(roll(&run,node).into_iter().filter(|a|a.index()>=LEGACY_AFFIXES));
+            run.boss_affix_rules=0;
+            assert!(roll(&run,node).iter().all(|a|a.index()<LEGACY_AFFIXES));
+            let mut json:serde_json::Value=serde_json::from_str(&run.encode().unwrap()).unwrap();
+            json.as_object_mut().unwrap().remove("boss_affix_rules");
+            assert_eq!(Run::decode(&json.to_string()).unwrap().boss_affix_rules,0);
+        }}
+        assert_eq!(new_seen.len(),3,"new runs roll the three new affixes");
     }
     #[test]
     fn party_members_share_affixes_but_not_reward_seeds() {

@@ -76,6 +76,10 @@ pub struct View {
     pub room: Option<super::rooms::RoomView>,
     pub runes: u32,
     pub boss_affixes: Option<String>,
+    /// Boss 词条的时机提示（黄金律法的护盾）：(文字, 是否为预警)
+    pub boss_alert: Option<(String,bool)>,
+    /// 当前 Boss 的词条（屏幕上方逐个上色、带动态效果）
+    pub boss_affix_list: Vec<erdtree_tower::boss_affixes::Affix>,
     /// 苦难律法限时战斗的剩余秒数，超时后为负
     pub law_clock: Option<i64>,
     /// 身上词条装备的名称与词条（路线图的构筑面板）
@@ -83,7 +87,7 @@ pub struct View {
 }
 fn initial_view()->View {
     View{shared_event:false,ballots:vec![],run:None,status:"进入角色后，从金色入口开始旅程。".into(),
-        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None,build:vec![]}
+        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![]}
 }
 
 struct Foe {
@@ -1581,7 +1585,7 @@ fn tick_locked() {
     }
 
     let Some(_) = state.pending.as_mut().filter(|pending| !pending.completed) else {
-        if state.view.boss_affixes.is_some(){state.boss_fight=Default::default();state.view.boss_affixes=None;}
+        if state.view.boss_affixes.is_some(){state.boss_fight=Default::default();state.view.boss_affixes=None;state.view.boss_alert=None;state.view.boss_affix_list.clear();}
         if state.view.law_clock.is_some(){state.law_fight=Default::default();state.view.law_clock=None;}
         if state.ember_fight.active(){state.ember_fight=Default::default();}
         if state.bout.active(){state.bout.end(world);}
@@ -1607,7 +1611,7 @@ fn tick_locked() {
             let flasks=runtime.flasks.as_ref().map(|f|f.total());
             runtime.boss_fight.tick(world,&handles,authority,flasks);
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
-            runtime.view.boss_affixes=runtime.boss_fight.title();
+            runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             runtime.law_fight.tick(world,(run.seed,run.act,id),run.law,&handles,authority,flasks);
             runtime.view.law_clock=runtime.law_fight.clock();
             if runtime.bout.active() {
@@ -2900,7 +2904,7 @@ fn request_travel(
 mod tests {
     fn ui_view()->super::View {
         super::View{shared_event:false,ballots:vec![],run:Some(erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai)),
-            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None,build:vec![]}
+            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![]}
     }
     #[test]
     fn queued_selection_is_bounded_and_consumed_once_on_the_game_thread() {

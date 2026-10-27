@@ -1,4 +1,4 @@
-// 路线图的构筑面板：誓约、余烬、护符赐福、苦难律法与身上的词条装备（边栏按钮或 C 键开关）
+// 路线图的构筑面板：职业、誓约、余烬、护符赐福、苦难律法与身上的词条装备（边栏按钮或 C 键开关）
 use crate::run_screen::wrapped;
 use crate::runtime::View;
 use erdtree_tower::Run;
@@ -91,6 +91,22 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             // 手柄右摇杆与鼠标滚轮：指针不在面板上时也滚动面板
             let wheel = ui.io().mouse_wheel;
             if wheel != 0.0 && !ui.is_window_hovered() {ui.set_scroll_y((ui.scroll_y() - wheel * 48.0 * s).clamp(0.0, ui.scroll_max_y()));}
+            // 职业与机制（旧存档的旧职业只显示名字）
+            heading(ui, s, "职业", None);
+            let role = (run.class_rules >= 1).then(|| erdtree_tower::Class::PLAYABLE.iter().position(|c| *c == run.class)).flatten().map(|i| &crate::class_ui::ROLES[i]);
+            {
+                let pos = ui.cursor_screen_pos();let right = ui.window_pos()[0] + ui.window_size()[0] - 14.0 * s;
+                let color = role.map_or(WHITE, |r| [f32::from(r.accent.0) / 255.0, f32::from(r.accent.1) / 255.0, f32::from(r.accent.2) / 255.0, 1.0]);
+                let mut y = wrapped(ui, pos, right, crate::map_ui::class_name(run.class), color, 1.0 * s) + 3.0 * s;
+                match role {
+                    Some(role) => {
+                        y = wrapped(ui, [pos[0], y], right, &format!("{} · {}", role.role, role.mechanic.0), GOLD, 0.86 * s) + 2.0 * s;
+                        y = wrapped(ui, [pos[0], y], right, role.mechanic.1, BOON, 0.84 * s);
+                    }
+                    None => {y = wrapped(ui, [pos[0], y], right, "旧版职业：沿用原来的职业被动", MUTED, 0.84 * s);}
+                }
+                ui.set_cursor_screen_pos([pos[0], y + 8.0 * s]);ui.dummy([0.0, 0.0]);
+            }
             let oaths = run.contract.as_ref().map(|c| c.active()).unwrap_or_default();
             heading(ui, s, "誓约", Some(oaths.len()).filter(|n| *n > 0));
             if oaths.is_empty() {empty(ui, s, "尚未立下誓约");}
@@ -138,7 +154,14 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             if view.build.is_empty() {empty(ui, s, "手中武器与身上防具没有词条");}
             for gear in &view.build {
                 let lines: Vec<_> = gear.lines.iter().map(|line| (format!("· {line}"), WHITE)).collect();
-                entry(ui, s, Badge::Icon(icon(gear.icon)), &gear.name, crate::reward_ui::rarity_color(usize::from(gear.quality)), &lines);
+                // 名字由下面单独用品质特效画，这里留空标题占位
+                let start = ui.cursor_screen_pos();
+                entry(ui, s, Badge::Icon(icon(gear.icon)), "　", WHITE, &lines);
+                let font = crate::fancy_text::title_font().map(|f| ui.push_font(f));
+                ui.set_window_font_scale(s * if font.is_some() {0.62} else {0.95});
+                let size = ui.current_font_size();
+                crate::fancy_text::quality_name(crate::fancy_text::Layer::Window, start[0] + 54.0 * s, start[1] - 1.0 * s, size, &gear.name, crate::reward_ui::rarity_color(usize::from(gear.quality)), usize::from(gear.quality), 0.0, ui.time() as f32);
+                if let Some(font) = font {font.pop();}
             }
         });
     });

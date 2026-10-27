@@ -62,29 +62,45 @@ static class AffixTextFix {
         Console.WriteLine($"Checked {remap.Count} affix text remaps against the reward details");
     }
     public const int PoolNameFirst=9610000,BarNameFirst=9700000,BarNameStride=200,BossNameFirst=9600000,BarMarker=9620099;
-    // 与 src/boss_affixes.rs 的 bar_name 相同：9700000 + 组合序号 × 200 + Boss 名称序号
+    // 新增 8 种 Boss 词条后的组合：接在最早的 111 个组合之后，编号区间与标记见 src/boss_affixes.rs
+    public const int LegacyCombos=111,BarNameSecond=9722200,BarNameSecondStride=144,BarMarkerV2=9620098,BarTagTest=9799999;
+    // 物品名颜色标签测试：把爬塔里用不到的原版道具“饶舌头颅”（2207）的名字换成带颜色标签的文字，调试菜单可以发放，用来确认原版菜单是否支持标签
+    public const int TagTestGoods=2207;
+    public const string TagTestGoodsName="<font color=\"#F2C85C\">传说</font>·<font color=\"#68CC92\">灵巧</font>/<font color=\"#EECE6C\">信仰</font>·颜色标签测试";
+    // 与 src/boss_affixes.rs 的 bar_name 相同：最早的组合 9700000 + 组合序号 × 200 + Boss 名称序号，之后的 9722200 + (组合序号 − 111) × 144 + Boss 名称序号
     static IEnumerable<(int id,string text)> AffixBarNames(string input,Dictionary<int,string> names) {
         var combos=File.ReadAllLines(Path.Combine(input,"boss-affix-combos.txt")).Select(l=>l.Split('|')).ToArray();
         var majors=File.ReadAllLines(Path.Combine(input,"boss-pool.txt")).Select(l=>l.Split('|')).Where(p=>p[9]=="1").Select(p=>int.Parse(p[2])).Distinct();
         foreach(var index in majors) {
-            if(index>=BarNameStride)throw new Exception("Boss name index exceeds affix bar stride");
+            if(index>=BarNameSecondStride)throw new Exception("Boss name index exceeds affix bar stride");
             var boss=names.GetValueOrDefault(BossNameFirst+index)??throw new Exception($"Missing boss name {BossNameFirst+index}");
-            foreach(var combo in combos)yield return (BarNameFirst+int.Parse(combo[0])*BarNameStride+index,$"{combo[1]} {boss}");
+            foreach(var combo in combos) {
+                int number=int.Parse(combo[0]);
+                int id=number<LegacyCombos?BarNameFirst+number*BarNameStride+index:BarNameSecond+(number-LegacyCombos)*BarNameSecondStride+index;
+                yield return (id,$"{combo[1]} {boss}");
+            }
         }
+        // 调试菜单“血条颜色标签测试”用的文字：确认 Boss 血条是否支持 <font color> 标签（与 native boss_affixes::BAR_TAG_TEST_NAME 相同）
+        yield return (BarTagTest,"<font color=\"#E04A3A\">狂暴的</font>·<font color=\"#F2C85C\">黄金律法的</font>·<font color=\"#5CDECC\">迅猛的</font> 颜色标签测试");
     }
     static bool AddMarker(string input,string output) {
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="SpEffectParam");
         var def=PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/SpEffect.xml");var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
-        if(effects.Rows.Any(r=>r.ID==BarMarker))return false;
-        var marker=new PARAM.Row(effects.Rows.Single(r=>r.ID==BossAffixAssets.First+95)){ID=BarMarker,Name="Tower boss affix bar names marker"};
-        marker["effectEndurance"].Value=0f;marker["vfxId"].Value=-1;effects.Rows.Add(marker);effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));
+        // 第一个标记：最早的组合已有名称；第二个标记：新增词条后的全部组合都已有名称
+        var missing=new[]{(BarMarker,"Tower boss affix bar names marker"),(BarMarkerV2,"Tower boss affix bar names marker v2")}.Where(m=>!effects.Rows.Any(r=>r.ID==m.Item1)).ToList();
+        if(missing.Count==0)return false;
+        foreach(var (id,name) in missing) {
+            var marker=new PARAM.Row(effects.Rows.Single(r=>r.ID==BossAffixAssets.First+95)){ID=id,Name=name};
+            marker["effectEndurance"].Value=0f;marker["vfxId"].Value=-1;effects.Rows.Add(marker);
+        }
+        effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));
         var others=reg.Files.Where(f=>f!=file).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());file.Bytes=effects.Write();
         Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
         var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
         foreach(var f in check.Files.Where(f=>f.Name!=file.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
         var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);
-        if(actual.Rows.Count!=effects.Rows.Count||!actual.Rows.Any(r=>r.ID==BarMarker))throw new Exception("Bar name marker not written");
+        if(actual.Rows.Count!=effects.Rows.Count||!actual.Rows.Any(r=>r.ID==BarMarker)||!actual.Rows.Any(r=>r.ID==BarMarkerV2))throw new Exception("Bar name marker not written");
         return true;
     }
     // 侍从的敌人预览（menu_dlc02 第 33 表，9510000+序号×16+数量）：与 melina-patch 写入的内容相同，新增敌人时补上
@@ -116,6 +132,11 @@ static class AffixTextFix {
         var messages=BND4.Read(Path.Combine(input,"msg/zhocn/item_dlc02.msgbnd.dcx"));var changed=0;var added=0;
         changed+=AffinityNameAssets.Apply(input,messages);
         var before=messages.Files.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.Select(e=>(e.ID,e.Text)).ToArray());
+        {
+            var goods=messages.Files.Single(f=>f.ID==10);var fmg=FMG.Read(goods.Bytes);
+            var entry=fmg.Entries.FirstOrDefault(e=>e.ID==TagTestGoods)??throw new Exception("Tag test goods name missing");
+            if(entry.Text!=TagTestGoodsName){entry.Text=TagTestGoodsName;goods.Bytes=fmg.Write();changed++;}
+        }
         foreach(var file in messages.Files.Where(f=>f.ID is 11 or 21 or 22 or 25 or 26)) {
             var fmg=FMG.Read(file.Bytes);
             foreach(var entry in fmg.Entries) {var text=Expected(file.ID,entry.ID,entry.Text);if(text!=entry.Text){entry.Text=text;changed++;}}
@@ -145,7 +166,7 @@ static class AffixTextFix {
         var written=BND4.Read(path).Files;var check=written.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text));
         foreach(var (fmg,entries) in before)foreach(var (id,text) in entries) {
             if((fmg is 10 or 20 or 24)&&retired.Contains(id)){if(check[fmg].ContainsKey(id))throw new Exception($"Retired spell text remains: {fmg}/{id}");continue;}
-            if(check[fmg][id]!=((fmg is 11 or 21 or 22 or 25 or 26)?Expected(fmg,id,text):text))throw new Exception($"Unexpected text change: {fmg}/{id}");
+            if(check[fmg][id]!=(fmg==10&&id==TagTestGoods?TagTestGoodsName:(fmg is 11 or 21 or 22 or 25 or 26)?Expected(fmg,id,text):text))throw new Exception($"Unexpected text change: {fmg}/{id}");
             if(fmg==25&&Variant(id)&&check[fmg][id]?.Split('\n').Length>CaptionLines)throw new Exception($"Weapon caption still exceeds {CaptionLines} lines: {id}");
         }
         var npcCheck=FMG.Read(written.First(f=>f.Name.Contains("NpcName")).Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text);

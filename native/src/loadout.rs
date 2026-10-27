@@ -125,11 +125,20 @@ fn clear_inventory(inventory: &mut EquipInventoryData, function: usize) -> Resul
     if inventory.items_data.items().any(|e|!super::seamless::preserve(e.item_id,seamless)) {return Err("背包清理未完成，停止发放初始装备".into());}
     Ok(())
 }
+/// 职业重做后的专属起手武器（在原版出身装备上调整）：狂战士右手换巨斧、战斧挪到右手第二格；召唤师右手换短剑
+fn starting_weapons(class:erdtree_tower::Class,gear:&mut [i32;16]) {
+    match class {
+        erdtree_tower::Class::Hero=>{gear[3]=gear[1];gear[1]=15000000;},
+        erdtree_tower::Class::Confessor=>{gear[1]=2010000;},
+        _=>{},
+    }
+}
 pub fn reset(data: &mut PlayerGameData, archetype: u8) -> Result<(), String> {
     if super::class_from_archetype(archetype).is_none() {return Err("无效初始职业".into());}
     let params = unsafe {SoloParamRepository::instance()}.map_err(|_|"初始职业参数未加载")?;
     let p = params.get::<CharaInitParam>(3000+archetype as u32).ok_or("初始职业参数不存在")?;
-    let gear = [p.equip_wep_left(),p.equip_wep_right(),p.equip_subwep_left(),p.equip_subwep_right(),p.equip_subwep_left3(),p.equip_subwep_right3(),p.equip_arrow(),p.equip_bolt(),p.equip_sub_arrow(),p.equip_sub_bolt(),-1,-1,p.equip_helm(),p.equip_armer(),p.equip_gaunt(),p.equip_leg()];
+    let mut gear = [p.equip_wep_left(),p.equip_wep_right(),p.equip_subwep_left(),p.equip_subwep_right(),p.equip_subwep_left3(),p.equip_subwep_right3(),p.equip_arrow(),p.equip_bolt(),p.equip_sub_arrow(),p.equip_sub_bolt(),-1,-1,p.equip_helm(),p.equip_armer(),p.equip_gaunt(),p.equip_leg()];
+    starting_weapons(super::class_from_archetype(archetype).unwrap(),&mut gear);
     let spells = [p.equip_spell_01(),p.equip_spell_02(),p.equip_spell_03(),p.equip_spell_04()];
     let equip_fn=super::items::checked_function(0x249160,&[0x40,0x53,0x55,0x56,0x57,0x41,0x56,0x48,0x81,0xec,0x90,0,0,0])?;
     let remove_fn=super::items::checked_function(0x24d1e0,&[0x48,0x89,0x5c,0x24,0x20,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x41,0x56,0x41,0x57])?;
