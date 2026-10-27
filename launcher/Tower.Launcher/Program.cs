@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -10,10 +11,11 @@ namespace Tower.Launcher
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            WaitForPrevious(args);
             // 同时只开一个：两个启动器同时更新同一个目录会互相破坏，第二个只负责把第一个的窗口叫到前面
             using var single = new Mutex(true, @"Local\ErdtreeTowerLauncher", out var first);
             if (!first)
@@ -32,6 +34,20 @@ namespace Tower.Launcher
             try { Updater.Recover(paths.InstallDir); }
             catch (Exception e) { Log.Write("还原上次中断的更新失败：" + e); }
             Application.Run(new MainForm(paths));
+        }
+
+        /// <summary>「立即重启」拉起的新进程带 --wait-for &lt;旧进程 ID&gt;：等旧的退出（最多 15 秒）再去拿“只开一个”的锁</summary>
+        static void WaitForPrevious(string[] args)
+        {
+            var at = Array.IndexOf(args, "--wait-for");
+            if (at < 0 || at + 1 >= args.Length || !int.TryParse(args[at + 1], out var id)) return;
+            try
+            {
+                using var previous = Process.GetProcessById(id);
+                previous.WaitForExit(15000);
+            }
+            catch (ArgumentException) { } // 已经退出了
+            catch (InvalidOperationException) { }
         }
 
         static void Crash(Exception? e)

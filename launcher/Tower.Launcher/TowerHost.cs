@@ -41,7 +41,7 @@ namespace Tower.Launcher
         long sessionTotal = -1;
         volatile bool installing;
         /// <summary>界面文件更新后会重新加载页面，完成提示留到页面重新就绪时再显示</summary>
-        (string text, int? ms)? pendingToast;
+        (string text, int? ms, bool restart)? pendingToast;
 
         public bool Installing => installing;
 
@@ -174,6 +174,7 @@ namespace Tower.Launcher
                 case "openGuide": OpenDocument(Path.Combine(paths.InstallDir, "安装教程.txt"), Repo + "#readme"); break;
                 case "openLicenses": OpenDocument(Path.Combine(paths.InstallDir, "THIRD_PARTY_NOTICES.md"), Repo + "/tree/main/licenses"); break;
                 case "openLogs": OpenLogs(); break;
+                case "restartLauncher": Restart(); break;
             }
         }
 
@@ -183,11 +184,19 @@ namespace Tower.Launcher
         {
             form.Post("app", "hostTakeover", new { download = true });
             PushStatus();
-            if (pendingToast is { } toast) { pendingToast = null; Toast(toast.text, "success", toast.ms); }
+            if (pendingToast is { } toast) { pendingToast = null; Done(toast.text, toast.ms, toast.restart); }
             if (settings.AutoCheck && latest == null) _ = CheckAsync(false);
         }
 
-        public void Toast(string text, string kind = "info", int? ms = null) => form.Post("app", "toast", new { text, kind, ms });
+        /// <summary>页面提示；button/then 给提示加一个按钮，点了以 settings.action(then) 回到宿主</summary>
+        public void Toast(string text, string kind = "info", int? ms = null, string? button = null, string? then = null) =>
+            form.Post("app", "toast", new { text, kind, ms, button, then });
+
+        void Done(string text, int? ms, bool restart)
+        {
+            if (restart) Toast(text, "success", 0, "立即重启", "restartLauncher");
+            else Toast(text, "success", ms);
+        }
 
         void PushStatus()
         {
@@ -346,16 +355,28 @@ namespace Tower.Launcher
                 : kind == "install" ? $"安装完成：{version}"
                 : $"已更新到 {version}，只下载了 {Size(plan.DownloadBytes)}";
             var restart = plan.Writes.Any(w => LauncherPaths.IsLauncherBinary(w.Path));
-            if (restart) text += "。启动器本身也更新了，关掉重新打开后生效";
+            if (restart) text += "。启动器本身也更新了，重启后生效";
             int? ms = restart ? 0 : 6000;
             if (plan.Writes.Any(w => LauncherPaths.IsLauncherUi(w.Path)))
             {
                 // 界面文件换了：重新加载页面，提示等页面就绪后再显示
-                pendingToast = (text, ms);
+                pendingToast = (text, ms, restart);
                 _ = ReloadSoonAsync();
                 return;
             }
-            Toast(text, "success", ms);
+            Done(text, ms, restart);
+        }
+
+        /// <summary>
+        /// 重开启动器：先拉起新进程（带上本进程 ID，它会等这边退出后再接手“只开一个”的锁），再关掉自己。
+        /// 正在下载或安装时不重启，免得打断。
+        /// </summary>
+        void Restart()
+        {
+            if (running != null) { Toast("正在更新，完成后再重启", "warn"); return; }
+            Log.Write("重启启动器");
+            Process.Start(new ProcessStartInfo(Application.ExecutablePath, $"--wait-for {Process.GetCurrentProcess().Id}") { UseShellExecute = false, WorkingDirectory = paths.InstallDir })?.Dispose();
+            form.Close();
         }
 
         async Task ReloadSoonAsync()

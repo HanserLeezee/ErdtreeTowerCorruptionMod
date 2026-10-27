@@ -1661,7 +1661,7 @@
          { type:'game', action:'status',      payload:{ game, installed, version, updateTo } }
          { type:'app',  action:'hostTakeover',payload:{ download:true } }   // 关掉模拟
          { type:'app',  action:'updateResult',payload:{ latest:true, version } }
-         { type:'app',  action:'toast',       payload:{ text, kind, ms } }
+         { type:'app',  action:'toast',       payload:{ text, kind, ms, button, then } }
          { type:'settings', action:'values',  payload:{ key: value, ... } }
          { type:'game', action:'news',        payload:{ game, tab, items:[{ title, date, href }] } }
        progress 的 phase 为 finished / failed（附 error）时直接收尾。
@@ -1719,7 +1719,15 @@
 
       /* 宿主的一次性提示（启动失败原因、需要重启启动器等） */
       if (msg.type === 'app' && msg.action === 'toast') {
-        toast(String(p.text || ''), p.kind || 'info', p.ms == null ? 4200 : p.ms);
+        /* 带按钮的提示（如「立即重启」）：点按钮把 then 作为 settings.action 交回宿主 */
+        if (p.button && UI) {
+          UI.toast(String(p.text || ''), {
+            type: p.kind || 'info', duration: p.ms == null ? 4200 : p.ms, action: String(p.button),
+            onAction: function () { bridge.settings.action(p.then); },
+          });
+        } else {
+          toast(String(p.text || ''), p.kind || 'info', p.ms == null ? 4200 : p.ms);
+        }
         return;
       }
 
