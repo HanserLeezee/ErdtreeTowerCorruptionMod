@@ -95,18 +95,29 @@ static BOSSES:LazyLock<Vec<(usize,Enemy)>>=LazyLock::new(||include_str!("../../s
 }).collect());
 static MAP_ENTITIES:LazyLock<Vec<(Enemy,Vec<u32>)>>=LazyLock::new(||{
     let mut variants=std::collections::BTreeMap::new();
-    for &spec in POOLS.iter() {variants.insert((spec.act,spec.npc),(spec,4));}
+    for &spec in POOLS.iter().filter(|e|!e.dlc) {variants.insert((spec.act,spec.npc),(spec,4));}
     for &(_,spec) in BOSSES.iter() {
         variants.insert((spec.act,spec.npc),(spec,1));
         let elite=Enemy{npc:spec.npc+1,kind:NodeKind::Elite,bar:0,..spec};
         variants.insert((elite.act,elite.npc),(elite,1));
     }
     let mut offsets=[0u32;4];
-    variants.into_values().map(|(spec,copies)|{
+    let mut entries:Vec<(Enemy,Vec<u32>)>=variants.into_values().map(|(spec,copies)|{
         let offset=&mut offsets[usize::from(spec.act)];
         let ids=(0..copies).map(|_|{let id=48000000+u32::from(spec.act)*10000+*offset;*offset+=1;id}).collect();
         (spec,ids)
-    }).collect()
+    }).collect();
+    for line in include_str!("../../scene-assets/party-dlc-slots.tsv").lines().chain(include_str!("../../scene-assets/party-extra-slots.tsv").lines()) {
+        let p:Vec<u32>=line.split('|').map(|v|v.parse().unwrap()).collect();
+        let spec=POOLS.iter().find(|e|e.act as u32==p[0]&&e.npc as u32==p[1]).copied().unwrap_or_else(|| {
+            let source=BOSSES.iter().find(|(_,e)|e.npc as u32+1==p[1]).expect("Missing relocated elite").1;
+            Enemy{act:p[0] as u8,npc:p[1] as i32,kind:NodeKind::Elite,bar:0,..source}
+        });
+        assert_eq!((spec.model as u32,spec.think),(p[2],p[3]));
+        if let Some((_,ids))=entries.iter_mut().find(|(e,_)|e.act==spec.act&&e.npc==spec.npc) {assert_eq!(ids.len(),p[4] as usize);ids.push(p[5]);}
+        else {assert_eq!(p[4],0);entries.push((spec,vec![p[5]]));}
+    }
+    entries
 });
 pub fn map_entities(group:&[Enemy])->Result<Vec<u32>,String> {
     let mut used=std::collections::HashMap::new();
@@ -161,7 +172,9 @@ static BOSS_LEVELS:LazyLock<std::collections::HashMap<&'static str,u16>>=LazyLoc
         (name,level)
     }).collect());
 fn recommended_level(name:&str)->Option<u16> {BOSS_LEVELS.get(name).copied()}
+fn encounter_act(enemy:&Enemy)->u8 {if enemy.npc==950000196 {3}else{enemy.act}}
 fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
+    if enemy.npc==950000196 {return kind==NodeKind::Elite;}
     let minimum=match (kind,enemy.act) {
         (NodeKind::Boss,1)=>35,(NodeKind::Boss,2)=>70,(NodeKind::Boss,3)=>100,
         (NodeKind::Elite,1)=>35,(NodeKind::Elite,2)=>60,(NodeKind::Elite,3)=>90,
@@ -171,11 +184,11 @@ fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
 }
 fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8)->Vec<Enemy> {
     let mut encounters=Vec::new();
-    for (id,_) in BOSSES.iter().filter(|(id,e)|e.act==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
+    for (id,_) in BOSSES.iter().filter(|(id,e)|encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
     encounters.sort_by_key(|&id|mix(seed ^ (id as u64).wrapping_mul(0x9e3779b97f4a7c15)));
     let chosen=encounters[ordinal%encounters.len()];
     BOSSES.iter().filter(|(id,_)|*id==chosen).map(|(_,e)|{
-        let mut enemy=*e;enemy.kind=kind;if kind==NodeKind::Elite {enemy.npc+=1;enemy.bar=0;}enemy
+        let mut enemy=*e;enemy.act=act;enemy.kind=kind;if kind==NodeKind::Elite {enemy.npc+=1;enemy.bar=0;}enemy
     }).collect()
 }
 fn encounter_allowed(kind:NodeKind,id:usize)->bool {
@@ -340,11 +353,11 @@ mod tests {
         for (spec,ids) in MAP_ENTITIES.iter() {for (slot,id) in ids.iter().enumerate() {
             println!("PARTY_SLOT={}|{}|{}|{}|{}|{}",spec.act,spec.npc,spec.model,spec.think,slot,id);
         }}
-        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),732);
+        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),765);
     }
     #[test]
     fn first_act_elites_always_use_curated_combatants_not_boss_labels() {
-        let allowed=[3010,3800,4351,4352,4353,4354,4355,4290,3020,4340,2270,4490,5040];
+        let allowed=[3010,3800,4351,4352,4353,4354,4355,4290,3020,4340,2270,4490,5040,5192];
         let mut seen=std::collections::HashSet::new();
         for seed in 0..100 {for ordinal in 0..24 {for layer in 0..12 {
             let group=roster_in(NodeKind::Elite,seed,ordinal,layer,1,false);
@@ -362,7 +375,7 @@ mod tests {
     fn first_act_ordinary_pool_excludes_passive_and_fodder_types() {
         let removed=[4090,3070,3660,3661,4000,4230,4080,4161,4200,4250,4491,4070];
         let pool:Vec<_>=POOLS.iter().filter(|e|e.act==1&&e.kind==NodeKind::Monster).collect();
-        assert_eq!(pool.len(),17);
+        assert_eq!(pool.len(),18);
         assert!(pool.iter().all(|e|!removed.contains(&e.model)));
         for model in [4311,3000,3080,3450,3650,4101,4210] {
             assert!(pool.iter().any(|e|e.model==model));
@@ -371,7 +384,7 @@ mod tests {
     }
     #[test]
     fn expanded_pools_deal_distinct_early_groups_and_shuffle_across_runs() {
-        for (act,weak,elite) in [(1,17,20),(2,20,16),(3,18,16)] {
+        for (act,weak,elite) in [(1,18,21),(2,21,19),(3,18,18)] {
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster).count(),weak);
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Elite).count(),elite);
             for seed in 0..100 {
@@ -390,7 +403,7 @@ mod tests {
         for act in 1..=3 {
             for kind in [NodeKind::Boss,NodeKind::Elite] {
                 if act==1&&kind==NodeKind::Elite {continue;}
-                let expected:std::collections::HashSet<_>=BOSSES.iter().filter(|(id,e)|e.act==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)).map(|(_,e)|e.npc).collect();
+                let expected:std::collections::HashSet<_>=BOSSES.iter().filter(|(id,e)|encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)).map(|(_,e)|e.npc).collect();
                 let actual:std::collections::HashSet<_>=(0..10000).flat_map(|seed|roster(kind,seed,0,11,act)).filter(|e|boss_npc(e.npc)).map(|e|e.npc-if kind==NodeKind::Elite {1}else{0}).collect();
                 assert_eq!(actual,expected);
             }
@@ -435,7 +448,7 @@ mod tests {
     fn bosses_respect_reference_levels_and_exclude_unrated_champions() {
         for act in 1..=3 {
             let minimum=[35,70,100][usize::from(act-1)];
-            let expected:std::collections::HashSet<_>=BOSSES.iter().filter(|(id,e)|e.act==act&&recommended_level(e.name).is_some_and(|level|level>=minimum)&&encounter_allowed(NodeKind::Boss,*id)).map(|(id,_)|*id).collect();
+            let expected:std::collections::HashSet<_>=BOSSES.iter().filter(|(id,e)|e.npc!=950000196&&e.act==act&&recommended_level(e.name).is_some_and(|level|level>=minimum)&&encounter_allowed(NodeKind::Boss,*id)).map(|(id,_)|*id).collect();
             assert!(expected.len()>=5);
             let mut seen=std::collections::HashSet::new();
             for seed in 0..2000 {
@@ -550,7 +563,7 @@ mod tests {
     #[test]
     fn dlc_enemies_reach_multiplayer_and_keep_existing_name_and_entity_ids() {
         let dlc:Vec<_>=POOLS.iter().filter(|e|e.dlc).collect();
-        assert_eq!(dlc.len(),12);
+        assert_eq!(dlc.len(),20);
         assert!(dlc.iter().all(|e|e.model>=5000&&!boss_npc(e.npc)&&bar_rank(e)>=2&&role(e)!=erdtree_tower::encounter::Role::Boss));
         // 名称编号：DLC 敌人排在已有名称之后
         let first_dlc=POOL_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
@@ -558,23 +571,38 @@ mod tests {
         let first_preview=PREVIEW_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
         assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len());
         // 联机实体只包含地图里摆放过的敌人
-        assert_eq!(MAP_ENTITIES.iter().filter(|(spec,_)|spec.dlc).map(|(_,ids)|ids.len()).sum::<usize>(),48);
+        assert_eq!(MAP_ENTITIES.iter().filter(|(spec,_)|spec.dlc).map(|(_,ids)|ids.len()).sum::<usize>(),80);
         for act in 1..=3 {for seed in 0..200 {for kind in [NodeKind::Monster,NodeKind::Elite] {
             assert!(roster_in(kind,seed,0,11,act,true).iter().all(|e|!e.retired));
         }}}
         let solo:std::collections::HashSet<_>=(1..=3).flat_map(|act|(0..400).flat_map(move|seed|[NodeKind::Monster,NodeKind::Elite].into_iter().flat_map(move|kind|roster_in(kind,seed,0,11,act,false)))).filter(|e|e.dlc).map(|e|e.model).collect();
-        assert_eq!(solo.len(),12,"every DLC enemy is reachable solo");
+        assert_eq!(solo.len(),20,"every DLC enemy is reachable solo");
         let party:std::collections::HashSet<_>=(1..=3).flat_map(|act|(0..400).flat_map(move|seed|[NodeKind::Monster,NodeKind::Elite].into_iter().flat_map(move|kind|roster_in(kind,seed,0,11,act,true)))).filter(|e|e.dlc).map(|e|e.model).collect();
         assert_eq!(party,solo,"every DLC enemy must also be reachable in multiplayer");
         for act in 1..=3 {
-            let old:Vec<_>=MAP_ENTITIES.iter().filter(|(e,_)|e.act==act&&!e.dlc).flat_map(|(_,ids)|ids).copied().collect();
+            let old:Vec<_>=MAP_ENTITIES.iter().filter(|(e,_)|e.act==act&&!e.dlc&&!(e.act==3&&e.npc==950000197)).flat_map(|(_,ids)|ids).copied().collect();
             assert_eq!(old,(0..old.len()).map(|n|48000000+u32::from(act)*10000+n as u32).collect::<Vec<_>>());
         }
-        let lines:Vec<_>=include_str!("../../scene-assets/party-dlc-slots.tsv").lines().collect();assert_eq!(lines.len(),48);
+        let lines:Vec<_>=include_str!("../../scene-assets/party-dlc-slots.tsv").lines().collect();assert_eq!(lines.len(),80);
         for line in lines {
             let p:Vec<u32>=line.split('|').map(|s|s.parse().unwrap()).collect();
             let (enemy,ids)=MAP_ENTITIES.iter().find(|(e,_)|e.act as u32==p[0]&&e.npc as u32==p[1]).unwrap();
             assert!(enemy.dlc);assert_eq!(enemy.model as u32,p[2]);assert_eq!(enemy.think,p[3]);assert_eq!(ids[p[4] as usize],p[5]);assert_eq!(super::super::map_guards::entity(p[5]).unwrap(),p[6]);
         }
+    }
+    #[test]
+    fn full_grown_fallingstar_is_only_an_act_three_elite() {
+        let mut seen=false;let mut regular=false;
+        for party in [false,true] {for act in 1..=3 {for kind in [NodeKind::Monster,NodeKind::Elite,NodeKind::Boss] {for seed in 0..1000 {
+            let group=roster_in(kind,seed,0,11,act,party);
+            for e in &group {
+                if e.npc==950000196||e.npc==950000197 {
+                    assert_eq!((act,kind,e.act,e.npc),(3,NodeKind::Elite,3,950000197));
+                    assert!(map_entities(&group).is_ok());seen=true;
+                }
+                if e.npc==950000146||e.npc==950000147 {assert_eq!(act,2);regular=true;}
+            }
+        }}}}
+        assert!(seen&&regular);
     }
 }

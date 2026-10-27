@@ -1,0 +1,24 @@
+{
+  "experimental": true,
+  "gameVerified": false,
+  "legendaryMatcher": "UTF-16 codepoints 4F20 8BF4 then 00B7 or 30FB; skip whitespace and leading tags",
+  "effect": "wide platinum sweep, seven large sparkles and moving golden underline trail",
+  "files": [
+    {
+      "file": "menu/02_055_detailstatus_weapon1.gfx",
+      "originalSha256": "f4f688ee1f2b8633c940d5bfe06d52c7f046baa8a6fffcc54a73e3498b9a589c",
+      "patchedSha256": "55a0a7c7f4894e4687eb4b0c7cb6459637392245d13ff11d732a8dabad0268db",
+      "tagsVerified": 145,
+      "changedTag": "DoABC",
+      "path": "DetailStatusView.AdjustPosTop.Status_Weapon1.ItemName"
+    },
+    {
+      "file": "menu/02_052_detailstatus_armor.gfx",
+      "originalSha256": "fabff864cc107a8a651542a855febeac3a7255e8a41f7bd0b9d2a0177f444c96",
+      "patchedSha256": "9ddc36085c04a12d97ada0e29caa9fb3bec72b7491ad14ba985113f69052e87a",
+      "tagsVerified": 90,
+      "changedTag": "DoABC",
+      "path": "DetailStatusView.AdjustPosTop.Status_Armor.ItemName"
+    }
+  ]
+}

@@ -27,7 +27,7 @@ static class PartyGuardAssets {
         return ev;
     }
     public static EMEVD.Event ForEntity(uint original,bool battle)=>Convert(original,battle);
-    static int ExpectedCount(string root)=>684+(File.Exists(Path.Combine(root,"party-dlc-slots.tsv"))?File.ReadAllLines(Path.Combine(root,"party-dlc-slots.tsv")).Length:0);
+    static int ExpectedCount(string root)=>684+new[]{"party-dlc-slots.tsv","party-extra-slots.tsv"}.Sum(name=>File.Exists(Path.Combine(root,name))?File.ReadAllLines(Path.Combine(root,name)).Length:0);
     public static void Build(string input,string output) {
         const string name="m45_01_00_00";
         var map=MSBE.Read(Path.Combine(input,"map/mapstudio",name+".msb.dcx"));

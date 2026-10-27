@@ -10,6 +10,11 @@ static class EnemyPoolAssets {
         PARAM Read(string name) {var p=PARAM.Read(File_(name).Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize($"work/SoulsRandomizers/diste/Defs/{name}.xml"));return p;}
         var npcs=Read("NpcParam");var think=Read("NpcThinkParam");var before=npcs.Rows.Count;
         var added=new List<int>();
+        // Verified source AI from the DLC map placements; these models share differently numbered AI rows.
+        foreach(var (model,sourceId) in new[]{(5251,52512010),(5061,50600200)}) {
+            int id=model*10000;
+            if(!think.Rows.Any(r=>r.ID==id))think.Rows.Add(new PARAM.Row(think.Rows.Single(r=>r.ID==sourceId)){ID=id,Name="Tower DLC AI alias"});
+        }
         foreach(var p in File.ReadAllLines(Path.Combine(input,"enemy-pools.txt")).Select(l=>l.Split('|'))) {
             int model=int.Parse(p[2]),id=900000000+model*10000,runes=int.Parse(p[3]);
             if(!think.Rows.Any(r=>r.ID==model*10000))throw new Exception($"Missing enemy AI: {model}");
@@ -21,13 +26,14 @@ static class EnemyPoolAssets {
             npcs.Rows.Add(row);added.Add(id);
         }
         npcs.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));File_("NpcParam").Bytes=npcs.Write();
-        var others=reg.Files.Where(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))!="NpcParam").ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
+        think.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));File_("NpcThinkParam").Bytes=think.Write();
+        var others=reg.Files.Where(f=>!new[]{"NpcParam","NpcThinkParam"}.Contains(Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/')))).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
         Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
         SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
         if(new FileInfo(path).Length>4799*1024)throw new Exception("Regulation exceeds the game's size limit");
         var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
         foreach(var f in check.Files.Where(f=>others.ContainsKey(f.Name)))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
-        var after=PARAM.Read(check.Files.Single(f=>!others.ContainsKey(f.Name)).Bytes);after.ApplyParamdef(npcs.AppliedParamdef);
+        var after=PARAM.Read(check.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="NpcParam").Bytes);after.ApplyParamdef(npcs.AppliedParamdef);
         if(after.Rows.Count!=before+added.Count)throw new Exception("Unexpected NpcParam row count");
         Console.WriteLine($"Added {added.Count} tower enemy parameter rows ({string.Join(",",added)}); existing rows and other params unchanged");
     }

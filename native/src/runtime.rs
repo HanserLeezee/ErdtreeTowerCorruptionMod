@@ -1910,6 +1910,11 @@ fn contract_action(state:&mut Runtime,world:&mut WorldChrMan,action:Action)->Res
     record_checked(run)?;let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,Some(run),light);Ok(())
 }
 
+fn prepare_regional_decision(run:&Run,decide:impl FnOnce(&mut Run)->Result<(),String>,close:impl FnOnce()->Result<(),String>)->Result<Run,String> {
+    let mut next=run.clone();decide(&mut next)?;
+    close()?;
+    Ok(next)
+}
 fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, dead: bool) {
     if dead&&state.party.as_ref().is_some_and(|p|!p.defeated) {
         state.command=None;state.view.ready=false;state.view.busy=true;
@@ -1957,7 +1962,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
             if let Some(choice)=decision {
                 let mut next=state.view.run.clone().ok_or("旅程未绑定")?;
                 next.gold=unsafe {world.main_player.as_ref().ok_or("角色未加载")?.player_game_data.as_ref()}.rune_count;
-                next.choose_trial(choice)?;
+                let mut next=prepare_regional_decision(&next,|r|r.choose_trial(choice),||room.suspend_dialogues())?;
                 match choice {
                     Trial::Descent=>{start_descent(state,world,game,next)?;transferred=true;},
                     Trial::Stormveil|Trial::Chariot=>{start_stormveil(state,world,game,next)?;transferred=true;},
@@ -1982,8 +1987,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 link.event.storm_decision
             }else{choice.map(|challenge|if challenge{Decision::Challenge}else{Decision::Skip})};
             if let Some(decision)=decision {
-                let mut next=state.view.run.clone().ok_or("旅程未绑定")?;
-                next.stormveil_decide(decision)?;
+                let mut next=prepare_regional_decision(state.view.run.as_ref().ok_or("旅程未绑定")?,|r|r.stormveil_decide(decision),||room.suspend_dialogues())?;
                 match decision {
                     Decision::Challenge=>{start_stormveil(state,world,game,next)?;transferred=true;return Ok(true);},
                     Decision::Skip=>{
@@ -2902,6 +2906,26 @@ fn request_travel(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_skip_closes_local_dialogue_before_awarding_and_reopening_map() {
+        use erdtree_tower::{Class,NodeKind,Phase,Run,regional_events::Trial,stormveil::{Progress,Decision}};
+        for trial in [false,true] {for host_first in [false,true] {
+            let mut run=Run::new(42,Class::Samurai);let node=run.nodes.iter().position(|n|n.kind==NodeKind::Event).unwrap();
+            run.phase=Phase::Node{id:node};run.regional_event=Default::default();
+            run.regional_event.trial=trial;if !trial{run.regional_event.stormveil=Some(Progress::Choosing);}
+            let decide=|r:&mut Run|if trial{r.choose_trial(Trial::Skip)}else{r.stormveil_decide(Decision::Skip)};
+            for player in if host_first {[1,2]}else{[2,1]} {
+                let mut dialogue_open=player==1;let mut closed=false;
+                let mut next=super::prepare_regional_decision(&run,decide,||{dialogue_open=false;closed=true;Ok(())}).unwrap();
+                assert!(closed&&!dialogue_open,"authoritative skip must close local NPC menus");
+                next.leave_regional_event().unwrap();assert_eq!(next.phase,Phase::Map);assert_eq!(next.gold,run.gold+800);
+                assert!(super::prepare_regional_decision(&next,decide,||Ok(())).is_err());
+            }
+            let before=run.clone();
+            assert!(super::prepare_regional_decision(&run,decide,||Err("close failed".into())).is_err());
+            assert_eq!(run.gold,before.gold);assert_eq!(run.phase,before.phase);
+        }}
+    }
     fn ui_view()->super::View {
         super::View{shared_event:false,ballots:vec![],run:Some(erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai)),
             status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![]}

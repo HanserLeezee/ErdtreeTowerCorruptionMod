@@ -18,6 +18,7 @@ static class PartyPlacement {
         }
         int expected=684;
         var dlc=Path.Combine(directory,"party-dlc-slots.tsv");if(File.Exists(dlc))expected+=File.ReadAllLines(dlc).Length;
+        var extra=Path.Combine(directory,"party-extra-slots.tsv");if(File.Exists(extra))expected+=File.ReadAllLines(extra).Length;
         if(combat!=expected)throw new Exception($"Expected {expected} combat characters, found {combat}");
         Console.WriteLine($"Verified visibility masks for {count} cross-map characters ({combat} combat, {count-combat} baked services)");
     }

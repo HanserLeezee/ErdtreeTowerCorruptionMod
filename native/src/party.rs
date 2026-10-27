@@ -330,7 +330,8 @@ impl Link {
     }
     fn finish_poll(&mut self,run:Option<&Run>,alive:bool,at_hub:bool,rest_end:bool,mut orders:Vec<Order>)->Vec<Order> {
         if let Some(error)=&self.stopped{return vec![Order::Stop(error.clone())];}
-        self.drawing.set_scope(run.map(erdtree_tower::map_drawing::Scope::of));
+        // None also means the player is unloading during a warp; runtime::sync_map owns clearing the journey.
+        if let Some(run)=run {self.drawing.set_scope(Some(erdtree_tower::map_drawing::Scope::of(run)));}
         if self.last_report.elapsed()>=Duration::from_millis(200) {
             self.last_report=Instant::now();
             if let Some(run)=run {
@@ -467,6 +468,32 @@ mod tests {
         let payload=erdtree_tower::party_handshake::Payload::Order{session:17,order};
         assert!(steam_event(&guest.config,3,payload.clone()).is_err());
         assert!(matches!(steam_event(&guest.config,1,payload).unwrap(),Some(Receive::Order(Order::MapDrawing(_)))));
+    }
+    #[test]
+    fn map_ink_and_pending_guest_edits_survive_loading_and_next_node() {
+        use erdtree_tower::map_drawing::*;
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        let mut authority=Sync::default();authority.set_scope(Some(Scope::of(&run)));
+        assert!(authority.submit(1,Edit::Add(vec![Point{x:100,y:100},Point{x:9000,y:9000}]),true));
+        for player in [1,2] {
+            let (mut link,_events,_commands)=test_link(player);
+            link.drawing.set_scope(Some(Scope::of(&run)));
+            assert!(link.drawing.receive(authority.canvas.clone().unwrap(),player));
+            if player==2 {assert!(link.drawing.submit(player,Edit::Add(vec![Point{x:200,y:100},Point{x:8000,y:9000}]),false));}
+            let canvas=link.drawing.canvas.clone();let pending=link.drawing.request();
+            for _ in 0..3 {
+                link.poll(None,false,false,false);
+                assert_eq!(link.drawing.canvas,canvas,"loading must not erase shared ink");
+                assert_eq!(link.drawing.request(),pending,"loading must preserve unacknowledged edits");
+                link.drawing.set_scope(Some(Scope::of(&run)));
+            }
+            let mut next=run.clone();let id=next.available()[0];next.enter(id).unwrap();
+            link.poll(Some(&next),true,false,false);
+            assert_eq!(link.drawing.canvas,canvas);assert_eq!(link.drawing.request(),pending);
+            next.act=2;link.poll(Some(&next),true,false,false);
+            assert!(link.drawing.canvas.as_ref().unwrap().strokes.is_empty());assert!(link.drawing.request().is_none());
+            link.drawing.set_scope(None);assert!(link.drawing.canvas.is_none());
+        }
     }
     fn test_link(player:u64)->(super::Link,super::SyncSender<super::Receive>,super::Receiver<super::Send>) {
         use super::*;

@@ -1,5 +1,15 @@
 ﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly, [string]$PartyConfig)
 $ErrorActionPreference = 'Stop'
+function Set-TowerSpectatorMode([string]$Settings) {
+    $pattern = '(?m)^[ \t]*always_spectate_on_death[ \t]*=[^\r\n]*'
+    if ([regex]::IsMatch($Settings,$pattern)) {
+        return [regex]::Replace($Settings,$pattern,'always_spectate_on_death = 1')
+    }
+    $section = [regex]'(?m)^\[GAMEPLAY\][ \t]*(\r?\n|$)'
+    if (!$section.IsMatch($Settings)) {throw 'Missing GAMEPLAY section for spectator mode.'}
+    $newline = if ($Settings.Contains("`r`n")) {"`r`n"} else {"`n"}
+    return $section.Replace($Settings,('[GAMEPLAY]'+$newline+'always_spectate_on_death = 1'+$newline),1)
+}
 $base = & (Join-Path $PSScriptRoot 'Launch-Preview.ps1') -GameDir $GameDir -CheckOnly
 $root = $base.PackageDirectory
 if ($PartyConfig) {
@@ -23,6 +33,7 @@ if ([regex]::Matches($settings,'(?m)^save_file_extension\s*=.*$').Count -ne 1) {
 $saveExtension = if ($PartyConfig) {'ertowerparty'} else {'ertowercoop'}
 $modified = [regex]::Replace($settings,'(?m)^save_file_extension\s*=.*$',('save_file_extension = '+$saveExtension))
 $modified = [regex]::Replace($modified,'(?m)^allow_invaders\s*=.*$','allow_invaders = 0')
+$modified = Set-TowerSpectatorMode $modified
 if ($CheckOnly) {[pscustomobject]@{Entry=$launcher;SaveExtension=$saveExtension;Assets= (Join-Path $root 'scene-assets');MultiplayerVerified=$false};return}
 if (Get-Process eldenring,ersc_launcher -ErrorAction SilentlyContinue) {throw 'Exit the game and Seamless launcher first.'}
 $native = $base.DllPath

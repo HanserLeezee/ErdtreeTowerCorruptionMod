@@ -14,7 +14,7 @@ static class PartyDlcAssets {
             if(!files.TryGetValue(hash,out var file))continue;
             foreach(var part in MSBE.Read(file.ReadFile(data)).Parts.Enemies) {
                 if(part.ModelName?.StartsWith("c")!=true||!int.TryParse(part.ModelName[1..],out var model)||!models.Contains(model)||found.ContainsKey(model))continue;
-                found.Add(model,part);Console.WriteLine($"DLC template c{model:D4}: {path}/{part.Name}");
+                found.Add(model,part);Console.WriteLine($"DLC template c{model:D4}: {path}/{part.Name} npc={part.NPCParamID} think={part.ThinkParamID}");
             }
             if(found.Count==models.Count)break;
         }
@@ -25,7 +25,6 @@ static class PartyDlcAssets {
     public static void Build(string game,string input,string output) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging required");
         var enemies=File.ReadAllLines(Path.Combine(input,"enemy-pools.txt")).Select(l=>l.Split('|')).Where(p=>p.Length>5&&p[5]=="dlc").Select(p=>new Enemy(int.Parse(p[0]),int.Parse(p[2]),900000000+int.Parse(p[2])*10000,int.Parse(p[2])*10000)).OrderBy(e=>e.Act).ThenBy(e=>e.Npc).ToArray();
-        if(enemies.Length!=12)throw new Exception("Unexpected DLC pool");
         var templates=Templates(game,enemies.Select(e=>e.Model).ToHashSet());
         var maps=new Dictionary<int,MSBE>();var scripts=new Dictionary<int,EMEVD>();
         for(int act=1;act<=3;act++){string map=$"m45_0{3-act}_00_00";maps[act]=MSBE.Read(Path.Combine(input,"map/mapstudio",map+".msb.dcx"));scripts[act]=EMEVD.Read(Path.Combine(input,"event",map+".emevd.dcx"));}
@@ -33,7 +32,8 @@ static class PartyDlcAssets {
         var oldEvents=scripts.ToDictionary(p=>p.Key,p=>EMEVD.Read(p.Value.Write()).Events.ToDictionary(e=>e.ID));
         var newParts=new Dictionary<int,List<MSBE.Part.Enemy>>();var newModels=new Dictionary<int,List<MSBE.Model.Enemy>>();var newEvents=new Dictionary<int,List<long>>();var initCounts=new Dictionary<int,int>();
         for(int act=1;act<=3;act++){newParts[act]=new();newModels[act]=new();newEvents[act]=new();initCounts[act]=0;}
-        var manifest=new List<string>();
+        var manifest=File.Exists(Path.Combine(input,"party-dlc-slots.tsv"))?File.ReadAllLines(Path.Combine(input,"party-dlc-slots.tsv")).ToList():new List<string>();
+        var extra=new List<string>();
         void Add(Enemy enemy,uint id,int act,bool guard,MSBE.Part.Enemy template) {
             var map=maps[act];var events=scripts[act];var init=events.Events.Single(e=>e.ID==0);
             if(map.Parts.GetEntries().Any(p=>p.EntityID==id))throw new Exception($"Entity already exists: {id}");
@@ -58,11 +58,31 @@ static class PartyDlcAssets {
         }
         for(int act=1;act<=3;act++) {
             uint first=(uint)(48000000+act*10000);var existing=maps[act].Parts.Enemies.Where(p=>p.EntityID>=first&&p.EntityID<first+300).ToArray();
-            int ordinal=existing.Length;if(ordinal!=new[]{282,242,160}[act-1])throw new Exception("Unexpected existing combat slot layout");
-            foreach(var enemy in enemies.Where(e=>e.Act==act))for(int copy=0;copy<4;copy++) {
+            int ordinal=existing.Length;
+            if(!existing.Select(p=>p.EntityID).Order().SequenceEqual(Enumerable.Range(0,ordinal).Select(i=>first+(uint)i)))throw new Exception("Noncontiguous combat slot layout");
+            foreach(var enemy in enemies.Where(e=>e.Act==act)) {
+                var placed=existing.Where(p=>p.NPCParamID==enemy.Npc).ToArray();
+                if(placed.Length>0) {
+                    if(placed.Length!=4||placed.Any(p=>p.ModelName!=$"c{enemy.Model:D4}"||p.ThinkParamID!=enemy.Think)||manifest.Count(l=>l.StartsWith($"{act}|{enemy.Npc}|"))!=4)throw new Exception("Incomplete existing DLC slots");
+                    continue;
+                }
+                for(int copy=0;copy<4;copy++) {
                 uint id=first+(uint)ordinal++;if(ordinal>300)throw new Exception("Party flag capacity exceeded");
                 Add(enemy,id,act,false,templates[enemy.Model]);Add(enemy,id+3000000,2,true,templates[enemy.Model]);
                 manifest.Add($"{act}|{enemy.Npc}|{enemy.Model}|{enemy.Think}|{copy}|{id}|{id+3000000}");
+                }
+            }
+            if(act==3) {
+                var beast=BossAssets.Parts(input).Single(b=>b.Name=="坠星成兽");
+                var enemy=new Enemy(3,beast.Model,BossAssets.Npc(beast,true),beast.Think);
+                var placed=existing.SingleOrDefault(p=>p.NPCParamID==enemy.Npc);
+                uint id=placed?.EntityID??first+(uint)ordinal++;
+                if(ordinal>300)throw new Exception("Party flag capacity exceeded");
+                if(placed==null) {
+                    var template=maps[beast.Act].Parts.Enemies.First(p=>p.NPCParamID==enemy.Npc);
+                    Add(enemy,id,3,false,template);Add(enemy,id+3000000,2,true,template);
+                }
+                extra.Add($"3|{enemy.Npc}|{enemy.Model}|{enemy.Think}|0|{id}|{id+3000000}");
             }
         }
         Directory.CreateDirectory(Path.Combine(output,"map/mapstudio"));Directory.CreateDirectory(Path.Combine(output,"event"));
@@ -84,6 +104,7 @@ static class PartyDlcAssets {
             foreach(var ev in check.Events)if(!Same(ev,oldEvents[act][ev.ID]))throw new Exception("Unrelated event changed");
         }
         File.WriteAllLines(Path.Combine(output,"party-dlc-slots.tsv"),manifest);
-        PartyGuardAssets.Verify(output);Console.WriteLine("Verified 48 DLC combat slots and 48 guard slots; all existing placements and events preserved");
+        File.WriteAllLines(Path.Combine(output,"party-extra-slots.tsv"),extra);
+        PartyGuardAssets.Verify(output);Console.WriteLine($"Verified {manifest.Count} DLC and {extra.Count} relocated elite slots plus matching guards; all existing placements and events preserved");
     }
 }
