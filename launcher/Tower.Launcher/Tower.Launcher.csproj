@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 黄金树爬塔启动器：.NET Framework 4.8（Windows 10/11 自带）+ WebView2，界面在 launcher/ui 目录（静态 HTML）。
+       发布布局：exe 与 exe.config 放在模组根目录，其余依赖库放 launcher/（App.config 里的 probing 指过去），见 distribution/package.py -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ErdtreeTowerLauncher</AssemblyName>
+    <RootNamespace>Tower.Launcher</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>tower.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Product>黄金树爬塔启动器</Product>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Tower.Update/Tower.Update.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../ui/**" LinkBase="launcher/ui" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../sources.json" Link="launcher/sources.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

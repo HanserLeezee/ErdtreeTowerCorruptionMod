@@ -2,9 +2,15 @@ param(
     [ValidateSet('Solo', 'Seamless')][string]$Mode = 'Solo',
     [string]$GameDir,
     [switch]$CheckOnly,
-    [string]$PartyConfig
+    [string]$PartyConfig,
+    # Launcher use: write the failure message here so it can be shown without a console window
+    [string]$ErrorFile
 )
 $ErrorActionPreference = 'Stop'
+trap {
+    if ($ErrorFile) { [IO.File]::WriteAllText($ErrorFile, $_.Exception.Message, (New-Object Text.UTF8Encoding($false))) }
+    break
+}
 $pathFile = Join-Path $PSScriptRoot 'GamePath.txt'
 if (-not $GameDir -and (Test-Path -LiteralPath $pathFile)) {
     $GameDir = [IO.File]::ReadAllText($pathFile).Trim()

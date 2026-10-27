@@ -1,0 +1,356 @@
+/* ============================================================
+   外围框架
+   对齐官方 DOM 结构：
+     #root > .app-container > .main-container
+       ├─ section.app-container   页面区
+       └─ aside.app-sidebar       侧栏
+            └─ .hyp-side-bar       （宽 68，左侧，带垂直渐变遮罩）
+     div#hyp-drag-header          顶栏拖拽区
+     .op-social / .hyp-game-social-media  右侧社交栏
+   ============================================================ */
+
+/* ---------------- 背景层 ---------------- */
+.bg {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-bg);
+  overflow: hidden;
+  background: #06090f;
+}
+
+.bg-art,
+.bg-title {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;            /* 官方是精确铺满，不是 cover */
+  transition: opacity 420ms var(--ease);
+}
+
+/* 版本标题 / 游戏 logo 叠层，透明通道原图直接铺满即可对齐 */
+.bg-title {
+  pointer-events: none;
+}
+
+/* 背景暗化遮罩（官方各页面实测值不同，见 --bg-dim） */
+.bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, var(--bg-dim));
+  pointer-events: none;
+  transition: background 300ms var(--ease);
+}
+
+/* 底部渐变暗化（官方逐行拟合出的曲线，见 tokens.css 的 --bg-scrim） */
+.bg-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-scrim);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 300ms var(--ease);
+}
+
+.bg-scrim.off {
+  opacity: 0;
+}
+
+/* 暗角遮罩：对官方渲染逐区域解 k=<素材·官方>/<素材·素材> 拟合出的二维暗化场，
+   导出为等尺寸 PNG（纯黑 + alpha=1-k）。它已包含底部渐变，
+   与 .bg-scrim 二选一，不要同时开。 */
+.bg-vignette {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  transition: opacity 300ms var(--ease);
+}
+
+.bg-vignette.off {
+  opacity: 0;
+}
+
+.bg-fading .bg-art,
+.bg-fading .bg-title {
+  opacity: 0;
+}
+
+/* ---------------- 左侧侧栏（官方 .hyp-side-bar）----------------
+   width:68px; padding-bottom:26px;
+   background: linear-gradient(180.51deg, rgba(0,0,0,.18), rgba(0,0,0,.36));
+   border-right: 1px solid rgba(0,0,0,.16);
+   顶部放 .logo（44x44），底部放游戏图标列表 + 分隔线 + 添加游戏按钮。 */
+.sidebar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--sidebar-w);
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--sidebar-pad-bottom);
+  background: var(--sidebar-bg);
+  border-right: var(--sidebar-border);
+  z-index: var(--z-sidebar);
+}
+
+/* 官方 .hyp-side-bar__top { padding:12px }，.logo 位于 (11.5,12) 44x44 */
+.sidebar__top {
+  width: 100%;
+  height: 68px;
+  position: relative;
+}
+
+.sidebar__top .logo {
+  position: absolute;
+  left: var(--sb-logo-x);
+  top: var(--sb-logo-y);
+  width: var(--sb-logo-size);
+  height: var(--sb-logo-size);
+}
+
+.sidebar__top .logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* 官方 .hyp-side-bar__bottom 在底部，内容自下而上：添加按钮 / 分隔线 / 游戏图标 */
+.sidebar__bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 官方 .hyp-game-icon { 36x36; radius 8 } */
+.sidebar__games {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--sb-icon);
+}
+
+.sidebar__games > * {
+  margin-bottom: var(--sb-icon-gap);
+}
+
+/* 官方实测 .hyp-side-bar__bottom 高 109 = 图标36 + 18 + 线1 + 18 + 按钮36，
+   最后一个图标不带下边距，否则整块会高 20px、整体上移 */
+.sidebar__games > *:last-child {
+  margin-bottom: 0;
+}
+
+.game-icon {
+  position: relative;
+  width: var(--sb-icon);
+  height: var(--sb-icon);
+  cursor: pointer;
+}
+
+.game-icon__img {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--sb-icon-radius);
+  overflow: hidden;
+  position: relative;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+  transition: transform var(--dur) var(--ease);
+}
+
+.game-icon__img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 官方 .hyp-game-icon .border { 48x48; border:2px solid rgba(255,255,255,.48); radius:12px;
+        left/top:-6px; transition: border-color .2s cubic-bezier(0,.5,.5,1) }
+        .border.hover { border-color: Divider-Secondary }
+    注意：实测官方未 hover 的图标上【看不到】这圈描边（该行最大亮度仅 76，
+    而 48% 白边应达 ~138），所以这里是 hover 才显示，不要绑到选中态。 */
+.game-icon .border {
+  position: absolute;
+  left: var(--sb-icon-ring-offset);
+  top: var(--sb-icon-ring-offset);
+  width: var(--sb-icon-ring);
+  height: var(--sb-icon-ring);
+  box-sizing: border-box;
+  border: 2px solid rgba(255, 255, 255, 0.48);
+  border-radius: 12px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  z-index: 2;
+}
+
+.game-icon:hover .border {
+  opacity: 1;
+  border-color: var(--c-divider);
+}
+
+.game-icon:hover .game-icon__img {
+  transform: scale(1.04);
+}
+
+/* 官方 .hyp-game-icon__container .overlay { background:rgba(13,13,15,.6); z-index:1 }
+   黄底圆形下载角标：图标右上角 */
+.game-icon__badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--brand);
+  display: grid;
+  place-items: center;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.game-icon__badge svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* 官方 .overlay { font-size:10px; font-weight:700; line-height:36px; color: Brand-Primary }
+   下载中/更新中盖在图标上的深色蒙层 */
+.game-icon__overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--sb-icon-radius);
+  background: rgba(13, 13, 15, 0.6);
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: var(--sb-icon);
+  text-align: center;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.game-icon__overlay.visible {
+  opacity: 1;
+}
+
+/* ---------------- 顶栏拖拽区（官方 #hyp-drag-header）---------------- */
+.topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--drag-w);
+  height: var(--drag-h);
+  z-index: var(--z-topbar);
+}
+
+/* 窗口控制按钮：圆心 x = 1162 / 1206 / 1250，y = 24；图标用 1:1 抠图原尺寸显示 */
+.winctl {
+  position: absolute;
+  top: calc(var(--winctl-y) - 12px);
+  right: calc(var(--win-w) - var(--winctl-close-x) - 12px);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--winctl-min-x) - var(--winctl-settings-x) - var(--winctl-size));
+  z-index: var(--z-topbar);
+}
+
+.winctl button {
+  width: var(--winctl-size);
+  height: var(--winctl-size);
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.winctl button img {
+  width: auto;
+  height: auto;
+  display: block;
+}
+
+.winctl button:hover {
+  transform: scale(1.14);
+}
+
+/* ---------------- 右侧社交栏（官方 .hyp-game-social-media）----------------
+   容器 x=1228 宽 44；每项 44x44，pitch 56；图标 36x36 内缩 4px；首项 y=64 */
+.social {
+  position: absolute;
+  left: var(--social-x);
+  top: var(--social-first-y);
+  width: var(--social-item);
+  display: flex;
+  flex-direction: column;
+  gap: var(--social-gap);
+  z-index: var(--z-social);
+}
+
+.social-item {
+  position: relative;
+  width: var(--social-item);
+  height: var(--social-item);
+  display: grid;
+  place-items: center;
+  border-radius: var(--social-radius);
+  transition: background var(--dur) var(--ease);
+}
+
+.social-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.social-item img {
+  width: var(--social-icon);
+  height: var(--social-icon);
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.social-item .badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-badge);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------------- 页面容器 ---------------- */
+#view {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-page);
+}
+
+.page {
+  position: absolute;
+  inset: 0;
+}
+
+.page-enter {
+  animation: page-in 260ms var(--ease);
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -19,6 +19,8 @@ The loader binaries are the unmodified official Mod Engine 3 v0.13.0 Windows dis
 Its bundled MIT and Apache notices remain in `loader/LICENSE-MIT` and `loader/LICENSE-APACHE`.
 Source: https://github.com/garyttierney/me3/releases/tag/v0.13.0
 
+The launcher (`ErdtreeTowerLauncher.exe`, `launcher/`) uses the hyp-launcher-ui page shell (MIT, `licenses/hyp-launcher-ui-MIT.txt`), the Microsoft Edge WebView2 SDK 1.0.2903.40 (BSD-style license and notices in `licenses/WebView2-SDK-LICENSE.txt` and `licenses/WebView2-SDK-NOTICE.txt`), and System.Text.Json 8.0.5 with its .NET support libraries (MIT, `licenses/dotnet-libraries-MIT.txt`, notices in `licenses/dotnet-libraries-THIRD-PARTY-NOTICES.txt`). The WebView2 runtime itself is not bundled; it is part of Windows 11 and installed separately on Windows 10.
+
 The scene-assets folder contains modified base-game regulation, map placement, event, talk-binder and localized text data. Models, textures, animations, game executables and player save files are not bundled; those resources are resolved from the user's installed game.
 The development-only scene builder uses SoulsFormats and UXM source checkouts; those tools and their extracted source-map cache are not included in the playable ZIP.
 ESD command IDs and bytecode format were checked against the esdlang documentation/source and the user's installed merchant ESD. The preview does not link or bundle esdlang.

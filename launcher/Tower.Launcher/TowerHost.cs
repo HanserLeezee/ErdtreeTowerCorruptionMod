@@ -1,0 +1,597 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Microsoft.Win32;
+using Tower.Update;
+
+namespace Tower.Launcher
+{
+    /// <summary>
+    /// 页面指令的实现：安装/更新（Tower.Update，只下载内容有变化的文件）、启动游戏（Start-Tower.ps1）、设置与本地功能。
+    /// 页面里只有一个“游戏”：tower，也就是启动器所在文件夹里的模组。除下载线程报进度外，都在界面线程上运行。
+    /// </summary>
+    sealed class TowerHost : IDisposable
+    {
+        const string Game = "tower";
+        const string Repo = "https://github.com/tamikip/erdtree-tower";
+
+        readonly LauncherPaths paths;
+        readonly MainForm form;
+        readonly HostSettings settings;
+        readonly HttpClient http;
+        readonly string? mirror;
+        MultiSource source;
+
+        ReleaseManifest? latest;
+        string updateStatus = "尚未检查";
+        bool checking, launching;
+        CancellationTokenSource? running;
+        bool pausing, lastVerify;
+        /// <summary>这一轮下载（含暂停后继续、失败后重试）的总字节数：已经下好的部分算作完成，进度不会倒退</summary>
+        long sessionTotal = -1;
+        volatile bool installing;
+        /// <summary>界面文件更新后会重新加载页面，完成提示留到页面重新就绪时再显示</summary>
+        (string text, int? ms)? pendingToast;
+
+        public bool Installing => installing;
+
+        public TowerHost(LauncherPaths paths, MainForm form)
+        {
+            this.paths = paths;
+            this.form = form;
+            settings = HostSettings.Load(paths.SettingsFile);
+            // 跳转由 HttpReleaseSource 自己跟，保证每一跳都带 Range
+            http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd($"ErdtreeTowerLauncher/{typeof(TowerHost).Assembly.GetName().Version}");
+            mirror = ReadMirror(paths.SourcesFile);
+            source = CreateSource();
+        }
+
+        /// <summary>
+        /// 下载线路：国内镜像（launcher/sources.json 配了才有）与 GitHub Release，按设置决定谁优先，另一条兜底。
+        /// 环境变量 ERDTREE_TOWER_UPDATE_SOURCE 可改成只用某个网址或本地目录（发版前自测用）。
+        /// </summary>
+        MultiSource CreateSource()
+        {
+            var custom = Environment.GetEnvironmentVariable("ERDTREE_TOWER_UPDATE_SOURCE");
+            if (!string.IsNullOrWhiteSpace(custom))
+            {
+                Log.Write("更新源：" + custom);
+                IReleaseSource only = Directory.Exists(custom) ? new DirectoryReleaseSource(custom!) : new HttpReleaseSource(http, custom!);
+                return new MultiSource(new[] { new KeyValuePair<string, IReleaseSource>("自定义", only) });
+            }
+            var lines = new List<KeyValuePair<string, IReleaseSource>> { new KeyValuePair<string, IReleaseSource>("GitHub", HttpReleaseSource.GitHub(http, "tamikip", "erdtree-tower")) };
+            if (mirror != null)
+                lines.Insert(settings.Route == HostSettings.GitHubFirst ? 1 : 0, new KeyValuePair<string, IReleaseSource>("国内镜像", new HttpReleaseSource(http, mirror)));
+            return new MultiSource(lines);
+        }
+
+        /// <summary>sources.json 里的国内镜像地址，只接受 https；没配或写错返回 null（只用 GitHub）</summary>
+        static string? ReadMirror(string file)
+        {
+            try
+            {
+                if (!File.Exists(file)) return null;
+                using var document = JsonDocument.Parse(File.ReadAllText(file));
+                var url = Text(document.RootElement, "mirror").Trim();
+                if (url.Length == 0) return null;
+                if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps) return url;
+                Log.Write("sources.json 的镜像地址不是 https 网址，已忽略：" + url);
+            }
+            catch (Exception e) when (e is IOException || e is JsonException || e is UnauthorizedAccessException) { Log.Write("读取 sources.json 失败：" + e.Message); }
+            return null;
+        }
+
+        public void Dispose()
+        {
+            running?.Cancel();
+            http.Dispose();
+        }
+
+        // ---------------- 页面 → 宿主 ----------------
+
+        public void Handle(string json)
+        {
+            string type, action;
+            JsonElement payload;
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                type = Text(root, "type");
+                action = Text(root, "action");
+                payload = root.ValueKind == JsonValueKind.Object && root.TryGetProperty("payload", out var p) ? p.Clone() : default;
+            }
+            catch (JsonException) { return; }
+            try { Dispatch(type, action, payload); }
+            catch (Exception e)
+            {
+                Log.Write($"处理 {type}.{action} 出错：{e}");
+                Toast("出错了：" + e.Message, "error", 6000);
+            }
+        }
+
+        void Dispatch(string type, string action, JsonElement payload)
+        {
+            switch (type + "." + action)
+            {
+                case "window.minimize": form.WindowState = FormWindowState.Minimized; break;
+                case "window.close": case "app.quit": form.Close(); break;
+                case "window.startDrag": form.StartDrag(); break;
+                case "app.queryHost": form.Post("app", "hostTakeover", new { download = true }); break;
+                case "app.checkUpdate": _ = CheckAsync(true); break;
+                case "game.queryStatus": PushStatus(); break;
+                case "game.download": _ = UpdateAsync(false); break;
+                case "game.resume": _ = UpdateAsync(lastVerify); break;
+                case "game.pause": Stop(true); break;
+                case "game.cancel": Stop(false); break;
+                case "game.launch": _ = LaunchAsync(); break;
+                case "game.locate": OpenFolder(paths.InstallDir); break;
+                case "settings.change":
+                    Change(Text(payload, "key"), payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("value", out var value) ? value : default);
+                    break;
+                case "settings.action": Run(Text(payload, "name")); break;
+                case "shell.openExternal": OpenUrl(Text(payload, "url")); break;
+            }
+        }
+
+        static string Text(JsonElement element, string name) =>
+            element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+
+        void Change(string key, JsonElement value)
+        {
+            switch (key)
+            {
+                case "mode": settings.Mode = value.ValueKind == JsonValueKind.String && value.GetString() == "无缝联机" ? HostSettings.Seamless : HostSettings.Solo; break;
+                case "autoCheck": settings.AutoCheck = value.ValueKind == JsonValueKind.True; break;
+                case "closeExit": settings.CloseExit = value.ValueKind == JsonValueKind.True; break;
+                case "route":
+                    settings.Route = value.ValueKind == JsonValueKind.String && value.GetString() == "GitHub" ? HostSettings.GitHubFirst : HostSettings.MirrorFirst;
+                    source = CreateSource();
+                    break;
+                default: return;
+            }
+            settings.Save(paths.SettingsFile);
+        }
+
+        void Run(string name)
+        {
+            switch (name)
+            {
+                case "checkUpdate": _ = CheckAsync(true); break;
+                case "verify": _ = UpdateAsync(true); break;
+                case "chooseGameDir": ChooseGameDir(); break;
+                case "openGuide": OpenDocument(Path.Combine(paths.InstallDir, "安装教程.txt"), Repo + "#readme"); break;
+                case "openLicenses": OpenDocument(Path.Combine(paths.InstallDir, "THIRD_PARTY_NOTICES.md"), Repo + "/tree/main/licenses"); break;
+                case "openLogs": OpenLogs(); break;
+            }
+        }
+
+        // ---------------- 宿主 → 页面 ----------------
+
+        public void PageReady()
+        {
+            form.Post("app", "hostTakeover", new { download = true });
+            PushStatus();
+            if (pendingToast is { } toast) { pendingToast = null; Toast(toast.text, "success", toast.ms); }
+            if (settings.AutoCheck && latest == null) _ = CheckAsync(false);
+        }
+
+        public void Toast(string text, string kind = "info", int? ms = null) => form.Post("app", "toast", new { text, kind, ms });
+
+        void PushStatus()
+        {
+            var state = InstallState.Load(paths.InstallDir);
+            var installed = IsInstalled(state);
+            var updateTo = installed && latest != null && (state == null || latest.Version > state.Version) ? Label(latest.Version) : null;
+            form.Post("game", "status", new { game = Game, installed, version = state == null ? "" : Label(state.Version), updateTo });
+            PushValues(state);
+        }
+
+        void PushValues(InstallState? state)
+        {
+            form.Post("settings", "values", new Dictionary<string, object?>
+            {
+                ["mode"] = settings.Mode == HostSettings.Seamless ? "无缝联机" : "单人",
+                ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : "国内镜像",
+                ["mirrorInfo"] = mirror == null ? "未配置（只从 GitHub 更新）" : new Uri(mirror).Host,
+                ["autoCheck"] = settings.AutoCheck,
+                ["closeExit"] = settings.CloseExit,
+                ["gameDir"] = GameDir() ?? "（未设置：开始游戏时自动查找，找不到再询问）",
+                ["version"] = state != null ? Label(state.Version) : IsInstalled(state) ? "未知（不是通过启动器安装的）" : "未安装",
+                ["updateStatus"] = updateStatus,
+            });
+        }
+
+        /// <summary>「公告」分页换成最新版本的更新说明：每行一条（最多 4 条），点开是这个版本的发布页</summary>
+        void PushNotes(ReleaseManifest release)
+        {
+            var page = $"{Repo}/releases/tag/{Uri.EscapeDataString(release.Tag)}";
+            var lines = release.Notes.Split('\n').Select(l => l.Trim().TrimStart('-', '*', '·', ' ').Trim()).Where(l => l.Length > 0).Take(4).ToList();
+            if (lines.Count == 0) lines.Add($"{Label(release.Version)} 更新说明");
+            var items = lines.Select((line, i) => new { title = line, date = i == 0 ? Label(release.Version) : "", href = page }).ToList();
+            form.Post("game", "news", new { game = Game, tab = "notice", items });
+        }
+
+        void SetStatus(string text)
+        {
+            updateStatus = text;
+            PushValues(InstallState.Load(paths.InstallDir));
+        }
+
+        void Progress(string kind, string phase, double? percent = null, long? total = null, double? speed = null, string? error = null, bool? paused = null)
+        {
+            var payload = new Dictionary<string, object?> { ["game"] = Game, ["kind"] = kind, ["phase"] = phase };
+            if (percent != null) payload["percent"] = Math.Round(Math.Min(100, percent.Value), 1);
+            if (total != null) payload["total"] = total;
+            if (speed != null) payload["speed"] = Math.Round(speed.Value);
+            if (error != null) payload["error"] = error;
+            if (paused != null) payload["paused"] = paused;
+            form.Post("game", "progress", payload);
+        }
+
+        bool IsInstalled(InstallState? state) => state != null || File.Exists(Path.Combine(paths.InstallDir, "Start-Tower.ps1"));
+
+        static string Label(int version) => "v" + version;
+
+        // ---------------- 检查与安装更新 ----------------
+
+        async Task CheckAsync(bool user)
+        {
+            if (checking) return;
+            checking = true;
+            SetStatus("正在检查…");
+            try
+            {
+                var lines = source;
+                latest = await lines.LatestAsync(CancellationToken.None);
+                var state = InstallState.Load(paths.InstallDir);
+                var newer = state == null || latest.Version > state.Version;
+                SetStatus(newer ? $"发现新版本 {Label(latest.Version)}（{lines.Chosen}）" : $"已是最新版本（{Label(latest.Version)} · {lines.Chosen}）");
+                PushNotes(latest);
+                PushStatus();
+                if (newer && IsInstalled(state)) Toast($"发现新版本 {Label(latest.Version)}：点「立即更新」，只下载有变化的文件", "info", 6000);
+                else if (user && !newer) Toast("已是最新版本", "success");
+            }
+            catch (Exception e)
+            {
+                Log.Write("检查更新失败：" + e);
+                SetStatus("检查失败：" + Describe(e));
+                if (user) Toast("检查更新失败：" + Describe(e), "error", 6000);
+            }
+            finally { checking = false; }
+        }
+
+        /// <summary>
+        /// 安装、更新、校验修复都是同一件事：拿最新清单和本地文件逐个比哈希，只下载缺的和不一样的。
+        /// verify 时不信任哈希缓存，每个文件都重算。暂停/取消即取消下载，已经下好并校验过的数据留在暂存区，继续时跳过。
+        /// </summary>
+        async Task UpdateAsync(bool verify)
+        {
+            if (running != null) return;
+            var kind = IsInstalled(InstallState.Load(paths.InstallDir)) ? "update" : "install";
+            if (GameRunning())
+            {
+                Progress(kind, "failed", error: "请先退出艾尔登法环再更新（游戏正在使用模组文件）");
+                return;
+            }
+            var cancel = new CancellationTokenSource();
+            running = cancel;
+            pausing = false;
+            lastVerify = verify;
+            try
+            {
+                Progress(kind, "verifying");
+                // 这一轮固定用同一组线路：中途改设置不影响正在进行的下载
+                var lines = source;
+                var target = await lines.LatestAsync(cancel.Token);
+                latest = target;
+                var plan = await Task.Run(() =>
+                {
+                    var cache = HashCache.Load(paths.InstallDir);
+                    if (verify) cache.Clear();
+                    return Planner.Plan(paths.InstallDir, target, cache);
+                }, cancel.Token);
+                cancel.Token.ThrowIfCancellationRequested();
+                if (plan.UpToDate)
+                {
+                    sessionTotal = -1;
+                    Progress(kind, "finished");
+                    SetStatus($"已是最新版本（{Label(target.Version)} · {lines.Chosen}）");
+                    PushStatus();
+                    Toast(verify ? "校验完成：文件都完整" : "已是最新版本", "success");
+                    return;
+                }
+                if (sessionTotal < plan.DownloadBytes) sessionTotal = plan.DownloadBytes;
+                var reporter = new Reporter(this, kind, sessionTotal - plan.DownloadBytes, sessionTotal, cancel.Token);
+                Log.Write($"{(verify ? "校验" : "更新")}到 {Label(target.Version)}（{lines.Chosen}）：写入 {plan.Writes.Count} 个文件，删除 {plan.Deletes.Count} 个，下载 {Size(plan.DownloadBytes)}");
+                await Task.Run(() => new Updater(paths.InstallDir, lines).ApplyAsync(plan, reporter, cancel.Token), cancel.Token);
+                sessionTotal = -1;
+                Progress(kind, "finished", 100);
+                SetStatus($"已是最新版本（{Label(target.Version)} · {lines.Chosen}）");
+                PushStatus();
+                Finished(plan, kind, verify);
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+            {
+                if (pausing) Progress(kind, "paused", paused: true);
+            }
+            catch (Exception e)
+            {
+                Log.Write("更新失败：" + e);
+                Progress(kind, "failed", error: Describe(e));
+            }
+            finally
+            {
+                installing = false;
+                running = null;
+                cancel.Dispose();
+            }
+        }
+
+        void Finished(UpdatePlan plan, string kind, bool verify)
+        {
+            var version = Label(plan.Target.Version);
+            var text = verify ? $"校验完成：修复了 {plan.Writes.Count} 个文件（下载 {Size(plan.DownloadBytes)}）"
+                : kind == "install" ? $"安装完成：{version}"
+                : $"已更新到 {version}，只下载了 {Size(plan.DownloadBytes)}";
+            var restart = plan.Writes.Any(w => LauncherPaths.IsLauncherBinary(w.Path));
+            if (restart) text += "。启动器本身也更新了，关掉重新打开后生效";
+            int? ms = restart ? 0 : 6000;
+            if (plan.Writes.Any(w => LauncherPaths.IsLauncherUi(w.Path)))
+            {
+                // 界面文件换了：重新加载页面，提示等页面就绪后再显示
+                pendingToast = (text, ms);
+                _ = ReloadSoonAsync();
+                return;
+            }
+            Toast(text, "success", ms);
+        }
+
+        async Task ReloadSoonAsync()
+        {
+            await Task.Delay(1200);
+            form.ReloadPage();
+        }
+
+        void Stop(bool pause)
+        {
+            if (!pause) sessionTotal = -1;
+            if (running == null) return;
+            pausing = pause;
+            running.Cancel();
+        }
+
+        /// <summary>下载线程报来的进度：换算成这一轮的总进度和平滑后的速度再推给页面</summary>
+        sealed class Reporter : IProgress<UpdateProgress>
+        {
+            readonly TowerHost host;
+            readonly string kind;
+            readonly long already, total;
+            readonly CancellationToken cancel;
+            readonly Stopwatch clock = Stopwatch.StartNew();
+            readonly object gate = new object();
+            long lastBytes;
+            double lastTime, speed;
+
+            public Reporter(TowerHost host, string kind, long already, long total, CancellationToken cancel)
+            {
+                this.host = host; this.kind = kind; this.already = already; this.total = total; this.cancel = cancel;
+            }
+
+            public void Report(UpdateProgress value)
+            {
+                if (cancel.IsCancellationRequested) return;
+                if (value.Phase == UpdatePhase.Installing)
+                {
+                    host.installing = true;
+                    host.Progress(kind, "installing", 100);
+                    return;
+                }
+                if (value.Phase != UpdatePhase.Downloading) return;
+                double rate;
+                lock (gate)
+                {
+                    var now = clock.Elapsed.TotalSeconds;
+                    if (value.DoneBytes > lastBytes && now - lastTime >= 0.3)
+                    {
+                        var instant = (value.DoneBytes - lastBytes) / (now - lastTime);
+                        speed = speed == 0 ? instant : speed * 0.6 + instant * 0.4;
+                        lastBytes = value.DoneBytes;
+                        lastTime = now;
+                    }
+                    rate = speed;
+                }
+                var done = already + value.DoneBytes;
+                host.Progress(kind, "downloading", total == 0 ? 100 : done * 100.0 / total, total, rate);
+            }
+        }
+
+        static bool GameRunning()
+        {
+            var processes = Process.GetProcessesByName("eldenring");
+            foreach (var process in processes) process.Dispose();
+            return processes.Length > 0;
+        }
+
+        // ---------------- 启动游戏 ----------------
+
+        /// <summary>
+        /// 和 Start-Solo.cmd / Start-Seamless.cmd 走同一个 Start-Tower.ps1，只是不开控制台窗口；
+        /// 脚本失败时把原因写进 -ErrorFile，这里读出来提示。
+        /// </summary>
+        async Task LaunchAsync()
+        {
+            if (GameRunning()) { Toast("艾尔登法环已经在运行了", "warn"); return; }
+            if (launching) { Toast("正在启动，请稍候", "info"); return; }
+            if (running != null) { Toast("正在更新，完成后再开始游戏", "warn"); return; }
+            var script = Path.Combine(paths.InstallDir, "Start-Tower.ps1");
+            if (!File.Exists(script)) { Toast("缺少 Start-Tower.ps1：请在设置 → 更新里「校验并修复文件」", "error", 6000); return; }
+            var gameDir = GameDir() ?? FindGameDir() ?? ChooseGameDir();
+            if (gameDir == null) return;
+            launching = true;
+            try
+            {
+                var errorFile = paths.LaunchErrorFile;
+                if (File.Exists(errorFile)) File.Delete(errorFile);
+                var mode = settings.Mode;
+                var arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(script)} -Mode {mode} -GameDir {Quote(gameDir)} -ErrorFile {Quote(errorFile)}";
+                Log.Write("开始游戏：" + arguments);
+                var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+                using var process = Process.Start(new ProcessStartInfo(powershell, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = paths.InstallDir })!;
+                Toast(mode == HostSettings.Seamless ? "正在启动（无缝联机）…" : "正在启动（单人）…", "info", 6000);
+                // 加载器拉起游戏后脚本可能一直等到游戏退出，也可能马上结束：两种情况都只盯「脚本报错」和「游戏起来了」
+                var started = false;
+                for (var waited = 0; !process.HasExited || (!started && process.ExitCode == 0 && waited < 120); waited++)
+                {
+                    await Task.Delay(500);
+                    if (started || !GameRunning()) continue;
+                    started = true;
+                    Log.Write("游戏已启动");
+                    if (settings.CloseExit) { form.Close(); return; }
+                    if (process.HasExited) break;
+                }
+                if (process.ExitCode != 0)
+                {
+                    var reason = File.Exists(errorFile) ? File.ReadAllText(errorFile).Trim() : "";
+                    Log.Write($"启动脚本退出码 {process.ExitCode}：{reason}");
+                    Toast("启动失败：" + (reason.Length > 0 ? reason : $"脚本退出码 {process.ExitCode}，详见启动器日志"), "error", 0);
+                }
+            }
+            catch (Exception e) when (e is IOException || e is Win32Exception || e is UnauthorizedAccessException)
+            {
+                Log.Write("启动失败：" + e);
+                Toast("启动失败：" + e.Message, "error", 0);
+            }
+            finally { launching = false; }
+        }
+
+        static bool HasGame(string dir) => File.Exists(Path.Combine(dir, "eldenring.exe"));
+
+        /// <summary>GamePath.txt 里记住的 Game 目录（和 Start-Tower.ps1 共用），失效了返回 null</summary>
+        string? GameDir()
+        {
+            try
+            {
+                if (!File.Exists(paths.GamePathFile)) return null;
+                var dir = File.ReadAllText(paths.GamePathFile).Trim().Trim('"');
+                return dir.Length > 0 && HasGame(dir) ? dir : null;
+            }
+            catch (IOException) { return null; }
+            catch (ArgumentException) { return null; }
+        }
+
+        void SaveGameDir(string dir)
+        {
+            File.WriteAllText(paths.GamePathFile, dir, new UTF8Encoding(true));
+            PushValues(InstallState.Load(paths.InstallDir));
+        }
+
+        /// <summary>在 Steam 的各个库目录里找艾尔登法环，找到就记下来</summary>
+        string? FindGameDir()
+        {
+            if (!(Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) is string steam) || steam.Length == 0) return null;
+            var libraries = new List<string> { steam };
+            try
+            {
+                var folders = Path.Combine(steam, "steamapps", "libraryfolders.vdf");
+                if (File.Exists(folders))
+                    foreach (Match match in Regex.Matches(File.ReadAllText(folders), "\"path\"\\s+\"([^\"]+)\""))
+                        libraries.Add(match.Groups[1].Value.Replace(@"\\", @"\"));
+            }
+            catch (IOException) { }
+            foreach (var library in libraries)
+            {
+                try
+                {
+                    var dir = Path.GetFullPath(Path.Combine(library, "steamapps", "common", "ELDEN RING", "Game"));
+                    if (!HasGame(dir)) continue;
+                    SaveGameDir(dir);
+                    Toast("已找到游戏目录：" + dir, "success", 5000);
+                    return dir;
+                }
+                catch (ArgumentException) { }
+            }
+            return null;
+        }
+
+        string? ChooseGameDir()
+        {
+            using var dialog = new FolderBrowserDialog { Description = "选择艾尔登法环的 Game 文件夹（里面有 eldenring.exe）", ShowNewFolderButton = false };
+            var current = GameDir();
+            if (current != null) dialog.SelectedPath = current;
+            while (dialog.ShowDialog(form) == DialogResult.OK)
+            {
+                var dir = dialog.SelectedPath;
+                if (!HasGame(dir) && HasGame(Path.Combine(dir, "Game"))) dir = Path.Combine(dir, "Game");
+                if (HasGame(dir)) { SaveGameDir(dir); return dir; }
+                MessageBox.Show(form, "这个文件夹里没有 eldenring.exe。\n请选择游戏安装目录里的 Game 文件夹，例如：\n…\\steamapps\\common\\ELDEN RING\\Game",
+                    MainForm.Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            return null;
+        }
+
+        // ---------------- 本地功能 ----------------
+
+        public static void OpenUrl(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)) return;
+            try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true })?.Dispose(); }
+            catch (Win32Exception e) { Log.Write("打开网页失败：" + e.Message); }
+        }
+
+        static void OpenFolder(string dir) => Process.Start("explorer.exe", Quote(dir))?.Dispose();
+
+        void OpenLogs()
+        {
+            var log = Path.Combine(paths.InstallDir, "tower-preview.log");
+            if (File.Exists(log)) Process.Start("explorer.exe", "/select," + Quote(log))?.Dispose();
+            else OpenFolder(paths.InstallDir);
+        }
+
+        static void OpenDocument(string path, string fallbackUrl)
+        {
+            if (File.Exists(path)) Process.Start("notepad.exe", Quote(path))?.Dispose();
+            else OpenUrl(fallbackUrl);
+        }
+
+        /// <summary>按 Windows 命令行规则给一个参数加引号（引号前的反斜杠要成对）</summary>
+        static string Quote(string argument)
+        {
+            var quoted = new StringBuilder("\"");
+            var slashes = 0;
+            foreach (var c in argument)
+            {
+                if (c == '\\') { slashes++; continue; }
+                quoted.Append('\\', c == '"' ? slashes * 2 + 1 : slashes).Append(c);
+                slashes = 0;
+            }
+            return quoted.Append('\\', slashes * 2).Append('"').ToString();
+        }
+
+        static string Describe(Exception e) => e switch
+        {
+            TaskCanceledException _ => "网络超时，请稍后重试",
+            HttpRequestException _ => "网络连接失败：" + (e.InnerException?.Message ?? e.Message),
+            UnauthorizedAccessException _ => "没有写入权限（模组不要放在 Program Files 这类需要管理员权限的目录）：" + e.Message,
+            _ => e.Message,
+        };
+
+        static string Size(long bytes)
+        {
+            if (bytes < 1024 * 1024) return $"{(bytes + 1023) / 1024} KB";
+            if (bytes < 1024L * 1024 * 1024) return $"{bytes / 1024.0 / 1024:0.0} MB";
+            return $"{bytes / 1024.0 / 1024 / 1024:0.00} GB";
+        }
+    }
+}

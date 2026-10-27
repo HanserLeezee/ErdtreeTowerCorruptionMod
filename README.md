@@ -1,3 +1,26 @@
+# 启动器与增量更新 · 2026-10-27
+
+包根目录新增 `ErdtreeTowerLauncher.exe`：以后更新只下载内容变化的文件，不用每次重下整包。
+
+- **界面**：基于 hyp-launcher-ui（MIT）的页面外壳，换成爬塔的背景、金色主色、“黄金树爬塔”标题与六职业轮播（标题和轮播图由 `launcher/make_art.py` 从职业插画和项目字体生成），去掉了与本项目无关的内容；「公告」在检查更新后显示最新版本的更新说明（发版时 `--notes` 的内容）。页面在 `launcher/ui`，由 WebView2 加载；下载进度、版本状态、设置值都由宿主推送，页面不再模拟。
+- **宿主**：`launcher/Tower.Launcher`（.NET Framework 4.8 WinForms + WebView2，Windows 10/11 自带框架）。开始游戏调用同一个 `Start-Tower.ps1`（单人/无缝联机，隐藏控制台；失败原因经新增的 `-ErrorFile` 参数带回界面）；首次启动从 Steam 库自动找游戏目录；游戏运行时拒绝更新；同时只允许一个启动器。
+- **更新方式**：按内容寻址。每个版本在 GitHub Release 上传两个文件：`tower-release.json`（这一版的完整文件清单，以及每个文件内容在哪个版本的数据包、偏移、长度）和 `tower-pack-v<N>.bin`（只含以前所有版本都没有的文件内容，逐个压缩）。启动器读最新清单，与本地文件哈希逐个比较，只用 HTTP Range 分段下载缺的那几段（GitHub 的下载地址返回 206，已实测）。跳过多个版本、半途中断、文件损坏都归结为同一个“补齐差异”计划，不需要版本链。
+- **安全**：清单里的路径必须在安装目录内（拒绝 `..`、绝对路径、反斜杠、更新器自己的目录与 `tower-install.json`/`GamePath.txt`）；下载的数据解压后校验 SHA-256 才进暂存区；安装时先写进度记录，每个被替换或删除的文件先挪进本次的备份目录，失败即还原，进程被强杀则下次启动还原。跳转由更新器自己跟随并保留 Range，拒绝从 https 跳到 http。
+- **代码**：`launcher/Tower.Update`（更新引擎，netstandard2.0），`launcher/Tower.Update.Tests`（端到端测试：首装、只下变化的文件、跳版本、损坏修复、安装中途失败回滚、强杀后恢复、模拟 GitHub 跳转与分段下载、路径安全、相邻数据合并请求、校验时忽略哈希缓存），`distribution/release_pack.py`（生成清单与数据包，`tests/test_release_pack.py`）。
+
+发版：在 Windows 上照常运行 `python distribution/package.py`，它会额外编译启动器（需要 .NET SDK）、放进包里，并从最新 GitHub Release 取上一版清单生成增量数据。**第一次带启动器的版本**用 `--first-release`（数据包包含全部文件）。把输出的 ZIP、`release-v<N>/tower-release.json`、`release-v<N>/tower-pack-v<N>.bin` 上传到标签为 `v<N>` 的 Release 并设为 latest；**不要删除旧 Release**，新清单里没变的文件仍然指向旧版本的数据包。可用 `--notes <文件>` 附带更新说明。发版前可以把环境变量 `ERDTREE_TOWER_UPDATE_SOURCE` 指向本地目录（`<目录>/latest/tower-release.json` 与 `<目录>/v<N>/tower-pack-v<N>.bin`）先自测。
+
+**国内镜像（阿里云 OSS）**：启动器有两条下载线路，国内镜像与 GitHub。检查更新时同时问两条，取版本最高的一份（同版本按设置里「下载线路」的优先顺序，默认国内镜像），所以镜像忘了传新版本也不会让玩家错过更新；数据下载失败时自动换另一条。镜像地址在 `launcher/sources.json`，现为 `https://eldenring-mods-hz.oss-cn-hangzhou.aliyuncs.com/releases`；这个文件随模组发布，以后改地址也是发个新版本。
+
+1. 存储桶 `eldenring-mods-hz`（杭州）已关闭「阻止公共访问」、读写权限为「公共读」；实测默认域名可匿名读取文件，匿名列目录被拒绝。桶里只放发布文件。建议在费用中心给 OSS 设预算告警，防止被人恶意刷流量。阿里云自 2025-03-20 起不允许**新开通**的账号用默认域名下载中国内地存储桶的文件，本账号不受影响；换账号时若遇到 `PublicEndpointForbidden`，要么绑定已备案的自定义域名，要么改用腾讯云 COS（默认域名可用，地址格式相同即可）。
+2. 安装 [ossutil](https://help.aliyun.com/zh/oss/developer-reference/ossutil)，用一个**只能写这个存储桶**的 RAM 子账号运行一次 `ossutil config`。密钥只存在本机 ossutil 的配置里，不进仓库。
+3. 发版时 `python distribution/package.py --upload`：打包后把 `dist/mirror-v<N>/releases`（与 GitHub 下载地址同样的目录结构）按顺序传上去（数据包与版本清单先传，`latest` 最后），再自动检查。上传中断可以单独重跑 `python distribution/upload_mirror.py dist/mirror-v<N>`，同样内容覆盖不会出问题（`tests/test_upload_mirror.py`）。不要给存储桶开「禁止覆盖」，`latest` 每次都要覆盖；旧版本的 `download/v<旧版本>/` 不要删，和 GitHub 一样，没变的文件仍然指向旧数据包。
+4. 检查脚本也可以单独用：`python distribution/check_mirror.py <线路地址> --expect <N>` 读最新清单，并对每个数据包做一次分段下载与 SHA-256 校验，有问题会说明是没传、版本不对还是不支持分段（`tests/test_check_mirror.py`）。GitHub 线路也能这样检查：`python distribution/check_mirror.py https://github.com/tamikip/erdtree-tower/releases`。
+
+费用按外网下行流量计，以控制台价格为准。增量更新每人每次一般只有几十 MB，全量 ZIP 仍然放网盘或 GitHub。
+
+注意：WebView2 界面、DPI 缩放、启动脚本调用和 Windows 下的文件替换只在 Linux 上编译通过，尚未在 Windows 实机运行；国内镜像的读取与分段下载逻辑有测试（`Tower.Update.Tests` 共 18 项：版本落后的镜像、失败线路换下一条、卡住的线路不拖慢检查、全部连不上时逐条说明原因），真实存储桶在第一次上传后由 `upload_mirror.py` 自动检查分段下载。
+
 # Boss 血条名字特效（实验）· 2026-10-27
 
 HUD 里 Boss 血条的名字（`BossList.Item_N_0.Name.Text`，最多同时三条）加上动态效果，与屏幕上方的词条行、Boss 身上的光效颜色一致：

@@ -1,0 +1,108 @@
+/* ============================================================
+   基础重置与通用
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #06090f;
+}
+
+body {
+  font-family: var(--font-cn);
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+button {
+  font-family: inherit;
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+img {
+  display: block;
+  -webkit-user-drag: none;
+}
+
+/* WebView2 里禁止原生右键菜单与拖拽选中 */
+body {
+  -webkit-user-select: none;
+  -ms-user-select: none;
+}
+
+/* 通用：完全贴合窗口的根容器 */
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-width: var(--win-w);
+  min-height: var(--win-h);
+  overflow: hidden;
+}
+
+/* ---- 舞台模式（?stage=1）----
+   在浏览器里预览「无边框沉浸」效果时用：
+   视口通常比 1280x720 大，就把画布按原始尺寸居中，四周留黑。
+   配合 chrome --kiosk 使用即可得到与官方一致的观感（没有标题栏/工具栏）。
+   正式接进 WebView2 时不需要这个模式，窗口本身就是 1280x720。 */
+html.stage,
+html.stage body {
+  background: #000;
+}
+
+html.stage #app {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--win-w);
+  height: var(--win-h);
+  min-width: 0;
+  min-height: 0;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.85);
+}
+
+/* 可拖拽区域（配合 bridge.js 调用 WebView2 拖动窗口） */
+[data-drag] {
+  -webkit-app-region: drag;
+}
+
+[data-drag] button,
+[data-drag] a {
+  -webkit-app-region: no-drag;
+}
+
+/* 滚动条（弹窗内可能用到） */
+.scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+}
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 视觉隐藏 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}

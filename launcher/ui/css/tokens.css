@@ -1,0 +1,212 @@
+/* ============================================================
+   设计令牌
+   全部数值来自官方前端真实 CSS 与运行页面的 getBoundingClientRect，
+   通过 CDP 从活着的启动器直接导出，不是目测估算。
+   每个变量上方注释标注了来源（官方类名 / 实测值）。
+   ============================================================ */
+:root {
+  /* ---- 画布 ---- */
+  --win-w: 1280px;
+  --win-h: 720px;
+
+  /* ---- 字体 ----
+     官方计算样式：basic-latin, "Microsoft YaHei UI", "Segoe UI", Arial, sans-serif
+     basic-latin 的 @font-face 是 local("Segoe UI") 且只覆盖 U+20-7F，
+     所以中文实际由 Microsoft YaHei UI 渲染（不是汉仪文黑）。 */
+  --font-cn: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+  --font-num: "Segoe UI", Arial, sans-serif;
+
+  /* ---- 左侧侧栏（官方 .hyp-side-bar）----
+     width:68px; padding-bottom:26px;
+     background: linear-gradient(180.51deg, rgba(0,0,0,.18), rgba(0,0,0,.36));
+     border-right: 1px solid rgba(0,0,0,.16); */
+  --sidebar-w: 68px;
+  --sidebar-pad-bottom: 26px;
+  --sidebar-bg: linear-gradient(180.51deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.36));
+  --sidebar-border: 1px solid rgba(0, 0, 0, 0.16);
+
+  /* 官方 .hyp-side-bar__top{padding:12px} / .logo 位于 (11.5,12) 44x44 */
+  --sb-logo-x: 11.5px;
+  --sb-logo-y: 12px;
+  --sb-logo-size: 44px;
+
+  /* 官方 .hyp-game-icon { 36x36; border-radius:8px }，列表间隔 20px */
+  --sb-icon: 36px;
+  --sb-icon-gap: 20px;
+  --sb-icon-radius: 8px;
+  /* 官方 .border { 48x48; border:2px solid rgba(255,255,255,.48); radius:12px; left/top:-6px } */
+  --sb-icon-ring: 48px;
+  --sb-icon-ring-offset: -6px;
+
+  /* ---- 顶栏拖拽区（官方 #hyp-drag-header，1148x48，z-index 2147483647）---- */
+  --drag-h: 48px;
+  --drag-w: 1148px;
+
+  /* 窗口控制按钮（右侧三个，按官方截图实测圆心） */
+  --winctl-y: 24px;
+  --winctl-settings-x: 1162px;
+  --winctl-min-x: 1206px;
+  --winctl-close-x: 1250px;
+  --winctl-size: 24px;
+
+  /* ---- 右侧社交栏（官方 .hyp-game-social-media）----
+     容器 x=1228 宽 44；每项 44x44，pitch 56（gap 12）；
+     图标区 .__box 36x36 内缩 4px；首项 y=64 */
+  --social-x: 1228px;
+  --social-first-y: 64px;
+  --social-item: 44px;
+  --social-icon: 36px;
+  --social-gap: 12px;
+  --social-radius: 8px;
+
+  /* ---- 背景遮罩 ----
+     官方各页面不同：
+       Hub 页     ：整体 22.1% 黑遮罩（对纯背景区拟合 官方=素材×k 得出）
+       启动页     ：无整体遮罩，但底部有一层渐变暗化（逐行拟合 官方/素材 比例：
+                    y<420 为 1.00，y=560 → 0.911，y=600 → 0.850，
+                    y=640 → 0.758，y=680 → 0.653，y=700 → 0.597）
+  */
+  --bg-dim: 0;
+  --bg-scrim: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0) 58.3%,
+    rgba(0, 0, 0, 0.028) 69.4%,
+    rgba(0, 0, 0, 0.089) 77.8%,
+    rgba(0, 0, 0, 0.15) 83.3%,
+    rgba(0, 0, 0, 0.242) 88.9%,
+    rgba(0, 0, 0, 0.347) 94.4%,
+    rgba(0, 0, 0, 0.403) 100%
+  );
+
+  /* ---- 启动页 ----
+     官方 .hyp-background-player__button  [128,299 w x 40]
+          .hyp-info-button               [128,299 135x40]
+          .hyp-background-player__player [259,299 40x40] radius 125px */
+  --chip-x: 128px;
+  --chip-y: 299px;
+  --chip-h: 40px;
+  --pause-size: 40px;
+  --chip-gap: 20px;
+
+  /* 官方 .hyp-game-banner { 384x178; border-radius:12px } 位于 (128,380) */
+  --carousel-x: 128px;
+  --carousel-y: 380px;
+  --carousel-w: 384px;
+  --carousel-h: 178px;
+  --carousel-r: 12px;
+
+  /* 官方 .hyp-notice-list      [128,558 384x112]
+          .notice-list-tabs    [144,574 352x27]
+          .notice-list-items   [144,612 352x47] */
+  --content-x: 144px;
+  --tabs-y: 574px;
+  --tabs-w: 352px;
+  --tab-fs: 16px;
+  --tab-fw: 700;
+  --tab-lh: 22px;
+  --tab-mr: 24px;      /* 官方 margin-right:24px */
+  --tab-pb: 4px;       /* 官方 padding-bottom:4px */
+  --tab-ul-w: 12px;    /* 官方下划线 12x2，bottom:-2px */
+  --tab-ul-h: 2px;
+  --tab-ul-bottom: -2px;
+
+  --news-y: 612px;
+  --news-w: 352px;
+  --news-fs: 14px;
+  --news-lh: 20px;
+  --news-gap: 7px;     /* 官方 .notice-list-items > :not(:last-child){margin-bottom:7px} */
+  --news-date-min: 40px;
+
+  /* 官方 .launch-button    [1032,604 188x56]
+          .button-container [1044,616 164x32]
+          .button-progress  [1044,616 32x32]
+          .button-message   [1076,620 128x24] font-size:18px */
+  --cta-x: 1032px;
+  --cta-y: 604px;
+  --cta-w: 188px;
+  --cta-h: 56px;
+  --cta-radius: 28px;
+  --cta-pad: 12px;
+  --cta-icon: 32px;
+  --cta-label-fs: 18px;
+  --cta-label-right: 16px;
+  --cta-label-nudge: 0px;
+
+  /* 官方 .hyp-launch-button__extra [1067,668 118x22]
+          __extra-text [1067,669 56x20] font-size:14px，两段间距 5px */
+  --cta-sub-gap: 8px;
+  --cta-sub-fs: 14px;
+  --cta-sub-gap2: 5px;
+  --cta-sub-nudge: 0px;
+
+  /* ---- Hub 游戏选择页 ----
+     官方 .hub-page__land-logo [68,40 210x160]
+          .hub-page__game-list [128,524 860x140]
+          .hyp-game-card-logo  [128,540 124x124] / 选中 [272,524 140x140]
+          卡片名 y=672 font-size:12px font-weight:700 */
+  --hub-landlogo-x: 68px;
+  --hub-landlogo-y: 40px;
+  --hub-landlogo-w: 210px;
+  --hub-landlogo-h: 160px;
+
+  --hub-desc-left: 128px;
+  --hub-desc-top: 433px;       /* 星铁 Hub 参考：三行简介 ink 落在 437/459/481 */
+  --hub-desc-width: 490px;
+  --hub-desc-font: 16px;
+  --hub-desc-line: 22px;
+
+  --hub-row-left: 128px;
+  --hub-row-bottom: 56px;      /* 卡片底边 y=664 */
+  --hub-card-w: 124px;
+  --hub-card-h: 124px;
+  --hub-card-gap: 20px;
+  --hub-card-sel-w: 140px;
+  --hub-card-sel-h: 140px;
+  --hub-card-radius: 12px;
+  --hub-card-sel-ring: 2px;
+
+  --hub-name-gap: 8px;
+  --hub-name-font: 12px;
+  --hub-name-fw: 700;
+
+  --hub-reserve-w: 48px;
+  --hub-reserve-h: 24px;
+  --hub-reserve-font: 12px;
+
+  /* ---- 颜色（官方实测取色与 CSS 变量）---- */
+  --c-yellow: #ffdb29;         /* 主按钮黄底 */
+  --c-yellow-soft: #ffd84d;
+  --c-link: #fac000;           /* "定位游戏"金 */
+  --c-ink: #16171a;            /* 黄底上的深色文字 */
+
+  /* ---- 品牌色（可换主题）----
+     --brand      主按钮底色 / 下划线 / 选中描边 / 悬停高亮
+     --brand-ink  主按钮上的文字与内部圆盘颜色
+     默认值；换游戏时由 config 的 accent / accentInk 覆盖
+     （app.js 的 applyAccent 会写到 :root 上）。 */
+  --brand: var(--c-yellow);
+  --brand-ink: var(--c-ink);
+  --c-white: #ffffff;
+  --c-text: #e5e5e5;
+  --c-text-dim: rgba(229, 229, 229, 0.6);
+  --c-text-faint: rgba(229, 229, 229, 0.4);
+  --c-sub-text: #e5e5e5;
+  --c-panel: rgba(20, 22, 28, 0.72);
+  --c-panel-solid: #16181d;
+  --c-hover: rgba(255, 255, 255, 0.12);
+  --c-badge: #f5453c;
+  --c-divider: rgba(255, 255, 255, 0.24);
+
+  /* ---- 动效（官方真实曲线）----
+     cubic-bezier(0, 0.5, 0.5, 1) 在官方多处 transition 中出现 */
+  --ease: cubic-bezier(0, 0.5, 0.5, 1);
+  --dur: 200ms;
+
+  /* ---- 层级 ---- */
+  --z-bg: 0;
+  --z-page: 10;
+  --z-sidebar: 20;
+  --z-social: 20;
+  --z-topbar: 30;
+  --z-modal: 100;
+}
