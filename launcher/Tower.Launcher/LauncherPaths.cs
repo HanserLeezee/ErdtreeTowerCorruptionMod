@@ -21,6 +21,7 @@ namespace Tower.Launcher
         public string SettingsFile => Path.Combine(DataDir, "settings.json");
         public string LogFile => Path.Combine(DataDir, "launcher.log");
         public string LaunchErrorFile => Path.Combine(DataDir, "launch-error.txt");
+        public string LaunchLogs => Path.Combine(DataDir, "launches");
         /// <summary>和 Start-Tower.ps1 共用：记住的游戏 Game 目录</summary>
         public string GamePathFile => Path.Combine(InstallDir, "GamePath.txt");
 

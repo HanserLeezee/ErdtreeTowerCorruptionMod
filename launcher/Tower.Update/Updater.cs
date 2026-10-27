@@ -137,7 +137,7 @@ namespace Tower.Update
                     cache.Forget(path);
                     Save(journal);
                 }
-                new InstallState { Version = plan.Target.Version, Files = plan.Target.Files.Select(f => new FileEntry { Path = f.Path, Size = f.Size, Sha256 = f.Sha256 }).ToList() }.Save(installDir);
+                new InstallState { Version = plan.Target.Version, DisplayVersion = plan.Target.DisplayVersion, Files = plan.Target.Files.Select(f => new FileEntry { Path = f.Path, Size = f.Size, Sha256 = f.Sha256 }).ToList() }.Save(installDir);
             }
             catch
             {

@@ -15,6 +15,7 @@ namespace Tower.Update
 
         [JsonPropertyName("schema")] public int SchemaVersion { get; set; }
         [JsonPropertyName("version")] public int Version { get; set; }
+        [JsonPropertyName("displayVersion")] public string DisplayVersion { get; set; } = "";
         [JsonPropertyName("tag")] public string Tag { get; set; } = "";
         [JsonPropertyName("notes")] public string Notes { get; set; } = "";
         [JsonPropertyName("files")] public List<FileEntry> Files { get; set; } = new List<FileEntry>();
@@ -32,6 +33,7 @@ namespace Tower.Update
         {
             if (SchemaVersion != Schema) throw new InvalidDataException($"不支持的更新清单格式：{SchemaVersion}");
             if (Version <= 0 || Files.Count == 0) throw new InvalidDataException("更新清单不完整");
+            if (!string.IsNullOrEmpty(DisplayVersion) && !Versions.Valid(DisplayVersion)) throw new InvalidDataException("整合包显示版本格式无效");
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in Files)
             {
@@ -75,6 +77,7 @@ namespace Tower.Update
     {
         public const string FileName = "tower-install.json";
         [JsonPropertyName("version")] public int Version { get; set; }
+        [JsonPropertyName("displayVersion")] public string DisplayVersion { get; set; } = "";
         [JsonPropertyName("files")] public List<FileEntry> Files { get; set; } = new List<FileEntry>();
 
         public static InstallState? Load(string installDir)

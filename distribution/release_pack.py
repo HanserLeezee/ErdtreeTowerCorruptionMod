@@ -14,6 +14,7 @@ Usage: python distribution/release_pack.py <stage dir> <version> <output dir> [-
 import argparse
 import hashlib
 import json
+import re
 import zlib
 from pathlib import Path
 
@@ -47,7 +48,9 @@ def collect(stage):
     return files
 
 
-def build(stage, version, output, previous=None, notes=''):
+def build(stage, version, output, previous=None, notes='', display_version=''):
+    if display_version and not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', display_version):
+        raise ValueError('Display version must be major.minor.patch')
     stage, output = Path(stage), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     tag = f'v{version}'
@@ -78,6 +81,7 @@ def build(stage, version, output, previous=None, notes=''):
     manifest = {
         'schema': SCHEMA,
         'version': int(version),
+        'displayVersion': display_version,
         'tag': tag,
         'notes': notes,
         'files': [{'path': e['path'], 'size': e['size'], 'sha256': e['sha256']} for e in files],
@@ -106,5 +110,6 @@ if __name__ == '__main__':
     parser.add_argument('output', type=Path)
     parser.add_argument('--previous', type=Path)
     parser.add_argument('--notes', type=Path)
+    parser.add_argument('--display-version', default='')
     args = parser.parse_args()
-    build(args.stage, args.version, args.output, args.previous, args.notes.read_text(encoding='utf-8') if args.notes else '')
+    build(args.stage, args.version, args.output, args.previous, args.notes.read_text(encoding='utf-8') if args.notes else '', args.display_version)

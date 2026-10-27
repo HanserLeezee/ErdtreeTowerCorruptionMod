@@ -18,6 +18,14 @@ def write(root, files):
 
 
 class ReleasePack(unittest.TestCase):
+    def test_display_version_does_not_replace_build_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root / 'stage', {'mod.dll': b'mod'})
+            manifest = pack.build(root / 'stage', 97, root / 'out', display_version='1.2.3')
+            self.assertEqual((manifest['version'], manifest['displayVersion'], manifest['tag']), (97, '1.2.3', 'v97'))
+            with self.assertRaises(ValueError):
+                pack.build(root / 'stage', 98, root / 'bad', display_version='1.02.3')
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)

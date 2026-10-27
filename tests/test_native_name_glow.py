@@ -108,5 +108,14 @@ class NameGlowRebuild(unittest.TestCase):
     def test_effect_never_shadows_the_flash_package(self):
         self.assertNotRegex(glow.MEMBERS, r'var flash\b')
 
+    def test_animation_avoids_unavailable_timer_and_epic_text_stays_bright(self):
+        import re
+        self.assertNotIn('flash.utils.getTimer()', glow.MEMBERS)
+        self.assertIn('(++this.towerFrame) / 30', glow.MEMBERS)
+        palette = re.search(r'towerViolet:Array = \[([^\]]+)\]', glow.MEMBERS).group(1)
+        for value in palette.split(','):
+            color = int(value.strip(), 16)
+            self.assertGreaterEqual(min((color >> 16) & 255, (color >> 8) & 255, color & 255), 160)
+
 if __name__ == '__main__':
     unittest.main()

@@ -4,7 +4,7 @@ use erdtree_tower::{Class,Run,law::Law,party_game::{Gate,Report,Order}};
 fn host_law_must_be_applied_by_every_player_before_travel() {
     for count in 2..=8 {
         let mut host=Run::new(42,Class::Samurai);
-        host.set_law(Law::default().toggle(0).toggle(8)).unwrap();
+        host.set_law(Law::default().toggle(0).toggle(8).toggle(27).toggle(28).toggle(29).toggle(30)).unwrap();
         host.align_party_start(53).unwrap();
         let mut guest=Run::new(53,Class::Hero);
         let mut gate=Gate::new((1..=count).collect());

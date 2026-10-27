@@ -6,11 +6,12 @@ static class PartyEnemyAudit {
     public static void Run(string output) {
         // 先重建原有 684 个槽位；DLC 由 party-dlc-patch 追加，保持旧实体编号不变。
         // DLC 敌人另有联机槽位；仅单人的敌人（solo）没有联机实体
-        var requirements=File.ReadAllLines("outputs/erdtree-tower/scene-assets/enemy-pools.txt").Where(line=>{var f=line.Split('|');return !(f.Length>5&&(f[5]=="dlc"||f[5]=="solo"));}).Select(line=>{
+        var requirements=File.ReadAllLines("outputs/erdtree-tower/scene-assets/enemy-pools.txt").Where(line=>{var f=line.Split('|');return !(f.Length>5&&(f[5]=="dlc"||f[5]=="solo"||f[5]=="party"));}).Select(line=>{
             var p=line.Split('|');int model=int.Parse(p[2]);
             return new Requirement(int.Parse(p[0]),model,900000000+model*10000,model*10000,4,p[4],-1);
         }).DistinctBy(r=>(r.Act,r.Npc)).ToList();
-        foreach(var boss in BossAssets.Parts("outputs/erdtree-tower/scene-assets"))
+        var appended=File.ReadAllLines("outputs/erdtree-tower/scene-assets/boss-pool.txt").Select(l=>l.Split('|')).Where(p=>p.Length>10&&p[10].Length>0).Select(p=>int.Parse(p[2])).ToHashSet();
+        foreach(var boss in BossAssets.Parts("outputs/erdtree-tower/scene-assets").Where(p=>!appended.Contains(p.Index)))
             foreach(bool elite in new[]{false,true})requirements.Add(new(boss.Act,boss.Model,BossAssets.Npc(boss,elite),boss.Think,1,boss.Label,boss.Source));
         var models=requirements.Select(r=>$"c{r.Model:D4}").ToHashSet();
         var templates=new List<(string Map,MSBE.Part.Enemy Part)>();

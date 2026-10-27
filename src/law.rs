@@ -2,7 +2,7 @@
 pub struct Node {pub name:&'static str,pub branch:usize,pub parent:Option<usize>,pub points:u32,pub effect:&'static str,pub icon:u32,pub col:u8,pub row:u8}
 pub const BRANCHES:[&str;4]=["敌人","我方","经济","规则"];
 const fn n(name:&'static str,branch:usize,parent:Option<usize>,points:u32,effect:&'static str,icon:u32,col:u8,row:u8)->Node {Node{name,branch,parent,points,effect,icon,col,row}}
-pub const NODES:[Node;27]=[
+pub const NODES:[Node;31]=[
     n("强敌 I",0,None,10,"敌人强度 +1 档：生命 +10%，攻击 +6%",10125,1,0),
     n("强敌 II",0,Some(0),20,"再 +1 档：累计生命 +21%，攻击 +13%",10125,2,0),
     n("强敌 III",0,Some(1),30,"再 +2 档：累计生命 +45%，攻击 +28%",10125,3,0),
@@ -22,14 +22,18 @@ pub const NODES:[Node;27]=[
     n("疲惫 II",1,Some(15),20,"精力恢复速度约 -40%",18160,2,5),
     n("断念 I",1,None,10,"魔法、祷告与战技的专注消耗 +25%",6504,1,6),
     n("断念 II",1,Some(17),10,"专注消耗累计 +50%",6504,2,6),
-    n("贫瘠 I",2,None,10,"击杀与战斗奖励的卢恩 -25%",10047,1,7),
-    n("贫瘠 II",2,Some(19),10,"击杀与战斗奖励的卢恩累计 -50%",10047,2,7),
-    n("奸商 I",2,Some(20),10,"商店价格 +30%",11161,3,7),
-    n("奸商 II",2,Some(21),10,"商店价格 +60%",11161,4,7),
+    n("贫瘠 I",2,None,10,"击杀与战斗奖励的卢恩 -15%",10047,1,7),
+    n("贫瘠 II",2,Some(19),10,"击杀与战斗奖励的卢恩累计 -30%",10047,2,7),
+    n("奸商 I",2,Some(20),10,"商店价格 +15%",11161,3,7),
+    n("奸商 II",2,Some(21),10,"商店价格累计 +30%",11161,4,7),
     n("吝啬的赐福",2,Some(22),20,"战后奖励三选一改为二选一",18440,5,7),
     n("限时 I",3,None,20,"每场战斗限时 3 分钟，超时后每秒失去 2% 生命",10324,1,8),
     n("限时 II",3,Some(24),20,"战斗限时缩短为 2 分钟",10324,2,8),
     n("嫉妒的世界",3,Some(25),30,"你喝圣杯瓶时，所有敌人回复 10% 生命",401,3,8),
+    n("元素庇护 I",0,None,10,"敌人受到魔力、火、雷、圣伤害 -10%，不影响物理伤害",12084,1,9),
+    n("元素庇护 II",0,Some(27),10,"敌人受到魔力、火、雷、圣伤害累计 -20%",12084,2,9),
+    n("异常耐性 I",0,None,10,"敌人中毒、腐败、出血、冻伤、睡眠、发狂、死亡耐性 +15%，原有免疫不变",12084,1,10),
+    n("异常耐性 II",0,Some(29),10,"敌人异常耐性累计 +30%，原有免疫不变",12084,2,10),
 ];pub const GRADES:[(u32,&str);4]=[(70,"老练"),(140,"艰难"),(210,"噩梦"),(280,"危机")];
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
@@ -45,6 +49,8 @@ impl Law {
     pub fn affix_budget(self,base:u8,max:u8)->u8 {match self.chain(&[3,4]) {0=>base,1=>(base+2).min(max),_=>max}}
     pub fn elite_affixes(self)->bool {self.has(5)}
     pub fn toughness(self)->u8 {self.chain(&[6,7])}
+    pub fn elemental_resistance(self)->u8 {self.chain(&[27,28])}
+    pub fn status_resistance(self)->u8 {self.chain(&[29,30])}
     /// 节制：红、蓝圣杯瓶上限各减少多少
     pub fn flask_cut(self)->[u8;2] {[[0,0],[1,0],[1,1],[2,2]][usize::from(self.chain(&[8,9,10]))]}
     pub fn fragile(self)->u8 {self.chain(&[11,12,13])}
@@ -53,10 +59,10 @@ impl Law {
     pub fn focus(self)->u8 {self.chain(&[17,18])}
     /// 贫瘠：卢恩获取百分比
     pub fn poverty(self)->u8 {self.chain(&[19,20])}
-    pub fn rune_percent(self)->u32 {[100,75,50][usize::from(self.poverty())]}
+    pub fn rune_percent(self)->u32 {[100,85,70][usize::from(self.poverty())]}
     pub fn runes(self,amount:u32)->u32 {if self.rune_percent()==100 {amount}else{(u64::from(amount)*u64::from(self.rune_percent())/100) as u32}}
     /// 奸商：商店价格百分比
-    pub fn price_percent(self)->u32 {[100,130,160][usize::from(self.chain(&[21,22]))]}
+    pub fn price_percent(self)->u32 {[100,115,130][usize::from(self.chain(&[21,22]))]}
     pub fn stingy(self)->bool {self.has(23)}
     /// 限时：每场战斗的秒数
     pub fn time_limit(self)->Option<u64> {match self.chain(&[24,25]) {0=>None,1=>Some(180),_=>Some(120)}}
@@ -82,12 +88,12 @@ impl Law {
     pub fn code(self)->String {
         const DIGITS:&[u8]=b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         let value=(u64::from(self.0)<<5)|checksum(self.0);
-        (0..7).rev().map(|i|DIGITS[((value>>(i*5))&31) as usize] as char).collect()
+        (0..if value<(1u64<<35){7}else{8}).rev().map(|i|DIGITS[((value>>(i*5))&31) as usize] as char).collect()
     }
     pub fn parse(code:&str)->Option<Self> {
         const DIGITS:&str="0123456789ABCDEFGHJKMNPQRSTVWXYZ";
         let code=code.trim().to_ascii_uppercase().replace(['O'],"0").replace(['I','L'],"1");
-        if code.is_empty()||code.len()>7 {return None;}
+        if code.is_empty()||code.len()>8 {return None;}
         let value=code.chars().try_fold(0u64,|v,c|DIGITS.find(c).map(|d|v<<5|d as u64))?;
         let law=Law(u32::try_from(value>>5).ok()?);
         (value&31==checksum(law.0)&&law.valid()).then_some(law)
@@ -105,7 +111,7 @@ mod tests {
             else {assert_eq!(node.col,1,"{}",node.name);}
             assert!(NODES.iter().enumerate().all(|(o,other)|o==id||(other.col,other.row)!=(node.col,node.row)));
         }
-        assert_eq!(Law((1<<NODES.len())-1).score(),420);
+        assert_eq!(Law((1<<NODES.len())-1).score(),460);
     }
     #[test]
     fn selection_follows_paths_and_cascades() {
@@ -113,7 +119,7 @@ mod tests {
         let law=Law::default().toggle(0).toggle(1).toggle(2);assert_eq!(law.score(),60);
         assert_eq!(law.toggle(1),Law::default().toggle(0),"removing a node removes its successors");
         let all=(0..NODES.len()).fold(Law::default(),|l,id|l.toggle(id));
-        assert_eq!(all.score(),420);assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
+        assert_eq!(all.score(),460);assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
         assert_eq!(Law::default().grade(),None);assert_eq!(Law::default().toggle(24).toggle(25).toggle(26).toggle(0).grade(),Some("老练"));
         assert!(!Law(1<<1).valid());
     }
@@ -123,8 +129,8 @@ mod tests {
         assert_eq!((law(&[]).enemy_tiers(),law(&[0]).enemy_tiers(),law(&[0,1]).enemy_tiers(),law(&[0,1,2]).enemy_tiers()),(0,1,2,4));
         assert_eq!((law(&[]).flask_cut(),law(&[8]).flask_cut(),law(&[8,9]).flask_cut(),law(&[8,9,10]).flask_cut()),([0,0],[1,0],[1,1],[2,2]));
         assert_eq!((law(&[]).affix_budget(2,6),law(&[3]).affix_budget(2,6),law(&[3,4]).affix_budget(2,6),law(&[3]).affix_budget(6,6)),(2,4,6,6));
-        assert_eq!((law(&[19]).runes(1000),law(&[19,20]).runes(1000),law(&[]).runes(1000)),(750,500,1000));
-        assert_eq!((law(&[19,20,21]).price_percent(),law(&[19,20,21,22]).price_percent()),(130,160));
+        assert_eq!((law(&[19]).runes(1000),law(&[19,20]).runes(1000),law(&[]).runes(1000)),(850,700,1000));
+        assert_eq!((law(&[19,20,21]).price_percent(),law(&[19,20,21,22]).price_percent()),(115,130));
         assert_eq!((law(&[24]).time_limit(),law(&[24,25]).time_limit(),law(&[]).time_limit()),(Some(180),Some(120),None));
         let all=law(&(0..NODES.len()).collect::<Vec<_>>());
         assert!(all.lone_wolf()&&all.stingy()&&all.envy_world()&&all.elite_affixes());
@@ -133,7 +139,7 @@ mod tests {
     #[test]
     fn codes_round_trip_and_reject_typos() {
         let laws=[Law::default(),Law::default().toggle(0).toggle(8).toggle(9),(0..NODES.len()).fold(Law::default(),|l,id|l.toggle(id))];
-        for law in laws {let code=law.code();assert_eq!(code.len(),7);assert_eq!(Law::parse(&code),Some(law));assert_eq!(Law::parse(&code.to_lowercase()),Some(law));}
+        for law in laws {let code=law.code();assert!((7..=8).contains(&code.len()));assert_eq!(Law::parse(&code),Some(law));assert_eq!(Law::parse(&code.to_lowercase()),Some(law));}
         let code=laws[1].code();let mut broken:Vec<char>=code.chars().collect();broken[6]=if broken[6]=='0'{'1'}else{'0'};
         assert_eq!(Law::parse(&broken.into_iter().collect::<String>()),None);
         assert_eq!(Law::parse(""),None);assert_eq!(Law::parse("ZZZZZZZZ"),None);
@@ -159,7 +165,7 @@ mod tests {
             assert_eq!(b.len(),2);
             assert!(b.iter().all(|r|!matches!(r,Reward::Item(i) if lookup(*i).is_some_and(|i|i.kind==ItemKind::Spirit))));
             lone+=a.iter().filter(|r|matches!(r,Reward::Item(i) if lookup(*i).is_some_and(|i|i.kind==ItemKind::Spirit))).count();
-            for (x,y) in a.iter().zip(b) {if let (Reward::Gold(x),Reward::Gold(y))=(x,y){assert_eq!(*y,x/2);}}
+            for (x,y) in a.iter().zip(b) {if let (Reward::Gold(x),Reward::Gold(y))=(x,y){assert_eq!(*y,bound.law.runes(*x));}}
             assert_eq!(Run::decode(&bound.encode().unwrap()).unwrap(),bound);
             bound.claim_reward(1).unwrap();
         }

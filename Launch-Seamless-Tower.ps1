@@ -1,14 +1,48 @@
 ﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly, [string]$PartyConfig)
 $ErrorActionPreference = 'Stop'
 function Set-TowerSpectatorMode([string]$Settings) {
-    $pattern = '(?m)^[ \t]*always_spectate_on_death[ \t]*=[^\r\n]*'
-    if ([regex]::IsMatch($Settings,$pattern)) {
-        return [regex]::Replace($Settings,$pattern,'always_spectate_on_death = 1')
-    }
     $section = [regex]'(?m)^\[GAMEPLAY\][ \t]*(\r?\n|$)'
-    if (!$section.IsMatch($Settings)) {throw 'Missing GAMEPLAY section for spectator mode.'}
     $newline = if ($Settings.Contains("`r`n")) {"`r`n"} else {"`n"}
-    return $section.Replace($Settings,('[GAMEPLAY]'+$newline+'always_spectate_on_death = 1'+$newline),1)
+    foreach ($setting in @(@('always_spectate_on_death','1'),@('death_debuffs','0'))) {
+        $pattern = '(?m)^[ \t]*'+$setting[0]+'[ \t]*=[^\r\n]*'
+        $value = $setting[0]+' = '+$setting[1]
+        if ([regex]::IsMatch($Settings,$pattern)) {
+            $Settings = [regex]::Replace($Settings,$pattern,$value)
+        } else {
+            if (!$section.IsMatch($Settings)) {throw 'Missing GAMEPLAY section for tower death settings.'}
+            $Settings = $section.Replace($Settings,('[GAMEPLAY]'+$newline+$value+$newline),1)
+        }
+    }
+    return $Settings
+}
+function Set-TowerMultiplayerPreset([string]$Settings,[string]$Preset) {
+    $allowed = @{
+        GAMEPLAY = @('allow_invaders','allow_summons','always_spectate_on_death','death_debuffs')
+        SCALING = @('enemy_health_scaling','enemy_damage_scaling','enemy_posture_scaling','boss_health_scaling','boss_damage_scaling','boss_posture_scaling')
+    }
+    $section = ''; $seen = @{}
+    $newline = if ($Settings.Contains("`r`n")) {"`r`n"} else {"`n"}
+    foreach ($line in ($Preset -split '\r?\n')) {
+        if ($line -match '^\s*(;|#|$)') {continue}
+        if ($line -match '^\s*\[([A-Z]+)\]\s*$') { $section=$Matches[1]; continue }
+        if ($line -notmatch '^\s*([a-z_]+)\s*=\s*(\d+)\s*$') {throw 'Invalid seamless-preset.ini entry'}
+        $key=$Matches[1]; $value=[int]$Matches[2]
+        if (!$allowed.ContainsKey($section) -or $key -notin $allowed[$section] -or $seen.ContainsKey($key)) {throw "Unsupported or duplicate preset key: $key"}
+        if ($value -gt $(if ($section -eq 'GAMEPLAY') {1} else {1000})) {throw "Preset value out of range: $key"}
+        $seen[$key]=$true
+        $sectionPattern = '(?ms)^\['+$section+'\][ \t]*\r?\n.*?(?=^\[|\z)'
+        $block = [regex]::Match($Settings,$sectionPattern)
+        if (!$block.Success) {
+            $Settings += $newline+'['+$section+']'+$newline+$key+' = '+$value+$newline
+            continue
+        }
+        $pattern = '(?m)^[ \t]*'+$key+'[ \t]*=[^\r\n]*'
+        $entry = $key+' = '+$value
+        $updated = if ([regex]::IsMatch($block.Value,$pattern)) { [regex]::Replace($block.Value,$pattern,$entry) } else { $block.Value.TrimEnd("`r","`n")+$newline+$entry+$newline }
+        $Settings = $Settings.Substring(0,$block.Index)+$updated+$Settings.Substring($block.Index+$block.Length)
+    }
+    if ($seen.Count -ne 10) {throw 'Incomplete seamless-preset.ini: expected 10 settings'}
+    return $Settings
 }
 # Extra plugins (plugins/natives.toml, managed by the launcher)
 # Each enabled [[natives]] section becomes an absolute path for ME3; disabled or missing plugins are skipped with a warning.
@@ -66,6 +100,9 @@ if ([regex]::Matches($settings,'(?m)^save_file_extension\s*=.*$').Count -ne 1) {
 $saveExtension = if ($PartyConfig) {'ertowerparty'} else {'ertowercoop'}
 $modified = [regex]::Replace($settings,'(?m)^save_file_extension\s*=.*$',('save_file_extension = '+$saveExtension))
 $modified = [regex]::Replace($modified,'(?m)^allow_invaders\s*=.*$','allow_invaders = 0')
+$preset = Join-Path $root 'seamless-preset.ini'
+if (!(Test-Path -LiteralPath $preset -PathType Leaf)) {throw 'Missing seamless-preset.ini; update the complete tower package.'}
+$modified = Set-TowerMultiplayerPreset $modified ([IO.File]::ReadAllText($preset))
 $modified = Set-TowerSpectatorMode $modified
 if ($CheckOnly) {[pscustomobject]@{Entry=$launcher;SaveExtension=$saveExtension;Assets= (Join-Path $root 'scene-assets');MultiplayerVerified=$false};return}
 if (Get-Process eldenring,ersc_launcher -ErrorAction SilentlyContinue) {throw 'Exit the game and Seamless launcher first.'}

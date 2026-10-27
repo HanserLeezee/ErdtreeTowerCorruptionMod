@@ -5,6 +5,8 @@ static class LawAssets {
     public const int First=9660000;
     static readonly string[] Cuts=["slashDamageCutRate","blowDamageCutRate","thrustDamageCutRate","neutralDamageCutRate","magicDamageCutRate","fireDamageCutRate","thunderDamageCutRate","darkDamageCutRate"];
     static readonly string[] Attacks=["physicsAttackPowerRate","magicAttackPowerRate","fireAttackPowerRate","thunderAttackPowerRate","darkAttackPowerRate"];
+    static readonly string[] Elements=["magicDamageCutRate","fireDamageCutRate","thunderDamageCutRate","darkDamageCutRate"];
+    static readonly string[] Status=["registPoizonChangeRate","registDiseaseChangeRate","registBloodChangeRate","registFreezeChangeRate","registSleepChangeRate","registMadnessChangeRate","registCurseChangeRate"];
     static readonly string[] Kept=["spCategory","categoryPriority","effectTargetOpposeTarget","effectTargetFriendlyTarget","effectTargetSelfTarget","effectTargetSelf","effectTargetFriend","effectTargetEnemy","effectTargetPlayer","effectTargetAI","effectTargetLive","effectTargetGhost","bCurrHPIndependeMaxHP"];
     static (string,object)[] All(string[] fields,float value)=>fields.Select(f=>(f,(object)value)).ToArray();
     static (int id,string name,bool player,(string,object)[] fields)[] Rows=>[
@@ -20,9 +22,13 @@ static class LawAssets {
         (First+22,"Tower law fatigue 2",true,[("staminaRecoverChangeSpeed",-18)]),
         (First+31,"Tower law focus 1",true,[("artsConsumptionRate",1.25f),("magicConsumptionRate",1.25f),("miracleConsumptionRate",1.25f)]),
         (First+32,"Tower law focus 2",true,[("artsConsumptionRate",1.5f),("magicConsumptionRate",1.5f),("miracleConsumptionRate",1.5f)]),
-        (First+41,"Tower law poverty 1",true,[("soulRate",0.75f)]),
-        (First+42,"Tower law poverty 2",true,[("soulRate",0.5f)]),
+        (First+41,"Tower law poverty 1",true,[("soulRate",0.85f)]),
+        (First+42,"Tower law poverty 2",true,[("soulRate",0.7f)]),
         (First+50,"Tower law overtime bleed",true,[("motionInterval",1f),("changeHpRate",2f),("vfxId",-1)]),
+        (First+61,"Tower law elemental resistance 1",false,[..All(Elements,0.9f)]),
+        (First+62,"Tower law elemental resistance 2",false,[..All(Elements,0.8f)]),
+        (First+71,"Tower law status resistance 1",false,[..All(Status,1.15f)]),
+        (First+72,"Tower law status resistance 2",false,[..All(Status,1.3f)]),
     ];
     static void Set(PARAM.Row r,string key,object value)=>r[key].Value=Convert.ChangeType(value,r[key].Value.GetType());
     static PARAM.Row Create(PARAM effects,(int id,string name,bool player,(string,object)[] fields) spec) {
@@ -56,25 +62,31 @@ static class LawAssets {
         var original=PARAM.Read(file.Bytes);original.ApplyParamdef(def);
         var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
         var existing=effects.Rows.Where(r=>r.ID>=First&&r.ID<First+100).ToList();
-        if(existing.Count>0) {
-            // 已经打过补丁：只校验，原样写出，保证可以重复运行
-            if(existing.Count!=Rows.Length)throw new Exception("Law effect range 9660000-9660099 already in use");
-            Verify(effects);
-        } else {
-            foreach(var spec in Rows)effects.Rows.Add(Create(effects,spec));
-            effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=effects.Write();
+        var owned=Rows.Select(r=>r.id).ToHashSet();
+        if(existing.Any(r=>!owned.Contains(r.ID)))throw new Exception("Law effect range 9660000-9660099 already in use");
+        foreach(var row in existing) {
+            var spec=Rows.Single(r=>r.id==row.ID);var expected=Create(effects,spec);
+            foreach(var cell in expected.Cells) {
+                var key=cell.Def.InternalName;
+                if(System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,row[key].Value))continue;
+                if(key=="soulRate"&&((row.ID==First+41&&Convert.ToSingle(row[key].Value)==0.75f)||(row.ID==First+42&&Convert.ToSingle(row[key].Value)==0.5f)))continue;
+                throw new Exception($"Unexpected existing law effect: {row.ID} {key}");
+            }
         }
+        effects.Rows.RemoveAll(r=>owned.Contains(r.ID));
+        foreach(var spec in Rows)effects.Rows.Add(Create(effects,spec));
+        effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=effects.Write();
         var others=reg.Files.Where(f=>f!=file).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
         Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
         SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
         var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
         foreach(var f in check.Files.Where(f=>f.Name!=file.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
         var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);Verify(actual);
-        if(actual.Rows.Count!=original.Rows.Count+(existing.Count>0?0:Rows.Length))throw new Exception("Unexpected effect count");
+        if(actual.Rows.Count!=original.Rows.Count+Rows.Length-existing.Count)throw new Exception("Unexpected effect count");
         var rows=actual.Rows.ToDictionary(r=>r.ID);
-        foreach(var row in original.Rows)foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing effect changed: {row.ID}");
+        foreach(var row in original.Rows.Where(r=>!owned.Contains(r.ID)))foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing effect changed: {row.ID}");
         string Hash(string p)=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p)));
         File.WriteAllText(Path.Combine(output,"law-build.json"),System.Text.Json.JsonSerializer.Serialize(new{effects=Rows.Select(r=>r.id),sourceRegulationSha256=Hash(Path.Combine(input,"regulation.bin")),regulationSha256=Hash(path)},new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
-        Console.WriteLine($"Verified {Rows.Length} law effects; all existing regulation data preserved");
+        Console.WriteLine($"Verified {Rows.Length} law effects; all unrelated regulation data preserved");
     }
 }

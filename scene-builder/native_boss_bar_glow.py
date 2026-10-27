@@ -51,6 +51,7 @@ def members():
       private var towerItemTint:uint = 0xE0B050;
       private var towerItemFormat:flash.text.TextFormat = new flash.text.TextFormat();
       private var towerItemError:String = "";
+      private var towerBarFrame:Number = 0;
       private var towerAffixNames:Array = [{names}];
       private var towerAffixColors:Array = [{colors}];
       private var towerAffixAccents:Array = [{accents}];
@@ -131,7 +132,7 @@ def members():
             var text:String = field.text;
             if(text.length == 0 || !item.visible) return;
             if(text != this.towerItemText || this.towerItemKinds.length != text.length) this.towerBarParse(field);
-            var time:Number = flash.utils.getTimer() / 1000;
+            var time:Number = (++this.towerBarFrame) / 30;
             var breath:Number = 0.5 + 0.5 * Math.sin(time * 2.2);
             for(var index:int = 0; index < text.length; index++)
             {{
@@ -211,7 +212,7 @@ def build(ffdec, original, output, java='java'):
         if 'towerBarUpdate' not in actual or 'GlowFilter' not in actual or 'towerAffixNames' not in actual:
             raise ValueError('Compiled boss bar effect missing')
         (output / (STEM + '.as')).write_text(actual, encoding='utf-8')
-    manifest = {'experimental': True, 'gameVerified': False, 'class': f'{PACKAGE}.{CLASS}', 'field': 'BossList.Item_N_0.Name.Text',
+    manifest = {'experimental': True, 'gameVerified': False, 'clock': 'ENTER_FRAME / 30; avoids GFx getTimer ReferenceError #1065', 'class': f'{PACKAGE}.{CLASS}', 'field': 'BossList.Item_N_0.Name.Text',
                 'effect': 'affix words coloured per affix and flowing towards a lighter tone; boss name flows between its colour and gold with a bright white-gold glint; thin gold rim, upward flickering plume and breathing outer glow tinted by the first affix',
                 'files': [{'file': 'menu/' + src.name, 'originalSha256': hashlib.sha256(src.read_bytes()).hexdigest(),
                            'patchedSha256': hashlib.sha256(dst.read_bytes()).hexdigest(), 'tagsVerified': count, 'changedTag': 'DoABC'}]}

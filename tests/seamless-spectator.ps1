@@ -8,14 +8,18 @@ if (!$fn) {throw 'Missing spectator configuration function'}
 . ([scriptblock]::Create($fn.Extent.Text))
 foreach ($newline in @("`n","`r`n")) {
     foreach ($setting in @('always_spectate_on_death = 0','always_spectate_on_death = 1'," `talways_spectate_on_death = 0",'')) {
-        $inputText = @('[GAMEPLAY]',$setting,'[NETWORK]','cooppassword = test-only','save_file_extension = ertowercoop') -join $newline
+      foreach ($debuff in @('death_debuffs = 1','death_debuffs = 0'," `tdeath_debuffs = 1",'')) {
+        $inputText = @('[GAMEPLAY]',$setting,$debuff,'[NETWORK]','cooppassword = test-only','save_file_extension = ertowercoop') -join $newline
         $result = Set-TowerSpectatorMode $inputText
         if ($result -notmatch '(?m)^always_spectate_on_death = 1\r?$') {throw 'Spectator mode not enabled'}
+        if ($result -notmatch '(?m)^death_debuffs = 0\r?$') {throw 'Death debuffs not disabled'}
+        if ($result.IndexOf('death_debuffs') -gt $result.IndexOf('[NETWORK]')) {throw 'Death debuffs in wrong INI section'}
         if ($result -notmatch 'cooppassword = test-only' -or $result -notmatch 'save_file_extension = ertowercoop') {throw 'Unrelated configuration changed'}
         if ($result.IndexOf('always_spectate_on_death') -gt $result.IndexOf('[NETWORK]')) {throw 'Wrong INI section'}
         if ((Set-TowerSpectatorMode $result) -cne $result) {throw 'Not idempotent'}
+      }
     }
 }
 $source = [IO.File]::ReadAllText($path)
 if ($source -notmatch '\$modified = Set-TowerSpectatorMode \$modified') {throw 'Launcher does not apply spectator mode'}
-Write-Output '8 spectator configuration cases passed.'
+Write-Output '32 spectator/death-debuff configuration cases passed.'

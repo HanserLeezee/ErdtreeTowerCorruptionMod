@@ -34,15 +34,29 @@ fn spent_ash(quantity:u32,goods_type:Option<u8>)->bool {
     quantity==0 && matches!(goods_type,Some(7|8))
 }
 /// 召唤师：战斗胜利时召唤物还活着，这次召唤不消耗骨灰——把用掉的骨灰补回 1 次，之后就不会被清理
-pub fn refund_spent_ashes(data:&mut PlayerGameData)->Result<usize,String> {
+pub fn ash_snapshot(data:&PlayerGameData)->Result<Vec<(u32,u32)>,String> {
     let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"物品参数尚未就绪")?;
-    let mut refunded=0;
-    for entry in data.equipment.equip_inventory_data.items_data.normal_entries_mut() {
-        let Some(e)=entry.as_option_mut() else{continue};
+    let mut ashes=Vec::new();
+    for entry in data.equipment.equip_inventory_data.items_data.normal_entries() {
+        let Some(e)=entry.as_option() else{continue};
         let kind=if e.item_id.category()==ItemCategory::Goods {params.get::<eldenring::cs::EquipParamGoods>(e.item_id.param_id()).map(|p|p.goods_type())}else{None};
-        if spent_ash(e.quantity,kind) {e.quantity=1;refunded+=1;}
+        if matches!(kind,Some(7|8))&&e.quantity>0 {ashes.push((e.item_id.param_id(),e.quantity));}
     }
-    Ok(refunded)
+    Ok(ashes)
+}
+fn ash_refund_target(before:&[(u32,u32)],current:&[(u32,u32)],used:Option<u32>)->Option<u32> {
+    let id=used?;
+    let old=before.iter().find(|(item,_)|*item==id)?.1;
+    let now=current.iter().find(|(item,_)|*item==id).map_or(0,|(_,n)|*n);
+    (old>0&&now<old).then_some(id)
+}
+pub fn refund_spent_ashes(data:&mut PlayerGameData,before:&[(u32,u32)],used:Option<u32>)->Result<usize,String> {
+    let current=ash_snapshot(data)?;
+    let Some(id)=ash_refund_target(before,&current,used) else{return Ok(0);};
+    let item=ItemId::new(ItemCategory::Goods,id).map_err(|e|e.to_string())?;
+    super::items::give(&[(item.into_inner() as i32,1,-1)])?;
+    super::log(format!("Spirit ash refund requested: goods={id} before={before:?} current={current:?}"));
+    Ok(1)
 }
 pub fn clear_spent_ashes(data:&mut PlayerGameData)->Result<(),String> {
     let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"物品参数尚未就绪")?;
@@ -73,6 +87,15 @@ pub fn clear_spent_ashes(data:&mut PlayerGameData)->Result<(),String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn refund_tracks_used_ash_even_when_entry_is_removed_or_stack_is_not_empty() {
+        let before=[(200000,1),(201000,3)];
+        assert_eq!(super::ash_refund_target(&before,&[(201000,3)],Some(200000)),Some(200000));
+        assert_eq!(super::ash_refund_target(&before,&[(200000,1),(201000,2)],Some(201000)),Some(201000));
+        assert_eq!(super::ash_refund_target(&before,&before,Some(200000)),None);
+        assert_eq!(super::ash_refund_target(&before,&[],None),None);
+        assert_eq!(super::ash_refund_target(&before,&[],Some(999999)),None);
+    }
     use super::*;
     use eldenring::cs::{EquipDataItem,GaitemHandle,OptionalItemId};
     #[test]

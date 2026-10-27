@@ -1,6 +1,7 @@
 {
   "experimental": true,
   "gameVerified": false,
+  "clock": "ENTER_FRAME / 30; avoids GFx getTimer ReferenceError #1065",
   "class": "_01_000_FE_fla.BossFE_Bar_Ani_40",
   "field": "BossList.Item_N_0.Name.Text",
   "effect": "affix words coloured per affix and flowing towards a lighter tone; boss name flows between its colour and gold with a bright white-gold glint; thin gold rim, upward flickering plume and breathing outer glow tinted by the first affix",
@@ -8,7 +9,7 @@
     {
       "file": "menu/01_000_fe.gfx",
       "originalSha256": "cef2ba8350aa8a03b58729472c3b3b110af798881eedc8b4284a499f9b8754ed",
-      "patchedSha256": "b888deede7707bf5b2dc04779509e1a3946ca8deaa68a62e57ff7664346ebe5a",
+      "patchedSha256": "ef480dc6f7a6a0eeabf1890edc56461f87d1b706f098697afdd63c842a1aa025",
       "tagsVerified": 694,
       "changedTag": "DoABC"
     }

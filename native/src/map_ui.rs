@@ -459,21 +459,19 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
             draw.add_text([x-5.0,y-10.0],ImColor32::WHITE,(index+1).to_string());
         }
         if hovered==Some(id) {
-                let mut lines=vec![if node.kind==NodeKind::Boss {
+                use crate::fancy_text::{self,Effect,Layer,Style};
+                let name=if node.kind==NodeKind::Boss {
                     crate::enemies::node_roster(run,id).first().map_or("首领",|enemy|enemy.name).to_owned()
-                } else {node.kind.label().to_owned()}];
+                } else {node.kind.label().to_owned()};
                 let affixes=erdtree_tower::boss_affixes::roll(run,id);
-                if !affixes.is_empty() {
-                    lines[0]=format!("{} {}",erdtree_tower::boss_affixes::title(&affixes),lines[0]);
-                    lines.extend(affixes.iter().map(|a|format!("{}：{}",a.name(),a.description())));
-                    lines.push(format!("胜利额外获得 {} 卢恩",erdtree_tower::boss_affixes::bonus_runes(run,id)));
-                }
-                let width=lines.iter().map(|l|ui.calc_text_size(l)[0]).fold(0.0,f32::max);
-                draw.add_rect([pos[0]-width*0.5-9.0,pos[1]+39.0],[pos[0]+width*0.5+9.0,pos[1]+69.0+22.0*(lines.len()-1) as f32],ImColor32::from_rgb(77,57,29)).rounding(5.0).filled(true).build();
-                for (row,line) in lines.iter().enumerate() {
-                    let x=if row==0 {pos[0]-ui.calc_text_size(line)[0]*0.5}else{pos[0]-width*0.5};
-                    draw.add_text([x,pos[1]+43.0+22.0*row as f32],if row==0 {ImColor32::from_rgb(255,231,168)}else{ImColor32::from_rgb(232,214,180)},line);
-                }
+                let size=ui.current_font_size();
+                let mut parts:Vec<_>=affixes.iter().map(|a|(a.name(),fancy_text::affix_style(*a))).collect();
+                parts.push((&name,Style{color:[255,231,168],accent:[255,255,230],effect:if affixes.is_empty(){Effect::Plain}else{Effect::Shimmer},glow:!affixes.is_empty()}));
+                let title_width=parts.iter().map(|(text,style)|fancy_text::measure(text,size)+if style.effect==Effect::Afterimage{size*0.4}else{0.0}).sum::<f32>()+fancy_text::measure(" · ",size)*(parts.len()-1) as f32;
+                let width=title_width;
+                let height=size+16.0;
+                draw.add_rect([pos[0]-width*0.5-12.0,pos[1]+39.0],[pos[0]+width*0.5+12.0,pos[1]+39.0+height],ImColor32::from_rgb(45,34,21)).rounding(5.0).filled(true).build();
+                fancy_text::draw_line(Layer::Window,pos[0],pos[1]+47.0,size,&parts,(" · ",[180,165,140]),ui.time() as f32);
                 draw.add_circle(pos, radius + 5.0, ImColor32::from_rgb(143, 95, 22))
                     .thickness(2.0)
                     .build();

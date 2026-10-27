@@ -29,8 +29,12 @@ parser = argparse.ArgumentParser(description='Build the release folder, ZIP and 
 parser.add_argument('--previous', help='previous tower-release.json (path or https URL); default: the latest GitHub release')
 parser.add_argument('--first-release', action='store_true', help='no earlier launcher release exists: every file goes into this pack')
 parser.add_argument('--notes', type=Path, help='release notes shown by the launcher')
+parser.add_argument('--display-version', required=True, help='package version shown to players, e.g. 1.0.0; internal build number stays independent')
+parser.add_argument('--build-number', type=int, help='explicit monotonically increasing release build')
 parser.add_argument('--upload', action='store_true', help='upload the mirror folder with ossutil afterwards (see upload_mirror.py)')
 args = parser.parse_args()
+if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', args.display_version):
+    parser.error('--display-version must be major.minor.patch')
 if args.upload:
     import upload_mirror
     upload_tool = upload_mirror.find_ossutil()  # fail before the long build, not after it
@@ -44,6 +48,12 @@ native = re.findall(r"path\s*=\s*['\"](erdtree_tower_preview_v\d+\.dll)['\"]", p
 if len(native) != 1:
     raise SystemExit('Expected one versioned native DLL in preview.me3')
 version = re.search(r'_v(\d+)\.dll$', native[0]).group(1)
+if args.build_number is not None:
+    if args.build_number <= 0: parser.error('--build-number must be positive')
+    version = str(args.build_number)
+    updated_native = f'erdtree_tower_preview_v{version}.dll'
+    profile = profile.replace(native[0], updated_native)
+    native[0] = updated_native
 stage = dist / f'ErdtreeTower-v{version}'
 if stage.exists():
     raise SystemExit('Staging directory already exists; preserve it or choose a new release directory.')
@@ -63,26 +73,25 @@ def copy_tree(src, relative):
         if item.is_symlink() or item.stat().st_file_attributes & 0x400:
             raise RuntimeError(f'Reparse point rejected: {item}')
         if item.is_file():
+            if item.suffix.lower() in ('.pdb', '.log', '.bak'):
+                continue
+            if relative == 'scene-assets' and (item.name.endswith('-build.json') or item.name.endswith('-audit.tsv') or item.suffix.lower() == '.png'):
+                continue
             copy_file(item, Path(relative) / item.relative_to(src))
 
 copy_file(built_native, native[0])
-for name in ['preview.me3', 'Launch-Preview.ps1', 'THIRD_PARTY_NOTICES.md', 'LICENSE', 'ADDITIONAL-TERMS.md']:
+for name in ['LICENSE', 'ADDITIONAL-TERMS.md']:
     copy_file(source / name, name)
+(stage / 'preview.me3').write_text(profile, encoding='utf-8')
 # Ship launcher sources directly so a stale release-preview copy cannot leak into the package.
-for name in ['Launch-Seamless-Tower.ps1', 'New-PartyConfig.ps1']:
+for name in ['Launch-Preview.ps1', 'Launch-Seamless-Tower.ps1', 'New-PartyConfig.ps1', 'seamless-preset.ini', 'THIRD_PARTY_NOTICES.md']:
     copy_file(project / name, name)
 for name in ['scene-assets', 'licenses']:
     copy_tree(project / name, name)
 copy_tree(source / 'loader/bin', 'loader/bin')
 for name in ['LICENSE-MIT', 'LICENSE-APACHE']:
     copy_file(source / 'loader' / name, 'loader/' + name)
-copy_file(source / 'seamless-entry/dinput8.dll', 'seamless-entry/dinput8.dll')
-engine = project.parents[1] / 'work/seamless84-me2/ModEngine-2.1.0.0-win64/modengine2'
-copy_tree(engine / 'bin', 'seamless-entry/modengine2/bin')
-copy_tree(engine / 'assets', 'seamless-entry/modengine2/assets')
-copy_tree(engine / 'crashpad', 'seamless-entry/modengine2/crashpad')
-copy_file(project.parents[1] / 'work/modengine2-package-LICENSE.txt', 'licenses/ModEngine2-MIT.txt')
-for name in ['Start-Tower.ps1', '安装教程.md', '额外DLL插件说明.txt']:
+for name in ['Start-Tower.ps1', 'Launch-Logged.ps1', '安装教程.md', '额外DLL插件说明.txt']:
     copy_file(Path(__file__).parent / name, name)
 copy_file(project / 'reference/联机战斗验证.md', '联机战斗验证.md')
 for name in ['ErdtreeTowerLauncher.exe', 'ErdtreeTowerLauncher.exe.config']:
@@ -105,17 +114,14 @@ for mode in ['Solo', 'Seamless']:
         'set "tower_exit_code=%errorlevel%"\nif not "%tower_exit_code%"=="0" pause\n'
         'exit /b %tower_exit_code%\n', encoding='ascii')
 (stage / '安装教程.txt').write_text((stage / '安装教程.md').read_text(encoding='utf-8'), encoding='utf-8-sig')
-with (stage / 'THIRD_PARTY_NOTICES.md').open('a', encoding='utf-8') as stream:
-    stream.write('\nMod Engine 2 2.1.0: https://github.com/soulsmods/ModEngine2 ; '
-                 'MIT notice: licenses/ModEngine2-MIT.txt. Seamless Co-op is not bundled.\n')
 files = sorted(p for p in stage.rglob('*') if p.is_file())
 for file in files:
     name = file.relative_to(stage).as_posix()
-    if name.startswith('launcher/'):
-        continue  # launcher build output and page assets (tower-icon.png, win-settings.png, ...) are not runtime files
     if (file.suffix in ['.log', '.sl2', '.co2', '.ertowercoop', '.ertowerparty', '.party-award'] or
-            file.name in ['host.json', 'guest.json', 'GamePath.txt'] or
-            file.name.startswith('tower-') or 'settings' in file.name or '/runtime/' in name or '/party-runtime/' in name):
+            file.suffix.lower() in ['.pdb', '.bak'] or
+            file.name in ['host.json', 'guest.json', 'GamePath.txt', 'tower-options.ini', 'tower-debug.enable', 'ersc_settings.ini'] or
+            (name.startswith('tower-') and file.suffix in ['.json', '.jsonl', '.class', '.fp', '.history']) or
+            '/runtime/' in name or '/party-runtime/' in name):
         raise RuntimeError(f'Private runtime file rejected: {name}')
 manifest = ''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(stage).as_posix()}\n' for p in files)
 (stage / 'SHA256SUMS.txt').write_text(manifest, encoding='utf-8')
@@ -140,7 +146,7 @@ def previous_manifest():
 
 
 release_dir = dist / f'release-v{version}'
-release = build_release(stage, version, release_dir, previous_manifest(), args.notes.read_text(encoding='utf-8') if args.notes else '')
+release = build_release(stage, version, release_dir, previous_manifest(), args.notes.read_text(encoding='utf-8') if args.notes else '', args.display_version)
 # Mirror upload folder: the same paths as GitHub's release download URLs
 mirror_dir = dist / f'mirror-v{version}' / 'releases'
 for folder in [mirror_dir / 'download' / release['tag'], mirror_dir / 'latest' / 'download']:
@@ -148,7 +154,7 @@ for folder in [mirror_dir / 'download' / release['tag'], mirror_dir / 'latest' /
     shutil.copy2(release_dir / 'tower-release.json', folder / 'tower-release.json')
 shutil.copy2(release_dir / release['pack']['asset'], mirror_dir / 'download' / release['tag'] / release['pack']['asset'])
 # The ZIP carries the install record, so the launcher in a freshly extracted package knows its exact version and files
-(stage / 'tower-install.json').write_text(json.dumps({'version': release['version'], 'files': release['files']}, ensure_ascii=False),
+(stage / 'tower-install.json').write_text(json.dumps({'version': release['version'], 'displayVersion': release['displayVersion'], 'files': release['files']}, ensure_ascii=False),
                                           encoding='utf-8')
 archive = dist / f'ErdtreeTower-v{version}.zip'
 with zipfile.ZipFile(archive, 'x', zipfile.ZIP_DEFLATED, compresslevel=6) as output:

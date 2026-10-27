@@ -38,7 +38,8 @@ namespace Tower.Update
         public static readonly string[] Forced = { "save_file_extension", "allow_invaders", "always_spectate_on_death" };
 
         readonly string folder;
-        public SeamlessSettings(string gameDir) { folder = Path.Combine(gameDir, "SeamlessCoop"); }
+        readonly string? presetFile;
+        public SeamlessSettings(string gameDir, string? presetFile = null) { folder = Path.Combine(gameDir, "SeamlessCoop"); this.presetFile = presetFile; }
 
         public string Folder => folder;
         public string IniFile => Path.Combine(folder, "ersc_settings.ini");
@@ -66,9 +67,26 @@ namespace Tower.Update
         /// <summary>文件里出现的 键 = 值（只取第一次出现；名字区分大小写，与无缝联机一致）</summary>
         public Dictionary<string, string> Read()
         {
+            var values=ReadFile(IniFile);
+            if (presetFile != null) {
+                if (!File.Exists(presetFile)) throw new IOException("缺少 seamless-preset.ini，请完整更新爬塔文件");
+                var preset=ReadFile(presetFile);
+                foreach(var key in Scalings.Concat(new[]{"allow_summons"})) {
+                    if (!preset.TryGetValue(key,out var value)) throw new IOException("爬塔预设缺少 " + key);
+                    values[key]=Validate(key,value);
+                }
+                values["death_debuffs"]="0";
+                values["always_spectate_on_death"]="1";
+                values["allow_invaders"]="0";
+            }
+            return values;
+        }
+
+        static Dictionary<string,string> ReadFile(string path)
+        {
             var values = new Dictionary<string, string>();
-            if (!File.Exists(IniFile)) return values;
-            foreach (Match m in Regex.Matches(File.ReadAllText(IniFile), @"(?m)^[ \t]*([A-Za-z0-9_]+)[ \t]*=[ \t]*([^\r\n;#]*)"))
+            if (!File.Exists(path)) return values;
+            foreach (Match m in Regex.Matches(File.ReadAllText(path), @"(?m)^[ \t]*([A-Za-z0-9_]+)[ \t]*=[ \t]*([^\r\n;#]*)"))
                 if (!values.ContainsKey(m.Groups[1].Value)) values[m.Groups[1].Value] = m.Groups[2].Value.Trim();
             return values;
         }
@@ -77,17 +95,19 @@ namespace Tower.Update
         public void Write(string key, string value)
         {
             value = Validate(key, value);
-            if (!File.Exists(IniFile)) throw new InvalidOperationException("没找到无缝联机的配置文件 ersc_settings.ini");
-            var raw = File.ReadAllBytes(IniFile);
+            if (presetFile != null && key=="death_debuffs") throw new InvalidOperationException("爬塔固定关闭死亡减益");
+            var path=presetFile != null && (Scalings.Contains(key)||key=="allow_summons") ? presetFile : IniFile;
+            if (!File.Exists(path)) throw new InvalidOperationException("没找到配置文件："+Path.GetFileName(path));
+            var raw = File.ReadAllBytes(path);
             var bom = raw.Length >= 3 && raw[0] == 0xef && raw[1] == 0xbb && raw[2] == 0xbf;
             var text = new UTF8Encoding(false).GetString(raw, bom ? 3 : 0, raw.Length - (bom ? 3 : 0));
             var line = Line(key);
             if (!line.IsMatch(text)) throw new InvalidOperationException($"你的无缝联机版本的配置里没有 {key} 这一项");
-            var backup = IniFile + BackupSuffix;
-            if (!File.Exists(backup)) File.Copy(IniFile, backup);
+            var backup = path + BackupSuffix;
+            if (!File.Exists(backup)) File.Copy(path, backup);
             text = line.Replace(text, m => m.Groups[1].Value + " " + value, 1);
             var bytes = new UTF8Encoding(false).GetBytes(text);
-            File.WriteAllBytes(IniFile, bom ? new byte[] { 0xef, 0xbb, 0xbf }.Concat(bytes).ToArray() : bytes);
+            File.WriteAllBytes(path, bom ? new byte[] { 0xef, 0xbb, 0xbf }.Concat(bytes).ToArray() : bytes);
         }
 
         static string Validate(string key, string value)

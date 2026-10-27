@@ -11,11 +11,32 @@ const ACCENT:[(u8,u8,u8);4]=[(190,70,52),(196,150,72),(150,160,96),(128,104,170)
 const GRADE_COLORS:[(u8,u8,u8);4]=[(150,160,170),(200,160,90),(214,110,70),(225,60,60)];
 const CARD:[f32;2]=[142.0,54.0];const TRUNK:f32=176.0;
 fn rgba(c:(u8,u8,u8),a:u8)->ImColor32 {ImColor32::from_rgba(c.0,c.1,c.2,a)}
-fn node_pos(id:usize)->[f32;2] {let n=&NODES[id];[210.0+f32::from(n.col-1)*168.0,136.0+f32::from(n.row)*66.0+n.branch as f32*16.0]}
+fn display_row(row:u8)->u8 {match row {9=>3,10=>4,3..=8=>row+2,_=>row}}
+fn node_pos(id:usize)->[f32;2] {let n=&NODES[id];[210.0+f32::from(n.col-1)*168.0,136.0+f32::from(display_row(n.row))*56.0+n.branch as f32*8.0]}
 fn moved(focus:usize,dx:i32,dy:i32)->usize {
-    let (x,y)=(i32::from(NODES[focus].col),i32::from(NODES[focus].row));
-    (0..NODES.len()).filter(|&i|{let (ix,iy)=(i32::from(NODES[i].col),i32::from(NODES[i].row));(dx==0||(ix-x)*dx>0)&&(dy==0||(iy-y)*dy>0)})
-        .min_by_key(|&i|{let (ix,iy)=(i32::from(NODES[i].col),i32::from(NODES[i].row));if dx!=0 {(iy-y).abs()*10+(ix-x).abs()}else{(ix-x).abs()*10+(iy-y).abs()}}).unwrap_or(focus)
+    let (x,y)=(i32::from(NODES[focus].col),i32::from(display_row(NODES[focus].row)));
+    (0..NODES.len()).filter(|&i|{let (ix,iy)=(i32::from(NODES[i].col),i32::from(display_row(NODES[i].row)));(dx==0||(ix-x)*dx>0)&&(dy==0||(iy-y)*dy>0)})
+        .min_by_key(|&i|{let (ix,iy)=(i32::from(NODES[i].col),i32::from(display_row(NODES[i].row)));if dx!=0 {(iy-y).abs()*10+(ix-x).abs()}else{(ix-x).abs()*10+(iy-y).abs()}}).unwrap_or(focus)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn expanded_routes_fit_panel_and_follow_visual_navigation() {
+        for id in 0..NODES.len() {
+            let [x,y]=node_pos(id);
+            assert!(x>=36.0&&x+CARD[0]<=1046.0&&y>=116.0&&y+CARD[1]<=778.0);
+            for other in 0..id {
+                let [ox,oy]=node_pos(other);
+                assert!(x+CARD[0]<=ox||ox+CARD[0]<=x||y+CARD[1]<=oy||oy+CARD[1]<=y);
+            }
+        }
+        assert_eq!(moved(6,0,1),27);
+        assert_eq!(moved(27,0,1),29);
+        assert_eq!(moved(29,0,1),8);
+        assert_eq!(moved(8,0,-1),29);
+    }
 }
 /// 带金色边框与四角装饰的暗色面板
 pub(crate) fn panel(draw:&DrawListMut<'_>,min:[f32;2],max:[f32;2],s:f32) {

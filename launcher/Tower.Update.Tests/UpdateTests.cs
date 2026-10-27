@@ -32,6 +32,20 @@ public sealed class UpdateTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task SemanticDisplayVersionIsSavedAfterInstallation()
+    {
+        var manifestPath=Release(97,new Dictionary<string,byte[]> { ["mod.dll"]=Encoding.UTF8.GetBytes("test") },null);
+        var manifest=ReleaseManifest.Parse(File.ReadAllText(manifestPath));
+        manifest.DisplayVersion="1.2.3";
+        File.WriteAllText(Path.Combine(root,"releases","latest",ReleaseManifest.FileName),System.Text.Json.JsonSerializer.Serialize(manifest));
+        var install=Path.Combine(root,"installed");
+        await Update(install);
+        var state=InstallState.Load(install)!;
+        Assert.Equal(97,state.Version);
+        Assert.Equal("1.2.3",state.DisplayVersion);
+    }
+
     /// <summary>把一个版本打包进 releases/{tag}/，并把它设为 latest</summary>
     string Release(int version, Dictionary<string, byte[]> files, string? previous)
     {
@@ -39,7 +53,7 @@ public sealed class UpdateTests : IDisposable
         Write(stage, files);
         var output = Path.Combine(root, "releases", "v" + version);
         var args = $"\"{Path.Combine(Repo, "distribution", "release_pack.py")}\" \"{stage}\" {version} \"{output}\"" + (previous == null ? "" : $" --previous \"{previous}\"");
-        using var process = Process.Start(new ProcessStartInfo("python3", args) { RedirectStandardError = true, RedirectStandardOutput = true })!;
+        using var process = Process.Start(new ProcessStartInfo(OperatingSystem.IsWindows() ? "python" : "python3", args) { RedirectStandardError = true, RedirectStandardOutput = true })!;
         process.WaitForExit();
         Assert.True(process.ExitCode == 0, process.StandardError.ReadToEnd());
         var latest = Path.Combine(root, "releases", "latest");

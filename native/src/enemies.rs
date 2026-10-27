@@ -16,6 +16,8 @@ pub struct Enemy {
     pub dlc:bool,
     /// 仅单人：地图里没有预置实体（boss-pool.txt 第 11 列为 solo 或 trial），不分配联机槽位，联机时抽不到
     pub solo:bool,
+    /// 后追加的实体与名称，不参与旧槽位排序。
+    pub appended:bool,
 }
 /// 联机时只能抽到地图里预先摆放过的敌人；由运行时每帧同步
 static PARTY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
@@ -31,16 +33,15 @@ fn enemy(name: &'static str, model: i32,act:u8,kind:NodeKind) -> Enemy {
         model,
         npc: 900000000 + model * 10000,
         think: model as u32 * 10000,
-        act,kind,bar:0,retired:false,dlc:false,solo:false,
+        act,kind,bar:0,retired:false,dlc:false,solo:false,appended:false,
     }
 }
 static PREVIEW_NAMES:LazyLock<Vec<&'static str>>=LazyLock::new(|| {
     let mut names=Vec::new();
-    // 仅单人的敌人排在 Boss 之后，保持原有名称编号不变
-    // 之后追加的仅单人 Boss、仅单人的怪物依次排在最后（与 scene-builder MelinaAssets.PreviewNames 相同）
-    for name in POOLS.iter().filter(|e|!e.dlc&&!e.solo).map(|e|e.name).chain(BOSSES.iter().filter(|(_,e)|!e.solo).map(|(_,e)|e.name))
-        .chain(POOLS.iter().filter(|e|e.dlc).map(|e|e.name)).chain(BOSSES.iter().filter(|(_,e)|e.solo).map(|(_,e)|e.name))
-        .chain(POOLS.iter().filter(|e|e.solo).map(|e|e.name)) {if !names.contains(&name){names.push(name);}}
+    // 追加顺序固定：旧敌人、旧 Boss、DLC 敌人、新 Boss、新普通怪，保持名称编号不变。
+    for name in POOLS.iter().filter(|e|!e.dlc&&!e.appended).map(|e|e.name).chain(BOSSES.iter().filter(|(_,e)|!e.appended).map(|(_,e)|e.name))
+        .chain(POOLS.iter().filter(|e|e.dlc).map(|e|e.name)).chain(BOSSES.iter().filter(|(_,e)|e.appended).map(|(_,e)|e.name))
+        .chain(POOLS.iter().filter(|e|e.appended).map(|e|e.name)) {if !names.contains(&name){names.push(name);}}
     names
 });
 pub fn preview_texts(group:&[Enemy])->Vec<i32> {
@@ -54,10 +55,10 @@ pub fn preview_texts(group:&[Enemy])->Vec<i32> {
 static POOLS:LazyLock<Vec<Enemy>>=LazyLock::new(||include_str!("../../scene-assets/enemy-pools.txt").lines().map(|line| {
     let p:Vec<_>=line.split('|').collect();
     let kind=match p[1]{"weak"=>NodeKind::Monster,"elite"=>NodeKind::Elite,"boss"=>NodeKind::Boss,_=>panic!("Invalid enemy tier")};
-    // 第 6 列：空、retired（停用）、dlc，或 solo（之后追加、地图里没有联机实体的敌人，只在单人时出现）；DLC 敌人停用时写在第 7 列（dlc|retired）
+    // party 为已补齐联机实体的追加敌人；solo 保留用于未移植敌人。DLC 停用标记在第 7 列。
     let flag=p.get(5).copied().unwrap_or("");let extra=p.get(6).copied().unwrap_or("");
-    assert!(matches!(flag,""|"retired"|"dlc"|"solo")&&matches!(extra,"")||(flag=="dlc"&&extra=="retired"),"Invalid enemy pool flag");
-    Enemy{retired:flag=="retired"||extra=="retired",dlc:flag=="dlc",solo:flag=="solo",..enemy(p[4],p[2].parse().unwrap(),p[0].parse().unwrap(),kind)}
+    assert!(matches!(flag,""|"retired"|"dlc"|"solo"|"party")&&matches!(extra,"")||(flag=="dlc"&&extra=="retired"),"Invalid enemy pool flag");
+    Enemy{retired:flag=="retired"||extra=="retired",dlc:flag=="dlc",solo:flag=="solo",appended:matches!(flag,"solo"|"party"),..enemy(p[4],p[2].parse().unwrap(),p[0].parse().unwrap(),kind)}
 }).collect());
 pub const POOL_NAME_FIRST:i32=9610000;
 pub const BOSS_NAME_FIRST:i32=9600000;
@@ -96,18 +97,18 @@ fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,part
     } else {choose_in(NodeKind::Elite, seed, ordinal * strong + i,act,party)})
         .chain((0..weak).map(|i| choose_in(NodeKind::Monster, seed, ordinal * weak + i,act,party))).collect()
 }
-/// Boss 池：第 11 列为空是原有的 Boss；solo 只在单人时出现；trial 是试验中的 Boss（追忆与 DLC），只能从调试菜单生成，不会被抽到
+/// Boss 第 11 列：party 为追加的多人 Boss；solo 仅单人；trial 仅调试。
 static BOSSES:LazyLock<Vec<(usize,Enemy)>>=LazyLock::new(||include_str!("../../scene-assets/boss-pool.txt").lines().map(|line| {
     let p:Vec<_>=line.split('|').collect();let index=p[2].parse::<u32>().unwrap();
     let flag=p.get(10).copied().unwrap_or("");
-    assert!(matches!(flag,""|"solo"|"trial"),"Invalid boss pool flag");
+    assert!(matches!(flag,""|"solo"|"trial"|"party"),"Invalid boss pool flag");
     (p[1].parse().unwrap(),Enemy{name:p[7],model:p[3].parse().unwrap(),npc:950000000+index as i32*2,think:p[5].parse().unwrap(),act:p[0].parse().unwrap(),kind:NodeKind::Boss,
-        retired:flag=="trial",dlc:false,solo:!flag.is_empty(),bar:if p[9]=="1" {index+1}else{0}})
+        retired:flag=="trial",dlc:false,solo:matches!(flag,"solo"|"trial"),appended:!flag.is_empty(),bar:if p[9]=="1" {index+1}else{0}})
 }).collect());
 static MAP_ENTITIES:LazyLock<Vec<(Enemy,Vec<u32>)>>=LazyLock::new(||{
     let mut variants=std::collections::BTreeMap::new();
-    for &spec in POOLS.iter().filter(|e|!e.dlc&&!e.solo) {variants.insert((spec.act,spec.npc),(spec,4));}
-    for &(_,spec) in BOSSES.iter().filter(|(_,e)|!e.solo) {
+    for &spec in POOLS.iter().filter(|e|!e.dlc&&!e.appended) {variants.insert((spec.act,spec.npc),(spec,4));}
+    for &(_,spec) in BOSSES.iter().filter(|(_,e)|!e.appended) {
         variants.insert((spec.act,spec.npc),(spec,1));
         let elite=Enemy{npc:spec.npc+1,kind:NodeKind::Elite,bar:0,..spec};
         variants.insert((elite.act,elite.npc),(elite,1));
@@ -121,8 +122,9 @@ static MAP_ENTITIES:LazyLock<Vec<(Enemy,Vec<u32>)>>=LazyLock::new(||{
     for line in include_str!("../../scene-assets/party-dlc-slots.tsv").lines().chain(include_str!("../../scene-assets/party-extra-slots.tsv").lines()) {
         let p:Vec<u32>=line.split('|').map(|v|v.parse().unwrap()).collect();
         let spec=POOLS.iter().find(|e|e.act as u32==p[0]&&e.npc as u32==p[1]).copied().unwrap_or_else(|| {
-            let source=BOSSES.iter().find(|(_,e)|e.npc as u32+1==p[1]).expect("Missing relocated elite").1;
-            Enemy{act:p[0] as u8,npc:p[1] as i32,kind:NodeKind::Elite,bar:0,..source}
+            let source=BOSSES.iter().find(|(_,e)|e.npc as u32==p[1]||e.npc as u32+1==p[1]).expect("Missing appended boss").1;
+            let elite=p[1]==source.npc as u32+1;
+            Enemy{act:p[0] as u8,npc:p[1] as i32,kind:if elite{NodeKind::Elite}else{NodeKind::Boss},bar:if elite{0}else{source.bar},..source}
         });
         assert_eq!((spec.model as u32,spec.think),(p[2],p[3]));
         if let Some((_,ids))=entries.iter_mut().find(|(e,_)|e.act==spec.act&&e.npc==spec.npc) {assert_eq!(ids.len(),p[4] as usize);ids.push(p[5]);}
@@ -188,6 +190,7 @@ const RELOCATED_ELITES:[(i32,u8);2]=[(950000152,3),(950000154,3)];
 fn relocated(enemy:&Enemy)->Option<u8> {RELOCATED_ELITES.iter().find(|(npc,_)|*npc==enemy.npc).map(|(_,act)|*act)}
 fn encounter_act(enemy:&Enemy)->u8 {if enemy.npc==950000196 {3}else{relocated(enemy).unwrap_or(enemy.act)}}
 fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
+    if enemy.appended&&!enemy.solo&&kind!=NodeKind::Boss {return false;}
     if enemy.npc==950000196||relocated(enemy).is_some() {return kind==NodeKind::Elite;}
     let minimum=match (kind,enemy.act) {
         (NodeKind::Boss,1)=>35,(NodeKind::Boss,2)=>70,(NodeKind::Boss,3)=>100,
@@ -391,28 +394,32 @@ mod tests {
         assert_eq!(POOLS.iter().filter(|e|e.retired&&e.kind==NodeKind::Monster&&e.act>=2).count(),28);
     }
     #[test]
-    fn solo_weak_enemies_join_solo_rosters_only() {
-        let solo:Vec<_>=POOLS.iter().filter(|e|e.solo).collect();
-        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|e.kind==NodeKind::Monster&&e.act>=2&&!e.retired&&!e.dlc));
+    fn appended_weak_enemies_join_solo_and_party_rosters() {
+        let solo:Vec<_>=POOLS.iter().filter(|e|e.appended).collect();
+        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|e.kind==NodeKind::Monster&&e.act>=2&&!e.retired&&!e.dlc&&!e.solo));
         let mut seen=std::collections::HashSet::new();
         for act in 2..=3 {for seed in 0..800 {
-            for e in roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,false) {if e.solo {seen.insert(e.model);}}
-            assert!(roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,true).iter().all(|e|!e.solo));
+            let group=roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,true);
+            assert_eq!(group,roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,false));
+            map_entities(&group).unwrap();
+            for e in group {if e.appended {seen.insert(e.model);}}
         }}
         assert_eq!(seen.len(),9);
         // 仅单人的怪物排在预览名单最后
         let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-9..],&solo.iter().map(|e|e.name).collect::<Vec<_>>()[..]);
     }
     #[test]
-    fn trial_bosses_are_debug_only_and_solo_bosses_never_join_party_rosters() {
-        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.retired).collect();
+    fn appended_bosses_have_party_slots_and_reach_boss_rosters() {
+        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended).collect();
         assert_eq!(trial.len(),13);
-        assert!(trial.iter().all(|(_,e)|e.solo&&e.bar>0&&recommended_level(e.name).is_some()));
+        assert!(trial.iter().all(|(_,e)|!e.solo&&!e.retired&&e.bar>0&&recommended_level(e.name).is_some()));
+        let mut seen=std::collections::HashSet::new();
         for act in 1..=3 {for seed in 0..400 {for kind in [NodeKind::Elite,NodeKind::Boss] {
             assert!(roster_in(kind,seed,seed as usize%24,0,act,false).iter().all(|e|!e.retired));
-            assert!(roster_in(kind,seed,seed as usize%24,0,act,true).iter().all(|e|!e.solo));
+            let group=roster_in(kind,seed,seed as usize%24,0,act,true);map_entities(&group).unwrap();
+            for e in group {if e.appended {assert_eq!(kind,NodeKind::Boss);seen.insert(e.npc);}}
         }}}
-        assert_eq!(debug_encounters().iter().filter(|g|g[0].retired).count(),13);
+        assert_eq!(seen.len(),13);
         // 仅单人的 Boss 排在预览名单里原有名字之后（再之后是仅单人的怪物），原有预览编号不变
         let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-22..names.len()-9],&trial.iter().map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
     }
@@ -421,7 +428,7 @@ mod tests {
         for (spec,ids) in MAP_ENTITIES.iter() {for (slot,id) in ids.iter().enumerate() {
             println!("PARTY_SLOT={}|{}|{}|{}|{}|{}",spec.act,spec.npc,spec.model,spec.think,slot,id);
         }}
-        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),765);
+        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),805);
     }
     #[test]
     fn first_act_elites_always_use_curated_combatants_not_boss_labels() {
@@ -452,7 +459,7 @@ mod tests {
     }
     #[test]
     fn expanded_pools_deal_distinct_early_groups_and_shuffle_across_runs() {
-        for (act,weak,elite) in [(1,18,21),(2,21,19),(3,18,18)] {
+        for (act,weak,elite) in [(1,18,21),(2,26,19),(3,22,18)] {
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster).count(),weak);
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Elite).count(),elite);
             for seed in 0..100 {
@@ -466,8 +473,8 @@ mod tests {
     }
     #[test]
     fn eligible_encounters_are_reachable_as_boss_and_elite() {
-        assert_eq!(BOSSES.len(),140);
-        assert_eq!(BOSSES.iter().map(|(id,_)|*id).collect::<std::collections::HashSet<_>>().len(),105);
+        assert_eq!(BOSSES.len(),153);
+        assert_eq!(BOSSES.iter().map(|(id,_)|*id).collect::<std::collections::HashSet<_>>().len(),118);
         for act in 1..=3 {
             for kind in [NodeKind::Boss,NodeKind::Elite] {
                 if act==1&&kind==NodeKind::Elite {continue;}
@@ -635,20 +642,20 @@ mod tests {
         assert!(dlc.iter().all(|e|e.model>=5000&&!boss_npc(e.npc)&&bar_rank(e)>=2&&role(e)!=erdtree_tower::encounter::Role::Boss));
         // 名称编号：DLC 敌人排在已有名称之后
         let first_dlc=POOL_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
-        assert!(POOL_NAMES[first_dlc..].iter().all(|n|dlc.iter().any(|e|e.name==*n)));
+        assert!(POOL_NAMES[first_dlc..first_dlc+dlc.len()].iter().all(|n|dlc.iter().any(|e|e.name==*n)));
         let first_preview=PREVIEW_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
-        assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len());
+        assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len()-22);
         // 联机实体只包含地图里摆放过的敌人
         assert_eq!(MAP_ENTITIES.iter().filter(|(spec,_)|spec.dlc).map(|(_,ids)|ids.len()).sum::<usize>(),80);
         for act in 1..=3 {for seed in 0..200 {for kind in [NodeKind::Monster,NodeKind::Elite] {
             assert!(roster_in(kind,seed,0,11,act,true).iter().all(|e|!e.retired));
         }}}
         let solo:std::collections::HashSet<_>=(1..=3).flat_map(|act|(0..400).flat_map(move|seed|[NodeKind::Monster,NodeKind::Elite].into_iter().flat_map(move|kind|roster_in(kind,seed,0,11,act,false)))).filter(|e|e.dlc).map(|e|e.model).collect();
-        assert_eq!(solo.len(),20,"every DLC enemy is reachable solo");
+        assert_eq!(solo,dlc.iter().filter(|e|!e.retired).map(|e|e.model).collect(),"every active DLC enemy is reachable solo");
         let party:std::collections::HashSet<_>=(1..=3).flat_map(|act|(0..400).flat_map(move|seed|[NodeKind::Monster,NodeKind::Elite].into_iter().flat_map(move|kind|roster_in(kind,seed,0,11,act,true)))).filter(|e|e.dlc).map(|e|e.model).collect();
         assert_eq!(party,solo,"every DLC enemy must also be reachable in multiplayer");
         for act in 1..=3 {
-            let old:Vec<_>=MAP_ENTITIES.iter().filter(|(e,_)|e.act==act&&!e.dlc&&!(e.act==3&&e.npc==950000197)).flat_map(|(_,ids)|ids).copied().collect();
+            let old:Vec<_>=MAP_ENTITIES.iter().filter(|(e,_)|e.act==act&&!e.dlc&&!e.appended&&!(e.act==3&&e.npc==950000197)).flat_map(|(_,ids)|ids).copied().collect();
             assert_eq!(old,(0..old.len()).map(|n|48000000+u32::from(act)*10000+n as u32).collect::<Vec<_>>());
         }
         let lines:Vec<_>=include_str!("../../scene-assets/party-dlc-slots.tsv").lines().collect();assert_eq!(lines.len(),80);

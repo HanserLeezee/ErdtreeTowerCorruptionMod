@@ -18,6 +18,25 @@ public sealed class SeamlessSettingsTests : IDisposable
     public void Dispose() { try { Directory.Delete(game, true); } catch (IOException) { } }
 
     [Fact]
+    public void TowerPresetIsDisplayedAndEditedWithoutChangingOriginalScaling()
+    {
+        var preset=Path.Combine(game,"seamless-preset.ini");
+        File.WriteAllText(preset,"[GAMEPLAY]\nallow_summons = 1\ndeath_debuffs = 0\n[SCALING]\nenemy_health_scaling = 100\nenemy_damage_scaling = 20\nenemy_posture_scaling = 30\nboss_health_scaling = 100\nboss_damage_scaling = 20\nboss_posture_scaling = 80\n");
+        var settings=new SeamlessSettings(game,preset);
+        var original=File.ReadAllBytes(settings.IniFile);
+        var values=settings.Read();
+        Assert.Equal(new[]{"100","20","30","100","20","80"},SeamlessSettings.Scalings.Select(k=>values[k]).ToArray());
+        Assert.Equal("0",values["death_debuffs"]);
+        settings.Write("enemy_health_scaling","125");
+        Assert.Equal("125",settings.Read()["enemy_health_scaling"]);
+        Assert.Contains("enemy_health_scaling = 125",File.ReadAllText(preset));
+        Assert.Equal(original,File.ReadAllBytes(settings.IniFile));
+        Assert.Throws<InvalidOperationException>(()=>settings.Write("death_debuffs","1"));
+        File.Delete(preset);
+        Assert.Throws<IOException>(()=>settings.Read());
+    }
+
+    [Fact]
     public void EditsKeepEverythingElseAndBackUpTheOriginalOnce()
     {
         var settings = new SeamlessSettings(game);

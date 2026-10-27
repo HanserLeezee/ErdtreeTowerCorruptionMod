@@ -36,6 +36,7 @@ namespace Tower.Launcher
         ReleaseManifest? latest;
         string updateStatus = "尚未检查";
         bool checking, launching;
+        int? launchWorkerId;
         CancellationTokenSource? running;
         bool pausing, lastVerify;
         /// <summary>这一轮下载（含暂停后继续、失败后重试）的总字节数：已经下好的部分算作完成，进度不会倒退</summary>
@@ -187,7 +188,7 @@ namespace Tower.Launcher
 
         // ---------------- 无缝联机 ----------------
 
-        SeamlessSettings? Seamless() => GameDir() is { } dir ? new SeamlessSettings(dir) : null;
+        SeamlessSettings? Seamless() => GameDir() is { } dir ? new SeamlessSettings(dir,Path.Combine(paths.InstallDir,"seamless-preset.ini")) : null;
 
         (string path, long size, DateTime time, string label)? versionCache;
 
@@ -376,9 +377,9 @@ namespace Tower.Launcher
         {
             var state = InstallState.Load(paths.InstallDir);
             var installed = IsInstalled(state);
-            var updateTo = installed && latest != null && (state == null || latest.Version > state.Version) ? Label(latest.Version) : null;
+            var updateTo = installed && latest != null && (state == null || latest.Version > state.Version) ? Label(latest) : null;
             var note = settings.Mode == HostSettings.Seamless ? "无缝联机模式" : "单人模式";
-            form.Post("game", "status", new { game = Game, installed, version = state == null ? "" : Label(state.Version), updateTo, note });
+            form.Post("game", "status", new { game = Game, installed, version = PackageVersion(state), updateTo, note });
             PushValues(state);
         }
 
@@ -396,7 +397,8 @@ namespace Tower.Launcher
                 ["autoCheck"] = settings.AutoCheck,
                 ["closeExit"] = settings.CloseExit,
                 ["gameDir"] = GameDir() ?? "（未设置：开始游戏时自动查找，找不到再询问）",
-                ["version"] = state != null ? Label(state.Version) : IsInstalled(state) ? "未知（不是通过启动器安装的）" : "未安装",
+                ["version"] = PackageVersion(state),
+                ["launcherVersion"] = typeof(TowerHost).Assembly.GetName().Version?.ToString(3) ?? "未知",
                 ["updateStatus"] = updateStatus,
             };
             foreach (var (id, _, fallback) in TowerOptions.Hotkeys) values["key." + id] = TowerOptions.Key(options, id, fallback);
@@ -409,8 +411,8 @@ namespace Tower.Launcher
         {
             var page = $"{Repo}/releases/tag/{Uri.EscapeDataString(release.Tag)}";
             var lines = release.Notes.Split('\n').Select(l => l.Trim().TrimStart('-', '*', '·', ' ').Trim()).Where(l => l.Length > 0).Take(4).ToList();
-            if (lines.Count == 0) lines.Add($"{Label(release.Version)} 更新说明");
-            var items = lines.Select((line, i) => new { title = line, date = i == 0 ? Label(release.Version) : "", href = page }).ToList();
+            if (lines.Count == 0) lines.Add($"{Label(release)} 更新说明");
+            var items = lines.Select((line, i) => new { title = line, date = i == 0 ? Label(release) : "", href = page }).ToList();
             form.Post("game", "news", new { game = Game, tab = "notice", items });
         }
 
@@ -433,7 +435,9 @@ namespace Tower.Launcher
 
         bool IsInstalled(InstallState? state) => state != null || File.Exists(Path.Combine(paths.InstallDir, "Start-Tower.ps1"));
 
-        static string Label(int version) => "v" + version;
+        static string Label(ReleaseManifest release) => Versions.Label(release.Version, release.DisplayVersion);
+        static string Label(InstallState state) => Versions.Label(state.Version, state.DisplayVersion);
+        string PackageVersion(InstallState? state) => state != null ? Label(state) : IsInstalled(state) ? "开发版（未发布）" : "未安装";
 
         // ---------------- 检查与安装更新 ----------------
 
@@ -448,10 +452,10 @@ namespace Tower.Launcher
                 latest = await lines.LatestAsync(CancellationToken.None);
                 var state = InstallState.Load(paths.InstallDir);
                 var newer = state == null || latest.Version > state.Version;
-                SetStatus(newer ? $"发现新版本 {Label(latest.Version)}（{lines.Chosen}）" : $"已是最新版本（{Label(latest.Version)} · {lines.Chosen}）");
+                SetStatus(newer ? $"发现新版本 {Label(latest)}（{lines.Chosen}）" : $"已是最新版本（{Label(latest)} · {lines.Chosen}）");
                 PushNotes(latest);
                 PushStatus();
-                if (newer && IsInstalled(state)) Toast($"发现新版本 {Label(latest.Version)}：点「立即更新」，只下载有变化的文件", "info", 6000);
+                if (newer && IsInstalled(state)) Toast($"发现新版本 {Label(latest)}：点「立即更新」，只下载有变化的文件", "info", 6000);
                 else if (user && !newer) Toast("已是最新版本", "success");
             }
             catch (Exception e)
@@ -498,18 +502,18 @@ namespace Tower.Launcher
                 {
                     sessionTotal = -1;
                     Progress(kind, "finished");
-                    SetStatus($"已是最新版本（{Label(target.Version)} · {lines.Chosen}）");
+                    SetStatus($"已是最新版本（{Label(target)} · {lines.Chosen}）");
                     PushStatus();
                     Toast(verify ? "校验完成：文件都完整" : "已是最新版本", "success");
                     return;
                 }
                 if (sessionTotal < plan.DownloadBytes) sessionTotal = plan.DownloadBytes;
                 var reporter = new Reporter(this, kind, sessionTotal - plan.DownloadBytes, sessionTotal, cancel.Token);
-                Log.Write($"{(verify ? "校验" : "更新")}到 {Label(target.Version)}（{lines.Chosen}）：写入 {plan.Writes.Count} 个文件，删除 {plan.Deletes.Count} 个，下载 {Size(plan.DownloadBytes)}");
+                Log.Write($"{(verify ? "校验" : "更新")}到 {Label(target)}（{lines.Chosen}）：写入 {plan.Writes.Count} 个文件，删除 {plan.Deletes.Count} 个，下载 {Size(plan.DownloadBytes)}");
                 await Task.Run(() => new Updater(paths.InstallDir, lines).ApplyAsync(plan, reporter, cancel.Token), cancel.Token);
                 sessionTotal = -1;
                 Progress(kind, "finished", 100);
-                SetStatus($"已是最新版本（{Label(target.Version)} · {lines.Chosen}）");
+                SetStatus($"已是最新版本（{Label(target)} · {lines.Chosen}）");
                 PushStatus();
                 Finished(plan, kind, verify);
             }
@@ -532,7 +536,7 @@ namespace Tower.Launcher
 
         void Finished(UpdatePlan plan, string kind, bool verify)
         {
-            var version = Label(plan.Target.Version);
+            var version = Label(plan.Target);
             var text = verify ? $"校验完成：修复了 {plan.Writes.Count} 个文件（下载 {Size(plan.DownloadBytes)}）"
                 : kind == "install" ? $"安装完成：{version}"
                 : $"已更新到 {version}，只下载了 {Size(plan.DownloadBytes)}";
@@ -636,9 +640,18 @@ namespace Tower.Launcher
         async Task LaunchAsync()
         {
             if (GameRunning()) { Toast("艾尔登法环已经在运行了", "warn"); return; }
+            if (launchWorkerId.HasValue) {
+                try {
+                    using var worker = Process.GetProcessById(launchWorkerId.Value);
+                    if (!worker.HasExited) { Toast("上次启动仍在后台运行，请先查看日志", "warn", 0, "打开日志", "openLogs"); return; }
+                } catch (ArgumentException) { }
+                launchWorkerId = null;
+            }
             if (launching) { Toast("正在启动，请稍候", "info"); return; }
             if (running != null) { Toast("正在更新，完成后再开始游戏", "warn"); return; }
             var script = Path.Combine(paths.InstallDir, "Start-Tower.ps1");
+            var wrapper = Path.Combine(paths.InstallDir, "Launch-Logged.ps1");
+            if (!File.Exists(wrapper)) { Toast("缺少 Launch-Logged.ps1，请完整更新启动器文件", "error", 0); return; }
             if (!File.Exists(script)) { Toast("缺少 Start-Tower.ps1：请在设置 → 更新里「校验并修复文件」", "error", 6000); return; }
             var gameDir = GameDir() ?? FindGameDir() ?? ChooseGameDir();
             if (gameDir == null) return;
@@ -648,10 +661,13 @@ namespace Tower.Launcher
                 var errorFile = paths.LaunchErrorFile;
                 if (File.Exists(errorFile)) File.Delete(errorFile);
                 var mode = settings.Mode;
-                var arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(script)} -Mode {mode} -GameDir {Quote(gameDir)} -ErrorFile {Quote(errorFile)}";
+                var logs = Path.Combine(paths.LaunchLogs, DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                Directory.CreateDirectory(logs);
+                var arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(wrapper)} -Entry {Quote(script)} -Mode {mode} -GameDir {Quote(gameDir)} -ErrorFile {Quote(errorFile)} -LogDirectory {Quote(logs)}";
                 Log.Write("开始游戏：" + arguments);
                 var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
                 using var process = Process.Start(new ProcessStartInfo(powershell, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = paths.InstallDir })!;
+                launchWorkerId = process.Id;
                 Toast(mode == HostSettings.Seamless ? "正在启动（无缝联机）…" : "正在启动（单人）…", "info", 6000);
                 if (mode == HostSettings.Seamless && Seamless() is { } seamless && seamless.Installed && !seamless.Version().Verified)
                     Toast("这个无缝联机版本还没验证过：照常启动，联机复活修复会自动关闭；联机双方要用同一个版本", "warn", 8000);
@@ -660,6 +676,11 @@ namespace Tower.Launcher
                 for (var waited = 0; !process.HasExited || (!started && process.ExitCode == 0 && waited < 120); waited++)
                 {
                     await Task.Delay(500);
+                    if (!started && waited >= 119) {
+                        Log.Write("等待游戏进程超时；后台日志：" + logs);
+                        Toast("60 秒内未检测到游戏启动，请查看后台日志", "error", 0, "打开日志", "openLogs");
+                        return;
+                    }
                     if (started || !GameRunning()) continue;
                     started = true;
                     Log.Write("游戏已启动");
@@ -668,15 +689,15 @@ namespace Tower.Launcher
                 }
                 if (process.ExitCode != 0)
                 {
-                    var reason = File.Exists(errorFile) ? File.ReadAllText(errorFile).Trim() : "";
+                    var reason = LaunchResult.Summary(errorFile, logs, process.ExitCode);
                     Log.Write($"启动脚本退出码 {process.ExitCode}：{reason}");
-                    Toast("启动失败：" + (reason.Length > 0 ? reason : $"脚本退出码 {process.ExitCode}，详见启动器日志"), "error", 0);
+                    Toast("启动失败：" + reason, "error", 0, "打开日志", "openLogs");
                 }
             }
             catch (Exception e) when (e is IOException || e is Win32Exception || e is UnauthorizedAccessException)
             {
                 Log.Write("启动失败：" + e);
-                Toast("启动失败：" + e.Message, "error", 0);
+                Toast("启动失败：" + e.Message, "error", 0, "打开日志", "openLogs");
             }
             finally { launching = false; }
         }
@@ -759,9 +780,9 @@ namespace Tower.Launcher
 
         void OpenLogs()
         {
-            var log = Path.Combine(paths.InstallDir, "tower-preview.log");
-            if (File.Exists(log)) Process.Start("explorer.exe", "/select," + Quote(log))?.Dispose();
-            else OpenFolder(paths.InstallDir);
+            Directory.CreateDirectory(paths.LaunchLogs);
+            var latestLog = Directory.GetDirectories(paths.LaunchLogs).OrderByDescending(Path.GetFileName).FirstOrDefault();
+            OpenFolder(latestLog ?? paths.DataDir);
         }
 
         static void OpenDocument(string path, string fallbackUrl)

@@ -1058,8 +1058,8 @@
     b.innerHTML =
       '<img class="mark" src="' + mark + '" alt="">' +
       '<div><div class="name">' + esc(S.appName || CFG.app.name || '') + '</div>' +
-      '<div class="ver">版本 ' + esc(setState.version || S.version || '—') + '　·　' +
-      esc(S.builder || '') + '</div></div>';
+      '<div class="ver">整合包 ' + esc(setState.version || '—') + ' · 启动器 ' +
+      esc(setState.launcherVersion || '—') + '</div></div>';
     wrap.appendChild(b);
     if (S.links && S.links.length) {
       var lk = el('div', 'about-links');
@@ -1148,7 +1148,6 @@
   }
 
   function openSettings() {
-    initSetState();
     setTab = null;
     closeModal();
     var mask = el('div', 'modal-mask');
@@ -1164,6 +1163,7 @@
     });
     document.getElementById('app').appendChild(mask);
     renderSettings();
+    bridge.game.queryStatus(state.game);
   }
 
   /* ================= 下载 / 更新 =================
@@ -1744,7 +1744,7 @@
     var html =
       '<div class="pop-head"><img src="' + esc(g.icon || '') + '" alt="">' +
       '<div><div class="nick">' + esc(g.name || key) + '</div>' +
-      '<div class="uid">' + esc(g.version || '') + '</div></div></div>';
+      '<div class="uid">整合包 ' + esc(g.version || '—') + '</div></div></div>';
     if (g.installed) {
       html += '<button class="pop-item" data-a="launch">' + esc(T('menu.launch', '启动游戏')) + '</button>' +
         '<button class="pop-item" data-a="locate">' + esc(T('menu.locate', '打开安装目录')) + '</button>' +

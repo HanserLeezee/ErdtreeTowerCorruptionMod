@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 trap {
     if ($ErrorFile) { [IO.File]::WriteAllText($ErrorFile, $_.Exception.Message, (New-Object Text.UTF8Encoding($false))) }
-    break
+    exit 1
 }
 $pathFile = Join-Path $PSScriptRoot 'GamePath.txt'
 if (-not $GameDir -and (Test-Path -LiteralPath $pathFile)) {

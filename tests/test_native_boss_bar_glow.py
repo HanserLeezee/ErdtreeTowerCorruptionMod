@@ -36,6 +36,10 @@ def affix_order():
 
 
 class BossBarGlow(unittest.TestCase):
+    def test_animation_does_not_depend_on_unavailable_gfx_timer(self):
+        patched=bar.patch_source(SOURCE)
+        self.assertNotIn('flash.utils.getTimer()',patched)
+        self.assertIn('(++this.towerBarFrame) / 30',patched)
     def test_affix_words_match_the_rules_in_order(self):
         variants, names = affix_order()
         self.assertEqual([name for name, _, _ in bar.AFFIXES], [names[v] for v in variants])

@@ -2,15 +2,14 @@ using SoulsFormats;
 
 static class MelinaAssets {
     public const int PreviewFirst=9510000,PreviewMenu=33;
-    // 与 native/src/enemies.rs 的 PREVIEW_NAMES 相同：仅单人（dlc）的敌人排在 Boss 之后，已有名称编号不变
+    // 与 native/src/enemies.rs 的 PREVIEW_NAMES 相同：沿用追加顺序，已有名称编号不变。
     public static string[] PreviewNames(string dir) {
         var pool=File.ReadAllLines(Path.Combine(dir,"enemy-pools.txt")).Select(l=>l.Split('|')).ToArray();
         bool Solo(string[] p)=>p.Length>5&&p[5]=="dlc";
-        // 与 native/src/enemies.rs 的 PREVIEW_NAMES 相同：之后追加的仅单人 Boss（boss-pool.txt 第 11 列为 solo 或 trial）、
-        // 仅单人的怪物（enemy-pools.txt 第 6 列为 solo）依次排在最后，原有编号不变
+        // 新 Boss、新普通怪依次放在 DLC 小怪之后，不因多人支持改变排序。
         var bosses=File.ReadAllLines(Path.Combine(dir,"boss-pool.txt")).Select(l=>l.Split('|')).ToArray();
         bool SoloBoss(string[] p)=>p.Length>10&&p[10].Length>0;
-        bool SoloEnemy(string[] p)=>p.Length>5&&p[5]=="solo";
+        bool SoloEnemy(string[] p)=>p.Length>5&&(p[5]=="solo"||p[5]=="party");
         return pool.Where(p=>!Solo(p)&&!SoloEnemy(p)).Select(p=>p[4])
             .Concat(bosses.Where(p=>!SoloBoss(p)).Select(p=>p[7]))
             .Concat(pool.Where(Solo).Select(p=>p[4]))

@@ -18,6 +18,8 @@ fn enemy_effects(law:Law)->Vec<i32> {
     let mut ids=Vec::new();
     if law.enemy_level()>0 {ids.push(FIRST+i32::from(law.enemy_level()));}
     if law.toughness()>0 {ids.push(FIRST+5+i32::from(law.toughness()));}
+    if law.elemental_resistance()>0 {ids.push(FIRST+60+i32::from(law.elemental_resistance()));}
+    if law.status_resistance()>0 {ids.push(FIRST+70+i32::from(law.status_resistance()));}
     ids
 }
 pub fn lone_wolf(run:Option<&Run>)->bool {run.is_some_and(|r|r.law.lone_wolf())}
@@ -100,8 +102,10 @@ mod tests {
         assert!(player_effects(Law::default(),false).is_empty()&&enemy_effects(Law::default()).is_empty());
         assert_eq!(player_effects(law(&[11,12,13,15,17,18,19]),true),vec![FIRST+13,FIRST+21,FIRST+32,FIRST+41,OVERTIME]);
         assert_eq!(enemy_effects(law(&[0,1,2,6])),vec![FIRST+3,FIRST+6]);
-        for id in player_effects(law(&(0..27).collect::<Vec<_>>()),true) {assert!(PLAYER.contains(&id));}
-        assert_eq!((shop_price(law(&[19,20,21]),1000),shop_price(law(&[19,20,21,22]),1000),shop_price(Law::default(),1000),shop_price(law(&[19,20,21]),-1)),(1300,1600,1000,-1));
+        assert_eq!(enemy_effects(law(&[27,29])),vec![FIRST+61,FIRST+71]);
+        assert_eq!(enemy_effects(law(&[27,28,29,30])),vec![FIRST+62,FIRST+72]);
+        for id in player_effects(law(&(0..erdtree_tower::law::NODES.len()).collect::<Vec<_>>()),true) {assert!(PLAYER.contains(&id));}
+        assert_eq!((shop_price(law(&[19,20,21]),1000),shop_price(law(&[19,20,21,22]),1000),shop_price(Law::default(),1000),shop_price(law(&[19,20,21]),-1)),(1150,1300,1000,-1));
     }
     #[test]
     fn best_scores_only_rise_per_class() {

@@ -189,7 +189,7 @@ mod tests {
             let affixes=roll(&run,node);assert!(combos().contains(&affixes),"every law roll keeps a bar name");
             run.law=law(&[3,4,5]);
             if let Some(e)=elite {let affixes=roll(&run,e);assert!(!affixes.is_empty()&&points(&affixes)<=2);assert_eq!(bonus_runes(&run,e),3000*15*u32::from(points(&affixes))/100);}
-            run.law=law(&[19,20]);assert_eq!(bonus_runes(&run,node),9000*15*u32::from(points(&roll(&run,node)))/100/2);
+            run.law=law(&[19,20]);assert_eq!(bonus_runes(&run,node),9000*15*u32::from(points(&roll(&run,node)))/100*70/100);
         }
     }
     #[test]

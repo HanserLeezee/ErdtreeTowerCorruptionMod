@@ -18,6 +18,7 @@ MEMBERS = '''
       private var towerSavedFilters:Array;
       private var towerGoldFilters:Array;
       private var towerTierNow:int = -1;
+      private var towerFrame:Number = 0;
       private var towerAdded:Array = [];
       private var towerSavedAlpha:Number = 1;
       private var towerEffectState:String = "idle";
@@ -31,9 +32,9 @@ MEMBERS = '''
       private var towerCharX:Array = [];
       private var towerFormat:flash.text.TextFormat = new flash.text.TextFormat();
       private var towerBox:flash.geom.Matrix = new flash.geom.Matrix();
-      private var towerGold:Array = [0xB8661A,0xEFAE36,0xFFE49A,0xF7C452,0xD97E26];
-      private var towerDark:Array = [0x4D0021,0x5E0B28,0x45001D,0x66142C];
-      private var towerViolet:Array = [0x2A0A46,0x3A1262,0x24083C,0x44186E];
+      private var towerGold:Array = [0xF5C66B,0xFFD98A,0xFFE49A,0xFFF0BA,0xF8D17A];
+      private var towerWarm:Array = [0xFFD478,0xFFE7A6,0xF6C563,0xFFF1C4];
+      private var towerViolet:Array = [0xD8B4FF,0xEACFFF,0xCDA5F4,0xF3E4FF];
       private var towerBlue:Array = [0x7FA8F0,0xA8C8FF,0x8CB4F8,0xB8D4FF];
 
       private function towerHash(n:Number) : Number
@@ -138,8 +139,8 @@ MEMBERS = '''
       }
 
       // 品质越高特效越多（tier：0 普通、1 稀有、2 史诗、3 传说）：
-      // 普通只有偶尔一道淡扫光；稀有蓝色流动 + 扫光；史诗暗紫字身 + 扫光 + 字后紫光 + 稀疏星光；
-      // 传说为灾厄“燃金”式：暗红紫（或亮金）字身 + 扫光 + 偶发渐亮的闪光 + 字后金光 + 密集星光。描边、光晕与泛光由文字滤镜完成（towerFilters）
+      // 普通只有偶尔一道淡扫光；稀有蓝色流动 + 扫光；史诗淡紫字身 + 扫光 + 字后紫光 + 稀疏星光；
+      // 传说为灾厄“燃金”式：明亮暖金字身 + 扫光 + 偶发渐亮的闪光 + 字后金光 + 密集星光。描边、光晕与泛光由文字滤镜完成（towerFilters）
       private function towerDecorate(field:flash.text.TextField, time:Number, tier:int) : void
       {
          var auric:Boolean = this.towerStyle != "gold";
@@ -152,7 +153,7 @@ MEMBERS = '''
          var breath:Number = 0.5 + 0.5 * Math.sin(time * 2.3);
          var gleam:Number = tier == 3 ? this.towerGleam(time) : 0;
          // 扫光：亮度 = ((sin(kx - vt) + 1) / 2) ^ n，只改字的颜色。普通、稀有字身本来就亮，用窄峰；
-         // 史诗、传说字身暗，用宽峰（约两个字宽、边缘渐变）并只提亮到四成多，避免单个字突然跳亮
+         // 史诗、传说用宽峰（约两个字宽、边缘渐变）并只提亮到四成多，避免单个字突然跳亮
          var speed:Number = [0.7,1.1,1.1,1.2][tier];
          var strength:Number = [0.5,0.85,0.4,0.45][tier];
          var sharpness:Number = tier >= 2 ? 24 : 120;
@@ -164,7 +165,7 @@ MEMBERS = '''
             var color:uint = this.towerSavedColor;
             if(tier == 1) color = this.towerPaletteAt(this.towerBlue,time * 0.25 - index * 0.06);
             else if(tier == 2) color = this.towerPaletteAt(this.towerViolet,time * 0.2 - index * 0.07);
-            else if(tier == 3) color = auric ? this.towerPaletteAt(this.towerDark,time * 0.2 - index * 0.07) : this.towerPaletteAt(this.towerGold,time * 0.3 - index * 0.06);
+            else if(tier == 3) color = auric ? this.towerPaletteAt(this.towerWarm,time * 0.2 - index * 0.07) : this.towerPaletteAt(this.towerGold,time * 0.3 - index * 0.06);
             color = this.towerMix(color,shineColor,shine);
             if(gleam > 0) color = this.towerMix(color,0xFFF6D0,0.25 * gleam);
             this.towerFormat.color = color;
@@ -339,7 +340,8 @@ MEMBERS = '''
             }
             // 换到另一种品质时重建滤镜
             if(tier != this.towerTierNow) this.towerGoldFilters = null;
-            var time:Number = flash.utils.getTimer() / 1000;
+            // GFx reports ReferenceError #1065 for the imported timer; frame time is verified in game.
+            var time:Number = (++this.towerFrame) / 30;
             field.alpha = this.towerSavedAlpha;
             this.towerEffectState = "decorate";
             try
@@ -490,7 +492,7 @@ def build(ffdec, original, output, rebase=False, style='auric', java='java'):
             (output / (stem + '.as')).write_text(actual, encoding='utf-8')
         base = hashlib.sha256(src.read_bytes()).hexdigest()
         manifest.append({'file': 'menu/' + src.name, 'rebasedFromPatched': rebase, 'baseSha256': base, 'originalSha256': known_originals().get(base, base) if rebase else base, 'patchedSha256': hashlib.sha256(dst.read_bytes()).hexdigest(), 'tagsVerified': count, 'changedTag': 'DoABC', 'path': f'DetailStatusView.AdjustPosTop.{status}.ItemName'})
-    (output / 'manifest.json').write_text(json.dumps({'experimental': True, 'gameVerified': False, 'qualityMatcher': 'UTF-16 prefix 4F20 8BF4 (legendary) / 53F2 8BD7 (epic) / 7A00 6709 (rare) / 666E 901A (common), then 00B7 or 30FB; skip whitespace and leading tags', 'style': style, 'effect': 'Effects scale with quality (common: faint glint; rare: flowing blue + glint + breathing blue glow; epic: dark violet body, glint, purple rim, two orbiting purple shadows, haze, sparse sparkles); legendary is Calamity-style burnished gold: dark crimson (or gold) per-glyph body with a soft wide ((sin+1)/2)^24 glint on glyphs only (epic too; common/rare keep ^120), ~3.3 s eased 0.5 s gleam mostly on the rim and heat glow, gold rim + heat glow + two upward flame drop shadows + bloom filters, additive aura and CosmicPurple-style rising rotating cross sparkles', 'files': manifest}, ensure_ascii=False, indent=2), encoding='utf-8')
+    (output / 'manifest.json').write_text(json.dumps({'experimental': True, 'gameVerified': False, 'qualityMatcher': 'UTF-16 prefix 4F20 8BF4 (legendary) / 53F2 8BD7 (epic) / 7A00 6709 (rare) / 666E 901A (common), then 00B7 or 30FB; skip whitespace and leading tags', 'style': style, 'clock': 'ENTER_FRAME / 30; avoids GFx getTimer ReferenceError #1065', 'effect': 'Effects scale with quality (common: faint glint; rare: flowing blue + glint + breathing blue glow; epic: bright lavender body, glint, purple rim, two orbiting purple shadows, haze, sparse sparkles); legendary is Calamity-style burnished gold: bright warm gold per-glyph body with a soft wide ((sin+1)/2)^24 glint on glyphs only (epic too; common/rare keep ^120), ~3.3 s eased 0.5 s gleam mostly on the rim and heat glow, gold rim + heat glow + two upward flame drop shadows + bloom filters, additive aura and CosmicPurple-style rising rotating cross sparkles', 'files': manifest}, ensure_ascii=False, indent=2), encoding='utf-8')
     print('Built and structurally verified two isolated name-glow menus.')
 
 if __name__ == '__main__':
@@ -499,7 +501,7 @@ if __name__ == '__main__':
     parser.add_argument('--original', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--rebase', action='store_true', help='--original holds menus from an earlier build; replace its name effect')
-    parser.add_argument('--style', choices=['auric', 'gold'], default='auric', help='auric: dark body with a gold rim (Calamity style); gold: bright gold body')
+    parser.add_argument('--style', choices=['auric', 'gold'], default='auric', help='auric: bright warm gold body with a gold rim (Calamity style); gold: bright gold body')
     parser.add_argument('--java', default='java')
     args = parser.parse_args()
     build(args.ffdec.resolve(), args.original.resolve(), args.output.resolve(), args.rebase, args.style, args.java)
