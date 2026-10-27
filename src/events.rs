@@ -1,59 +1,16 @@
-use crate::{BlessingKind, NodeKind, Reward, RuleResult, Run};
+use crate::{NodeKind, Reward, RuleResult, Run};
 
+/// 问号房里的赌运事件：进入事件房间后与 NPC 交谈，弹出事件卡片
 pub struct Story {
     pub title: &'static str,
     pub text: &'static str,
     pub choices: [&'static str; 2],
 }
-/// 旧旅程只抽前 6 个故事；event_rules 为 1 的新旅程加入赌运事件
-pub const LEGACY_STORIES:usize=6;
-pub const DICE:usize=6;pub const MYSTERY:usize=7;pub const REFORGE:usize=8;
+pub const DICE:usize=0;pub const MYSTERY:usize=1;pub const REFORGE:usize=2;
 pub const DICE_STAKES:[u32;2]=[1000,3000];
 pub const BOX_PRICES:[u32;2]=[2000,5000];
 pub const REFORGE_PRICES:[u32;2]=[2000,6000];
-pub const STORIES: [Story; 9] = [
-    Story {
-        title: "鲜血祭坛",
-        text: "祭坛上的指痕尚未干涸。一个声音从石缝中传来：‘黄金早已离去，鲜血仍能作价。’两枚护符静候你的选择。",
-        choices: [
-            "损失最大生命的 15%，获得鲜血脉动",
-            "损失最大生命的 20%，获得蓄势重击",
-        ],
-    },
-    Story {
-        title: "流浪祈祷者",
-        text: "祈祷者拢紧破旧的斗篷：‘我已走不动下一段路。若你愿分些卢恩，这枚护符便替我陪你走下去。’",
-        choices: ["支付 1200 卢恩，获得生命护符", "支付 1200 卢恩，获得耐力护符"],
-    },
-    Story {
-        title: "月光泉",
-        text: "月光在泉中分成红与蓝。守泉人的石像刻着一句话：‘投入黄金，只取一捧；贪求两者的人，终会一无所得。’",
-        choices: [
-            "支付 800 卢恩，恢复 40% 最大生命",
-            "支付 500 卢恩，恢复 60% 最大专注",
-        ],
-    },
-    Story {
-        title: "遗弃行囊",
-        text: "一只行囊压在碎石下，主人已不知去向。纸条上写着：‘后来的人，请取走一份，另一份留给再后来的人。’",
-        choices: ["取得 1200 卢恩", "补充 2 瓶圣杯瓶"],
-    },
-    Story {
-        title: "禁书抄写员",
-        text: "抄写员合上禁书，露出藏在书脊中的护符：‘知识未必救你。但这两条道路，总有一条能让敌人先倒下。’",
-        choices: [
-            "支付 1000 卢恩，获得魔法护符",
-            "支付 1000 卢恩，获得火焰护符",
-        ],
-    },
-    Story {
-        title: "受伤的铁匠",
-        text: "铁匠按住伤口，熄灭的炉旁还有余温：‘帮我撑过这一刻，钱袋归你。或者付些报酬，我还能再落几锤。’",
-        choices: [
-            "损失最大生命的 25%，取得 2000 卢恩",
-            "支付 1200 卢恩，右手武器升至背包最高等效等级，再普通 +3 / 失色 +1",
-        ],
-    },
+pub const STORIES: [Story; 3] = [
     Story {
         title: "骰子赌徒",
         text: "赌徒把两枚骨骰在掌心摇得作响：‘押上卢恩，赢了翻倍，输了归我。骰子落下之前，谁也不知道结果。’",
@@ -76,29 +33,47 @@ pub const STORIES: [Story; 9] = [
         ],
     },
 ];
+/// 问号房抽到的事件。event_rules 2 起每个事件按 EVENT_WEIGHTS 单独抽取；更早的旅程沿用 8 格分配，没有赌运事件
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
+pub enum Draw {Trial,Chests,Altar,Locked,Scarabs,Spring,Dice,Mystery,Reforge}
+/// 问号房事件权重，合计 20（每 1 点 5%）
+pub const EVENT_WEIGHTS:[(Draw,u32);9]=[
+    (Draw::Trial,4),(Draw::Chests,2),(Draw::Altar,2),(Draw::Locked,2),(Draw::Scarabs,2),(Draw::Spring,2),
+    (Draw::Dice,2),(Draw::Mystery,2),(Draw::Reforge,2),
+];
+impl Run {
+    /// 本旅程第 id 个节点（问号房）的事件，由种子与节点决定，读档不变
+    pub fn event_draw(&self,id:usize)->Draw {
+        if self.event_rules<2 {
+            return match crate::mix(self.seed^id as u64^0x10cced)%8 {
+                0=>Draw::Locked,3=>Draw::Scarabs,4|6|7=>Draw::Trial,5=>Draw::Spring,
+                _=>if crate::regional_events::kind(self.seed,id)==1 {Draw::Altar}else{Draw::Chests},
+            };
+        }
+        let total:u32=EVENT_WEIGHTS.iter().map(|(_,w)|w).sum();
+        let mut roll=(crate::mix(self.seed^(id as u64).wrapping_mul(0x9e37)^0xe7e27)%total as u64) as u32;
+        for (draw,weight) in EVENT_WEIGHTS {if roll<weight {return draw;} roll-=weight;}
+        unreachable!()
+    }
+    /// 问号房里的赌运事件（STORIES 下标）
+    pub fn gamble(&self,id:usize)->Option<usize> {
+        if self.nodes.get(id).is_none_or(|n|n.kind!=NodeKind::Event) {return None;}
+        match self.event_draw(id) {Draw::Dice=>Some(DICE),Draw::Mystery=>Some(MYSTERY),Draw::Reforge=>Some(REFORGE),_=>None}
+    }
+    /// 事件房间是贪欲祭坛还是三重宝匣（联机时赌运事件也改为二者之一，按种子决定；其余事件沿用原来的判定）
+    pub fn altar(&self,id:usize)->bool {
+        match self.event_draw(id) {Draw::Altar=>true,Draw::Chests=>false,_=>crate::regional_events::kind(self.seed,id)==1}
+    }
+}
 /// 骰子赌徒：本节点的结果由种子决定，与押注多少无关
 pub fn dice_wins(run:&Run,node:usize)->bool {crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0xd1ce)%2==0}
 /// 事件结算后的提示（赌运事件需要读取结果）
 pub fn story_outcome(run:&Run,choice:usize)->String {
-    let (Ok(index),Ok(node))=(run.story_index(),run.active_node(NodeKind::Event)) else {return outcome(0,2).into();};
-    if choice==2 {return outcome(index,2).into();}
+    let (Ok(index),Ok(node))=(run.story_index(),run.active_node(NodeKind::Event)) else {return String::new();};
     match index {
         DICE=>if dice_wins(run,node) {format!("骰子落定，你赢了 {} 卢恩。",DICE_STAKES[choice])}else{format!("骰子落定，你输掉了 {} 卢恩。",DICE_STAKES[choice])},
         MYSTERY=>"商人掀开黑布，把箱子里的装备交给你。".into(),
-        REFORGE=>if choice==0 {"火焰退去，武器换了一种形状。".into()}else{"火焰烧得更旺，武器带着新的光泽回到你手中。".into()},
-        _=>outcome(index,choice).into(),
-    }
-}
-
-pub fn outcome(story:usize,choice:usize)->&'static str {
-    if choice==2{return "你没有接受交易，沿着来路继续前行。";}
-    match story {
-        0=>"鲜血渗入石槽，一枚护符落入掌心。可在装备菜单自行佩戴。",
-        1=>"祈祷者收下卢恩，将护符交给你：愿你走到我未曾抵达的地方。",
-        2=>"投入的卢恩沉入泉底，温热的泉水抚平了旅途的疲惫。",
-        3=>if choice==0{"你收起钱袋，把补给留给下一位旅人。"}else{"你补充了圣杯瓶，将钱袋放回行囊。"},
-        4=>"抄写员收好卢恩，把护符递给你。它的力量需要佩戴后才会生效。",
-        _=>if choice==0{"铁匠终于稳住呼吸，将装着卢恩的钱袋推到你身边。"}else{"最后一声锤响落下，铁匠将强化后的武器交还给你。"},
+        _=>if choice==0 {"火焰退去，武器换了一种形状。".into()}else{"火焰烧得更旺，武器带着新的光泽回到你手中。".into()},
     }
 }
 
@@ -119,200 +94,76 @@ pub struct StoryEffect {
 impl Run {
     pub fn story_index(&self) -> RuleResult<usize> {
         let id = self.active_node(NodeKind::Event)?;
-        let count=if self.event_rules>=1 {STORIES.len()}else{LEGACY_STORIES};
-        Ok((crate::mix(self.seed) as usize + id) % count)
+        self.gamble(id).ok_or_else(||"这里没有赌运事件".into())
     }
+    /// 赌运事件选一项（0 或 1），每处只能用一次；选完留在房间，从传送门离开
     pub fn resolve_story(&mut self, choice: usize) -> RuleResult<StoryEffect> {
         let id = self.active_node(NodeKind::Event)?;
-        if choice > 2 {
-            return Err("无效事件选项".into());
-        }
+        let index=self.story_index()?;
+        if choice > 1 {return Err("无效事件选项".into());}
+        if self.regional_event.opened!=0 {return Err("这里的事件已经用过".into());}
         let mut next = self.clone();
         let mut effect = StoryEffect::default();
-        if choice < 2 {
-            let mut price = 0;
-            match self.story_index()? {
-                0 => {
-                    effect.hp_cost_percent = if choice == 0 { 15 } else { 20 };
-                    next.grant(Reward::Blessing(if choice == 0 {
-                        BlessingKind::Bleed
-                    } else {
-                        BlessingKind::Charge
-                    }))?;
-                }
-                1 => {
-                    price = 1200;
-                    next.grant(Reward::Blessing(if choice == 0 {
-                        BlessingKind::Vigor
-                    } else {
-                        BlessingKind::Endurance
-                    }))?;
-                }
-                2 => {
-                    if choice == 0 {
-                        price = 800;
-                        effect.heal_percent = 40;
-                        if next.hp == next.max_hp {
-                            return Err("生命已满".into());
-                        }
-                    } else {
-                        price = 500;
-                        effect.fp_percent = 60;
-                    }
-                }
-                3 => {
-                    if choice == 0 {
-                        next.grant(Reward::Gold(1200))?;
-                    } else {
-                        if next.flasks == next.flask_limit {
-                            return Err("圣杯瓶已满".into());
-                        }
-                        effect.refill = true;
-                        next.flasks = (next.flasks + 2).min(next.flask_limit);
-                    }
-                }
-                DICE => {
-                    let stake=DICE_STAKES[choice];
-                    if next.gold<stake {return Err("卢恩不足，事件未消耗".into());}
-                    if crate::events::dice_wins(self,id) {next.gold=next.gold.saturating_add(stake);}else{price=stake;}
-                }
-                MYSTERY => {
-                    price=BOX_PRICES[choice];
-                    let item=crate::affixes::mystery_box(self,id,choice==1).ok_or("盲盒里没有可用的装备")?;
-                    next.grant(Reward::Item(item))?;effect.item=Some(item);
-                }
-                REFORGE => {price=REFORGE_PRICES[choice];effect.reforge=true;effect.reforge_upgrade=choice==1;}
-                4 => {
-                    price = 1000;
-                    next.grant(Reward::Blessing(if choice == 0 {
-                        BlessingKind::Sorcery
-                    } else {
-                        BlessingKind::Flame
-                    }))?;
-                }
-                _ => {
-                    if choice == 0 {
-                        effect.hp_cost_percent = 25;
-                        next.grant(Reward::Gold(2000))?;
-                    } else {
-                        price = 1200;
-                        next.grant(Reward::UpgradeWeapon)?;
-                    }
-                }
+        let mut price = 0;
+        match index {
+            DICE => {
+                let stake=DICE_STAKES[choice];
+                if next.gold<stake {return Err("卢恩不足，事件未消耗".into());}
+                if dice_wins(self,id) {next.gold=next.gold.saturating_add(stake);}else{price=stake;}
             }
-            if next.gold < price {
-                return Err("卢恩不足，事件未消耗".into());
+            MYSTERY => {
+                price=BOX_PRICES[choice];
+                let item=crate::affixes::mystery_box(self,id,choice==1).ok_or("盲盒里没有可用的装备")?;
+                next.grant(Reward::Item(item))?;effect.item=Some(item);
             }
-            next.gold -= price;
-            let cost = next
-                .max_hp
-                .saturating_mul(effect.hp_cost_percent)
-                .div_ceil(100);
-            if next.hp <= cost {
-                return Err("生命不足，事件不会致死".into());
-            }
-            next.hp = (next.hp - cost)
-                .saturating_add(next.max_hp * effect.heal_percent / 100)
-                .min(next.max_hp);
+            _ => {price=REFORGE_PRICES[choice];effect.reforge=true;effect.reforge_upgrade=choice==1;}
         }
-        next.finish(id);
+        if next.gold < price {return Err("卢恩不足，事件未消耗".into());}
+        next.gold -= price;
+        next.regional_event.opened=1;
         *self = next;
         Ok(effect)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Class, Phase};
-    fn story(index: usize) -> Run {
-        for seed in 0..1000 {
-            let mut r = Run::new(seed, Class::Samurai);
-            r.nodes[0].kind = NodeKind::Event;
-            r.phase = Phase::Node { id: 0 };
-            r.gold = 8000;
-            r.hp = 50;
-            r.flasks = 2;
-            if r.story_index().unwrap() == index {
-                return r;
-            }
-        }
-        panic!("missing story");
-    }
-    #[test]
-    fn events_use_rune_prices_and_failed_payment_leaves_no_reward() {
-        let mut r=story(1);r.gold=1199;let old=r.clone();
-        assert!(r.resolve_story(0).is_err());assert_eq!(r,old);
-        r.gold=1200;r.resolve_story(0).unwrap();assert_eq!(r.gold,0);
-        let mut r=story(3);r.gold=0;r.resolve_story(0).unwrap();assert_eq!(r.gold,1200);
-        assert!(STORIES.iter().all(|s|s.choices.iter().all(|c|!c.contains("塔币"))));
-    }
-    #[test]
-    fn all_story_choices_resolve_once_and_leave_is_free() {
-        for index in 0..STORIES.len() {
-            for choice in 0..=2 {
-                let mut r = story(index);
-                let old = r.clone();
-                r.resolve_story(choice).unwrap();
-                assert_eq!(r.phase, Phase::Map);
-                assert_eq!(r.visited, vec![0]);
-                assert!(r.resolve_story(choice).is_err());
-                if choice == 2 {
-                    assert_eq!((r.gold, r.hp, r.flasks), (old.gold, old.hp, old.flasks));
-                }
-            }
-        }
-    }
-    #[test]
-    fn failed_payment_and_lethal_sacrifice_are_atomic() {
-        let mut r = story(1);
-        r.gold = 0;
-        let old = r.clone();
-        assert!(r.resolve_story(0).is_err());
-        assert_eq!(r, old);
-        let mut r = story(0);
-        r.hp = 15;
-        let old = r.clone();
-        assert!(r.resolve_story(0).is_err());
-        assert_eq!(r, old);
-    }
-
-    #[test]
-    fn capped_blessing_and_full_resources_preserve_event() {
-        let mut r = story(0);
-        r.blessings.push(crate::Blessing {
-            kind: BlessingKind::Bleed,
-            level: 3,
-        });
-        let old = r.clone();
-        assert!(r.resolve_story(0).is_err());
-        assert_eq!(r, old);
-        let mut r = story(2);
-        r.hp = r.max_hp;
-        let old = r.clone();
-        assert!(r.resolve_story(0).is_err());
-        assert_eq!(r, old);
-        let mut r = story(3);
-        r.flasks = r.flask_limit;
-        let old = r.clone();
-        assert!(r.resolve_story(1).is_err());
-        assert_eq!(r, old);
-    }
-}
-#[cfg(test)]
 mod gamble_tests {
-    use crate::{Class,NodeKind,Phase,Run,affixes,events::*};
+    use crate::{Class,NodeKind,Run,affixes,events::*};
     #[test]
-    fn new_runs_draw_the_gamble_stories_and_old_runs_do_not() {
-        let mut seen=std::collections::HashSet::new();
-        for seed in 0..300 {
-            let mut run=Run::new(seed,Class::Samurai);
-            for (id,_) in run.nodes.clone().iter().enumerate().filter(|(_,n)|n.kind==NodeKind::Event) {
-                run.phase=Phase::Node{id};seen.insert(run.story_index().unwrap());
-                let mut old=run.clone();old.event_rules=0;assert!(old.story_index().unwrap()<LEGACY_STORIES);
+    fn every_event_has_its_own_weight_and_gambles_happen_in_the_room() {
+        let total:u32=EVENT_WEIGHTS.iter().map(|(_,w)|w).sum();
+        let mut counts=std::collections::HashMap::new();let mut nodes=0u32;
+        for seed in 0..3000 {
+            let run=Run::new(seed,Class::Samurai);
+            for id in (0..run.nodes.len()).filter(|id|run.nodes[*id].kind==NodeKind::Event) {
+                nodes+=1;let draw=run.event_draw(id);*counts.entry(draw).or_insert(0u32)+=1;
+                let mut entered=run.clone();entered.debug_jump(id).unwrap();entered.enter(id).unwrap();
+                let p=&entered.regional_event;
+                assert_eq!((p.trial,p.locked,p.scarabs,p.recovery),(draw==Draw::Trial,draw==Draw::Locked,draw==Draw::Scarabs,draw==Draw::Spring));
+                match draw {
+                    Draw::Altar=>assert!(run.altar(id)),Draw::Chests=>assert!(!run.altar(id)),
+                    // 赌运事件：用一次后留在房间（读档校验通过、不能再用），从传送门离开
+                    Draw::Dice|Draw::Mystery|Draw::Reforge=>{
+                        assert_eq!(entered.story_index(),Ok(run.gamble(id).unwrap()));
+                        entered.gold=8000;
+                        if entered.resolve_story(0).is_ok() {
+                            assert_eq!(entered.phase,crate::Phase::Node{id});
+                            let mut loaded=Run::decode(&entered.encode().unwrap()).unwrap();
+                            assert!(loaded.resolve_story(0).is_err()&&loaded.resolve_story(1).is_err());
+                            loaded.leave_regional_event().unwrap();assert_eq!(loaded.phase,crate::Phase::Map);
+                        }
+                    },
+                    _=>assert!(entered.story_index().is_err()),
+                }
+                // 旧旅程沿用原来的 8 格分配，没有赌运事件
+                let mut old=run.clone();old.event_rules=1;assert_eq!(old.gamble(id),None);
             }
         }
-        assert_eq!(seen.len(),STORIES.len());
+        // 每个事件的实际出现率接近各自权重（误差在 ±15% 以内）
+        for (draw,weight) in EVENT_WEIGHTS {
+            let expected=nodes as f64*weight as f64/total as f64;let seen=*counts.get(&draw).unwrap_or(&0) as f64;
+            assert!((seen-expected).abs()<expected*0.15,"{draw:?}: {seen} vs {expected}");
+        }
         let mut json:serde_json::Value=serde_json::from_str(&Run::new(1,Class::Samurai).encode().unwrap()).unwrap();
         json.as_object_mut().unwrap().remove("event_rules");
         assert_eq!(Run::decode(&json.to_string()).unwrap().event_rules,0);
@@ -363,12 +214,12 @@ mod gamble_tests {
             let mut run=Run::new(seed,Class::Samurai);
             let Some(id)=run.nodes.iter().position(|n|n.kind==NodeKind::Event) else{continue};
             run.debug_jump(id).unwrap();run.enter(id).unwrap();run.gold=6000;
-            match run.story_index().unwrap() {
+            match run.story_index().unwrap_or(usize::MAX) {
                 MYSTERY=>{let mut r=run.clone();let effect=r.resolve_story(1).unwrap();assert_eq!(r.gold,1000);assert!(r.claimed_items.contains(&effect.item.unwrap()));},
                 REFORGE=>{
                     let mut r=run.clone();let effect=r.resolve_story(0).unwrap();assert!(effect.reforge&&!effect.reforge_upgrade);assert_eq!(r.gold,6000-REFORGE_PRICES[0]);
                     let mut refine=run.clone();let effect=refine.resolve_story(1).unwrap();assert!(effect.reforge_upgrade);assert_eq!(refine.gold,0);
-                    let mut leave=run.clone();assert!(!leave.resolve_story(2).unwrap().reforge);assert_eq!(leave.gold,6000);
+                    assert!(run.clone().resolve_story(2).is_err());
                 },
                 _=>{},
             }

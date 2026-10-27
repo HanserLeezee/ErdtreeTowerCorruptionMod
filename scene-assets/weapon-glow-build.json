@@ -1,0 +1,30 @@
+{
+  "effects": [
+    {
+      "id": 9830000,
+      "vfx": 8760
+    },
+    {
+      "id": 9830001,
+      "vfx": 8761
+    },
+    {
+      "id": 9830010,
+      "vfx": 61
+    },
+    {
+      "id": 9830011,
+      "vfx": 5140
+    },
+    {
+      "id": 9830020,
+      "vfx": 151
+    },
+    {
+      "id": 9830021,
+      "vfx": 5105
+    }
+  ],
+  "sourceRegulationSha256": "37F8FB98CC29204455400C155C3FE2B079A61A9D3FB50C92176E0766EAA700B5",
+  "regulationSha256": "BDD1D06BC14C23A10E3D9AC5E3351A73FDFD6831EBFEF72666E9FEDC50C0910D"
+}

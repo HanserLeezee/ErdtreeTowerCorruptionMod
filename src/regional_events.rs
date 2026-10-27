@@ -110,7 +110,7 @@ impl Run {
     pub fn open_regional_event(&mut self, slot: usize) -> RuleResult<Outcome> {
         let node=self.active_node(NodeKind::Event)?;
         if self.regional_event.trial || self.regional_event.locked || self.regional_event.scarabs || self.regional_event.descent || self.regional_event.recovery || self.regional_event.stormveil.is_some() {return Err("请与事件交互物交互".into());}
-        let altar=kind(self.seed,node)==1;
+        let altar=self.altar(node);
         if slot >= 3 || self.regional_event.guards || (altar && self.regional_event.opened != 0) || self.regional_event.opened & (1 << slot) != 0 {
             return Err("此处已领取，或需先击败守卫".into());
         }
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn altar_choices_are_exclusive_and_only_combat_summons_guards() {
         let mut run=Run::new(42,crate::Class::Samurai);
-        let id=run.nodes.iter().enumerate().find(|(id,n)|n.kind==NodeKind::Event && kind(run.seed,*id)==1).unwrap().0;
+        let id=run.nodes.iter().enumerate().find(|(id,n)|n.kind==NodeKind::Event && run.altar(*id)).unwrap().0;
         run.phase=Phase::Node{id};
         for slot in 0..3 {
             let mut chosen=run.clone();
@@ -287,7 +287,7 @@ mod tests {
             let mut run=Run::new(seed,crate::Class::Samurai);
             let id=run.nodes.iter().position(|n|n.kind==NodeKind::Event).unwrap();
             run.phase=Phase::Node{id};
-            let altar=kind(seed,id)==1;
+            let altar=run.altar(id);
             for slot in 0..if altar {1}else{3} {
                 let result=run.open_regional_event(slot).unwrap();
                 assert_eq!(run.regional_event.guard_slot,(result==Outcome::Guards).then_some(slot as u8));

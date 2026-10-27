@@ -181,6 +181,16 @@ impl Menu {
         }
     }
     fn items(&mut self,ui:&Ui) {
+        // 传说武器流光：配色只在本次游戏内生效；“预览”让任意近战武器都发光
+        ui.text("传说武器流光");
+        let labels:Vec<_>=crate::weapon_glow::Style::ALL.iter().map(|s|s.label()).collect();
+        let mut index=crate::weapon_glow::Style::ALL.iter().position(|s|*s==crate::weapon_glow::style()).unwrap_or(0);
+        ui.set_next_item_width(320.0);
+        if ui.combo_simple_string("##glow-style",&mut index,&labels) {crate::weapon_glow::set_style(crate::weapon_glow::Style::ALL[index]);}
+        ui.same_line();
+        let mut preview=crate::weapon_glow::preview();
+        if ui.checkbox("预览：手上任意近战武器都发光",&mut preview) {crate::weapon_glow::set_preview(preview);}
+        ui.separator();
         ui.text("按名称或说明搜索，例如：葛孚雷、致命一击、传说·");
         ui.set_next_item_width(320.0);
         let enter=ui.input_text("##item-query",&mut self.item_query).enter_returns_true(true).build();
@@ -207,8 +217,8 @@ impl Menu {
         if ui.button("卢恩 +10000") {send(Command::Runes(10000));}
         ui.same_line();if ui.button("卢恩 +100000") {send(Command::Runes(100000));}
         ui.separator();
-        ui.text_wrapped(format!("种子 {}　职业 {}　卢恩 {}　圣杯瓶 {}/{}",run.initial_seed.unwrap_or(run.seed),crate::map_ui::class_name(run.class),run.gold,run.flasks,run.flask_limit));
-        ui.text_wrapped("使用过调试功能的旅程会标记为调试旅程：不计入苦难律法纪录，结算页会注明。联机时调试命令不会执行。");
+        crate::fancy_text::text_wrapped(ui,format!("种子 {}　职业 {}　卢恩 {}　圣杯瓶 {}/{}",run.initial_seed.unwrap_or(run.seed),crate::map_ui::class_name(run.class),run.gold,run.flasks,run.flask_limit));
+        crate::fancy_text::text_wrapped(ui,"使用过调试功能的旅程会标记为调试旅程：不计入苦难律法纪录，结算页会注明。联机时调试命令不会执行。");
     }
 }
 fn set_roster(roster:Vec<Enemy>) {

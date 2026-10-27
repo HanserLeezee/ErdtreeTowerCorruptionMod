@@ -237,7 +237,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str)->bool {
                 let _disabled=ui.begin_disabled(!view.ready||view.busy);
                 match &run.phase {
                     Phase::Reward { .. } => { ui.text("选择战利品以继续旅程。"); }
-                    Phase::Dead => { ui.text("旅程结束"); ui.text_wrapped("角色死亡。重新启动游戏可开始新一局。"); }
+                    Phase::Dead => { ui.text("旅程结束"); crate::fancy_text::text_wrapped(ui,"角色死亡。重新启动游戏可开始新一局。"); }
                     Phase::Won => { ui.text("登顶 · 本局通关"); }
                     Phase::Map => route(ui, run, view.ready && !view.busy,&view.ballots),
                     Phase::Node { id } => {
@@ -249,7 +249,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str)->bool {
                             _ => {}
                         }
                     }
-                    _ => { ui.text_wrapped(&view.status); }
+                    _ => { crate::fancy_text::text_wrapped(ui,&view.status); }
                 }
             });
             drop(_popup);drop(_ink);drop(_paper);

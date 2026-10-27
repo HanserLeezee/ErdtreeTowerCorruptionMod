@@ -84,6 +84,8 @@ mod render_diagnostics;
 mod rest_end;
 mod party_death;
 mod seamless_revival;
+mod weapon_glow;
+mod dummy;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -249,9 +251,10 @@ impl ImguiRenderLoop for TowerPreview {
         log("UI_INIT stage=oath_art");
         oath_art::initialize(renderer);
         log("DX12 renderer initialized");
-        // 正文黑体与标题宋体都只加载界面字表里的字（缺字表时退回原来的范围），字体贴图不会因为多一套字体而翻倍
+        // 正文与标题字体都只加载界面字表里的字（缺字表时退回原来的范围），字体贴图不会因为多一套字体而翻倍
         let ranges=|fallback:FontGlyphRanges|fancy_text::ui_glyph_ranges().map_or(fallback,FontGlyphRanges::from_slice);
-        if let Ok(font) = std::fs::read("C:/Windows/Fonts/simhei.ttf") {
+        // 正文：思源宋体常规体；字体文件缺失时退回系统黑体
+        if let Ok(font) = std::fs::read(fancy_text::body_font_path()).or_else(|error|{log(format!("Body font missing, falling back to SimHei: {error}"));std::fs::read("C:/Windows/Fonts/simhei.ttf")}) {
             ctx.fonts().add_font(&[FontSource::TtfData {
                 data: &font,
                 size_pixels: 20.0,
@@ -335,6 +338,7 @@ impl ImguiRenderLoop for TowerPreview {
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
         if run_screen {return;}
         if let Some(view) = &view {
+            if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
             if view.room.is_some()||view.shared_event {
                 return;
             }
@@ -380,7 +384,6 @@ impl ImguiRenderLoop for TowerPreview {
                         .unwrap_or_default();
                     if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
                     else if run.contract_pending()||matches!(run.phase,Phase::Reward{..}) {self.rewards.draw(ui,run,view);}
-                    else if run.story_index().is_ok() {self.rewards.draw_story(ui,run,view);}
                     else {
                         if map_ui::draw(ui, run, view, &vitals) {self.visible=false;}
                         if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}

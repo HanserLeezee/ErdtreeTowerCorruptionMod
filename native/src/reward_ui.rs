@@ -150,7 +150,7 @@ impl Selection {
     }
 }
 #[derive(Default)]
-pub struct Panel {selection:Selection,textures:HashMap<u32,Option<TextureId>>,wanted:Vec<u32>,card:Option<TextureId>,rarity_cards:Option<TextureId>,rare_blue:Option<TextureId>,story:Option<(Run,u32,[Option<String>;3])>}
+pub struct Panel {selection:Selection,textures:HashMap<u32,Option<TextureId>>,wanted:Vec<u32>,card:Option<TextureId>,rarity_cards:Option<TextureId>,rare_blue:Option<TextureId>}
 impl Panel {
     pub fn icon(&mut self,icon:u32)->Option<TextureId> {
         let texture=self.textures.get(&icon).copied();if texture.is_none()&&!self.wanted.contains(&icon){self.wanted.push(icon);}texture.flatten()
@@ -245,85 +245,6 @@ impl Panel {
             if !crate::oath_art::ready(){ui.set_window_font_scale(s*0.8);center(ui,mid,oy+866.0*s,"誓约贴图缺失，请重启更新后的启动器",[0.91,0.49,0.40,1.0]);}
         });
     }
-    pub fn draw_story(&mut self,ui:&Ui,run:&Run,view:&View) {
-        let Ok(index)=run.story_index() else{return;};
-        let story=&erdtree_tower::events::STORIES[index];
-        let now=ui.time();
-        self.selection.sync(format!("event:{}:{}:{:?}",run.seed,run.act,run.phase),now);
-        let ready=view.ready&&!view.busy&&now>=self.selection.armed_at;
-        let key=|keys:&[Key]|keys.iter().any(|k|ui.is_key_pressed_no_repeat(*k));
-        if ready {
-            if key(&[Key::A,Key::LeftArrow,Key::GamepadDpadLeft]){self.selection.step(-1,3);}
-            if key(&[Key::D,Key::RightArrow,Key::GamepadDpadRight]){self.selection.step(1,3);}
-        }
-        if !self.story.as_ref().is_some_and(|(cached,runes,_)|*runes==view.runes&&cached==run) {
-            let errors=std::array::from_fn(|i|{let mut preview=run.clone();preview.gold=view.runes;preview.resolve_story(i).err()});
-            self.story=Some((run.clone(),view.runes,errors));
-        }
-        let errors=&self.story.as_ref().unwrap().2;
-        let size=ui.io().display_size;
-        let s=(size[0]/1600.0).min(size[1]/900.0).min(1.7);
-        let gold=[0.86,0.72,0.43,1.0];let ink=[0.18,0.15,0.10,1.0];
-        let _bg=ui.push_style_color(StyleColor::WindowBg,[0.025,0.03,0.025,0.97]);
-        let _text=ui.push_style_color(StyleColor::Text,gold);
-        let _button=ui.push_style_color(StyleColor::Button,[0.25,0.20,0.12,1.0]);
-        let _hover=ui.push_style_color(StyleColor::ButtonHovered,[0.40,0.30,0.16,1.0]);
-        ui.window("旅途奇遇##story").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
-            .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
-            let mid=size[0]*0.5;
-            ui.set_window_font_scale(s);
-            center(ui,mid,32.0*s,"黄 金 树 爬 塔  ·  旅 途 奇 遇",gold);
-            ui.set_window_font_scale(s*1.8);center(ui,mid,77.0*s,story.title,gold);
-            ui.set_window_font_scale(s);
-            ui.set_cursor_pos([mid-490.0*s,142.0*s]);
-            {let _wrap=ui.push_text_wrap_pos_with_pos(mid+490.0*s);ui.text_wrapped(story.text);}
-            center(ui,mid,224.0*s,&format!("持有卢恩  {}　·　每个事件只能选择一项",view.runes),gold);
-            let w=330.0*s;let h=370.0*s;let gap=34.0*s;let top=278.0*s;
-            let labels=match index {
-                0=>["献出鲜血","献出力量","离开祭坛"],
-                1=>["祈求生命","祈求耐力","告别旅人"],
-                2=>["捧起红泉","捧起蓝泉","离开泉水"],
-                3=>["收起钱袋","带走补给","留给后来者"],
-                4=>["研读魔法","追随火焰","合上禁书"],
-                erdtree_tower::events::DICE=>["押小注","押大注","离开赌桌"],
-                erdtree_tower::events::MYSTERY=>["普通盲盒","高级盲盒","离开商人"],
-                erdtree_tower::events::REFORGE=>["重铸","精炼","离开熔炉"],
-                _=>["帮助铁匠","委托锻造","继续前行"],
-            };
-            for i in 0..3 {
-                let x=mid-(3.0*w+2.0*gap)*0.5+i as f32*(w+gap);
-                ui.set_cursor_pos([x,top]);
-                {let _disabled=ui.begin_disabled(!ready);if ui.invisible_button(format!("story-card-{i}"),[w,h]){self.selection.selected=i;}}
-                let hovered=ui.is_item_hovered();let selected=self.selection.selected==i;
-                let draw=ui.get_window_draw_list();
-                draw.add_rect([x,top],[x+w,top+h],ImColor32::from_rgb(218,204,170)).filled(true).build();
-                for inset in [0.0,7.0*s] {draw.add_rect([x+inset,top+inset],[x+w-inset,top+h-inset],if selected||hovered{ImColor32::from_rgb(239,191,90)}else{ImColor32::from_rgb(117,97,60)}).thickness(if selected{3.0*s}else{1.0*s}).build();}
-                draw.add_line([x+26.0*s,top+110.0*s],[x+w-26.0*s,top+110.0*s],ImColor32::from_rgb(155,127,78)).build();
-                drop(draw);
-                center(ui,x+w*0.5,top+24.0*s,&format!("0{}",i+1),ink);
-                ui.set_window_font_scale(s*1.3);center(ui,x+w*0.5,top+63.0*s,labels[i],ink);ui.set_window_font_scale(s);
-                let mut description=if i==2{"不支付卢恩，不损失生命。\n放弃本次机遇，继续旅程。".to_string()}else{story.choices[i].to_string()};
-                if let Some(kind)=match (index,i) {
-                    (0,0)=>Some(erdtree_tower::BlessingKind::Bleed),(0,1)=>Some(erdtree_tower::BlessingKind::Charge),
-                    (1,0)=>Some(erdtree_tower::BlessingKind::Vigor),(1,1)=>Some(erdtree_tower::BlessingKind::Endurance),
-                    (4,0)=>Some(erdtree_tower::BlessingKind::Sorcery),(4,1)=>Some(erdtree_tower::BlessingKind::Flame),_=>None,
-                } {
-                    let level=run.blessings.iter().find(|b|b.kind==kind).map_or(1,|b|(b.level+1).min(3));
-                    description.push_str(&format!("\n\n实际获得：{}\n自行装备后生效",crate::blessings::talisman(kind,level).1));
-                }
-                ui.set_cursor_pos([x+26.0*s,top+137.0*s]);
-                {let _color=ui.push_style_color(StyleColor::Text,ink);let _wrap=ui.push_text_wrap_pos_with_pos(x+w-26.0*s);ui.text_wrapped(description);}
-                center(ui,x+w*0.5,top+h-43.0*s,if errors[i].is_some(){"条件不足"}else if selected{"已选中 · 等待确认"}else{"点击选择"},ink);
-            }
-            ui.set_cursor_pos([mid-190.0*s,688.0*s]);
-            let available=ready&&errors[self.selection.selected].is_none();
-            let confirm={let _disabled=ui.begin_disabled(!available);ui.button_with_size("确认选择  [Enter / A]",[380.0*s,48.0*s])};
-            if confirm||key(&[Key::Enter,Key::GamepadFaceDown]) {if let Some(choice)=self.selection.claim(now,available){runtime::submit(Action::Story(choice));}}
-            center(ui,mid,759.0*s,"A / D 或方向键切换　·　选中后确认　·　离开不消耗资源",gold);
-            let status=errors[self.selection.selected].as_deref().unwrap_or(&view.status);
-            ui.set_cursor_pos([mid-500.0*s,812.0*s]);let _wrap=ui.push_text_wrap_pos_with_pos(mid+500.0*s);ui.text_wrapped(status);
-        });
-    }
     pub fn initialize(&mut self,renderer:&mut dyn RenderContext) {
         self.textures.clear();self.wanted.clear();self.rare_blue=None;self.rarity_cards=None;self.card=None;
         let path=crate::LOG_PATH.with_file_name("scene-assets").join("reward-art/rare-blue.rgba");
@@ -402,12 +323,12 @@ impl Panel {
                         }
                         ui.set_cursor_pos([24.0*scale,285.0*scale]);
                         let _indent=ui.push_style_var(hudhook::imgui::StyleVar::IndentSpacing(24.0*scale));ui.indent();
-                        let _wrap=ui.push_text_wrap_pos_with_pos(516.0*scale);
+                        let _wrap=ui.push_text_wrap_pos_with_pos(516.0*scale);let _cjk=crate::fancy_text::wrap_at(516.0*scale);
                         ui.text_colored(gold,"属性");ui.spacing();
                         let _text=ui.push_style_color(StyleColor::Text,ink);
-                        ui.text_wrapped(if d.stats.trim().is_empty(){"—"}else{&d.stats});
+                        crate::fancy_text::text_wrapped(ui,if d.stats.trim().is_empty(){"—"}else{&d.stats});
                         ui.unindent();
-                    } else {ui.text_wrapped(crate::map_ui::reward_description(run,reward));}
+                    } else {crate::fancy_text::text_wrapped(ui,crate::map_ui::reward_description(run,reward));}
                 });
                 ui.set_cursor_pos([left+580.0*scale,top+115.0*scale]);
                 ui.child_window("物品说明").size([780.0*scale,640.0*scale]).build(|| {
@@ -417,19 +338,19 @@ impl Panel {
                     ui.set_cursor_pos([24.0*scale,20.0*scale]);
                     let _indent=ui.push_style_var(hudhook::imgui::StyleVar::IndentSpacing(24.0*scale));
                     ui.indent();
-                    let _wrap=ui.push_text_wrap_pos_with_pos(750.0*scale);
+                    let _wrap=ui.push_text_wrap_pos_with_pos(750.0*scale);let _cjk=crate::fancy_text::wrap_at(750.0*scale);
                     let _text=ui.push_style_color(StyleColor::Text,ink);
                     if let Some(d)=d {
-                        if !d.info.trim().is_empty(){ui.text_colored(gold,"效果");ui.spacing();{let _color=ui.push_style_color(StyleColor::Text,text_color);ui.text_wrapped(&d.info);}ui.spacing();ui.separator();ui.spacing();}
-                        if matches!(reward,Reward::TalismanBuff(_)){ui.text_wrapped("本局生效，不占护符栏位");ui.spacing();}
+                        if !d.info.trim().is_empty(){ui.text_colored(gold,"效果");ui.spacing();{let _color=ui.push_style_color(StyleColor::Text,text_color);crate::fancy_text::text_wrapped(ui,&d.info);}ui.spacing();ui.separator();ui.spacing();}
+                        if matches!(reward,Reward::TalismanBuff(_)){crate::fancy_text::text_wrapped(ui,"本局生效，不占护符栏位");ui.spacing();}
                         ui.text_colored(gold,"物品说明");ui.spacing();
                         if item_id(run,reward).is_some_and(|id|erdtree_tower::affixes::tier(id).is_some()) {
                             if let Some((lore,affix))=d.caption.rsplit_once("\n\n") {
-                                ui.text_wrapped(lore);ui.spacing();let _color=ui.push_style_color(StyleColor::Text,text_color);ui.text_wrapped(affix);
-                            } else {let _color=ui.push_style_color(StyleColor::Text,text_color);ui.text_wrapped(&d.caption);}
-                        } else {ui.text_wrapped(&d.caption);}
-                        if !d.skill.trim().is_empty(){ui.spacing();ui.separator();ui.spacing();ui.text_colored(gold,"战技");ui.spacing();ui.text_wrapped(&d.skill);}
-                    } else {ui.text_wrapped(crate::map_ui::reward_description(run,reward));}
+                                crate::fancy_text::text_wrapped(ui,lore);ui.spacing();let _color=ui.push_style_color(StyleColor::Text,text_color);crate::fancy_text::text_wrapped(ui,affix);
+                            } else {let _color=ui.push_style_color(StyleColor::Text,text_color);crate::fancy_text::text_wrapped(ui,&d.caption);}
+                        } else {crate::fancy_text::text_wrapped(ui,&d.caption);}
+                        if !d.skill.trim().is_empty(){ui.spacing();ui.separator();ui.spacing();ui.text_colored(gold,"战技");ui.spacing();crate::fancy_text::text_wrapped(ui,&d.skill);}
+                    } else {crate::fancy_text::text_wrapped(ui,crate::map_ui::reward_description(run,reward));}
                     ui.unindent();
                 });
                 if textured_button(ui,"返回  [Esc / B]",[left,top+795.0*scale],[300.0*scale,52.0*scale],gold){self.selection.close_details(now);}
@@ -516,7 +437,7 @@ impl Panel {
                 ui.set_window_font_scale(scale*0.90);
                 let summary=if summary.chars().count()>48 {format!("{}…",summary.chars().take(48).collect::<String>())}else{summary};
                 ui.set_cursor_pos([x+40.0*scale,y+329.0*scale]);
-                {let _color=ui.push_style_color(StyleColor::Text,quality_color);let _wrap=ui.push_text_wrap_pos_with_pos(x+width-40.0*scale);ui.text_wrapped(summary);}
+                {let _color=ui.push_style_color(StyleColor::Text,quality_color);let _wrap=ui.push_text_wrap_pos_with_pos(x+width-40.0*scale);let _cjk=crate::fancy_text::wrap_at(x+width-40.0*scale);crate::fancy_text::text_wrapped(ui,summary);}
                 ui.set_window_font_scale(scale);
                 if selected {center(ui,x+width*0.5,y+height-76.0*scale,"已选",gold);}
                 ui.set_cursor_pos([x,y]);let _disabled=ui.begin_disabled(!ready||self.selection.details||self.selection.skip);
@@ -540,7 +461,7 @@ impl Panel {
                 ui.set_cursor_pos([size[0]*0.5-220.0*scale,size[1]*0.4]);
                 let _child=ui.push_style_color(StyleColor::ChildBg,[0.09,0.095,0.08,1.0]);
                 ui.child_window("确认放弃").size([440.0*scale,150.0*scale]).border(true).build(||{
-                    ui.text_wrapped("放弃本次三选一奖励并继续旅程？");
+                    crate::fancy_text::text_wrapped(ui,"放弃本次三选一奖励并继续旅程？");
                     if (ui.button("确认放弃 [A]")||key(&[Key::GamepadFaceDown]))&&ready&&now>=self.selection.armed_at {runtime::submit(if gift.is_some(){Action::SkipGear}else{Action::KeepCurrency});self.selection.skip=false;}
                     ui.same_line();if ui.button("返回选择 [B]"){self.selection.skip=false;}
                 });
@@ -588,12 +509,6 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
     panel.rare_blue=Some(TextureId::new(200005));
     for (width,height) in [(1280,720),(1920,1080),(3440,1440)] {
         context.io_mut().display_size=[width as f32,height as f32];
-        for seed in 0..24 {
-            let mut event=Run::new(seed,erdtree_tower::Class::Samurai);
-            event.nodes[0].kind=erdtree_tower::NodeKind::Event;event.phase=Phase::Node{id:0};
-            panel.draw_story(context.frame(),&event,&view);
-            assert!(context.render().total_vtx_count>0);
-        }
     }
     for detail in DETAILS.values(){panel.textures.insert(detail.icon,Some(TextureId::new(detail.icon as usize+1)));}
     if let Some(path)=&output {

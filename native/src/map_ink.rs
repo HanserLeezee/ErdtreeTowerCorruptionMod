@@ -17,7 +17,7 @@ pub fn toolbar(ui:&Ui,scope:Scope,pos:[f32;2],scale:f32,ready:bool) {
             if ui.button_with_size(label,[108.0*scale,32.0*scale]) {ink.mode=mode;ink.active=false;ink.draft.clear();ink.erased.clear();}
         }
         ui.set_cursor_pos([pos[0],pos[1]+122.0*scale]);
-        ui.text_wrapped(match ink.mode {Mode::Select=>"拖动地图或滚轮翻页",Mode::Draw=>"按住左键划线，松开同步",Mode::Erase=>"按住左键擦除整条笔迹"});
+        crate::fancy_text::text_wrapped(ui,match ink.mode {Mode::Select=>"拖动地图或滚轮翻页",Mode::Draw=>"按住左键划线，松开同步",Mode::Erase=>"按住左键擦除整条笔迹"});
     });
 }
 pub fn selecting()->bool {INK.with(|ink|ink.borrow().mode==Mode::Select)}

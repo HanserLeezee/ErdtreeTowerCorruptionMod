@@ -103,12 +103,15 @@ static class AffixTextFix {
         if(actual.Rows.Count!=effects.Rows.Count||!actual.Rows.Any(r=>r.ID==BarMarker)||!actual.Rows.Any(r=>r.ID==BarMarkerV2))throw new Exception("Bar name marker not written");
         return true;
     }
-    // 侍从的敌人预览（menu_dlc02 第 33 表，9510000+序号×16+数量）：与 melina-patch 写入的内容相同，新增敌人时补上
+    // 侍从的敌人预览（menu_dlc02 第 33 表，9510000+序号×16+数量）：与 melina-patch 写入的内容相同，新增敌人时补上；
+    // 同表的问号房赌运事件菜单文字（RecoveryText.GambleEntries）也在这里写入
     static int UpdatePreviewNames(string input,string output) {
         const string msg="msg/zhocn/menu_dlc02.msgbnd.dcx";
         var menu=BND4.Read(Path.Combine(input,msg));var file=menu.Files.Single(f=>f.ID==MelinaAssets.PreviewMenu);var fmg=FMG.Read(file.Bytes);
         var before=menu.Files.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text));
         var expected=MelinaAssets.PreviewTexts(MelinaAssets.PreviewNames(input)).ToDictionary(t=>t.id,t=>t.text);
+        // 同一张表里还有问号房赌运事件的对话菜单文字，一并补上
+        foreach(var (id,text) in RecoveryText.GambleEntries)expected[id]=text;
         int changed=0;
         foreach(var (id,text) in expected) {
             var entry=fmg.Entries.FirstOrDefault(e=>e.ID==id);

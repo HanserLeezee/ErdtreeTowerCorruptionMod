@@ -1,21 +1,26 @@
 {
   "experimental": true,
   "gameVerified": false,
-  "legendaryMatcher": "UTF-16 codepoints 4F20 8BF4 then 00B7 or 30FB; skip whitespace and leading tags",
-  "effect": "wide platinum sweep, seven large sparkles and moving golden underline trail",
+  "qualityMatcher": "UTF-16 prefix 4F20 8BF4 (legendary) / 53F2 8BD7 (epic) / 7A00 6709 (rare) / 666E 901A (common), then 00B7 or 30FB; skip whitespace and leading tags",
+  "style": "auric",
+  "effect": "Effects scale with quality (common: faint glint; rare: flowing blue + glint + breathing blue glow; epic: dark violet body, glint, purple rim, two orbiting purple shadows, haze, sparse sparkles); legendary is Calamity-style burnished gold: dark crimson (or gold) per-glyph body with a soft wide ((sin+1)/2)^24 glint on glyphs only (epic too; common/rare keep ^120), ~3.3 s eased 0.5 s gleam mostly on the rim and heat glow, gold rim + heat glow + two upward flame drop shadows + bloom filters, additive aura and CosmicPurple-style rising rotating cross sparkles",
   "files": [
     {
       "file": "menu/02_055_detailstatus_weapon1.gfx",
+      "rebasedFromPatched": true,
+      "baseSha256": "55a0a7c7f4894e4687eb4b0c7cb6459637392245d13ff11d732a8dabad0268db",
       "originalSha256": "f4f688ee1f2b8633c940d5bfe06d52c7f046baa8a6fffcc54a73e3498b9a589c",
-      "patchedSha256": "55a0a7c7f4894e4687eb4b0c7cb6459637392245d13ff11d732a8dabad0268db",
+      "patchedSha256": "4e98dd0d85e1d33c8fc43f0754da345b2ee1f226b6804ac42eacf9eca4a3e7e7",
       "tagsVerified": 145,
       "changedTag": "DoABC",
       "path": "DetailStatusView.AdjustPosTop.Status_Weapon1.ItemName"
     },
     {
       "file": "menu/02_052_detailstatus_armor.gfx",
+      "rebasedFromPatched": true,
+      "baseSha256": "9ddc36085c04a12d97ada0e29caa9fb3bec72b7491ad14ba985113f69052e87a",
       "originalSha256": "fabff864cc107a8a651542a855febeac3a7255e8a41f7bd0b9d2a0177f444c96",
-      "patchedSha256": "9ddc36085c04a12d97ada0e29caa9fb3bec72b7491ad14ba985113f69052e87a",
+      "patchedSha256": "d9b75080ecf680f59f9dcaa4b42fe3fc9d661acccf518df41cb0736c3f75c3c6",
       "tagsVerified": 90,
       "changedTag": "DoABC",
       "path": "DetailStatusView.AdjustPosTop.Status_Armor.ItemName"
