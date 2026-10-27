@@ -1,3 +1,13 @@
+# 启动参数：调试模式与改键 · 2026-10-27
+
+游戏里的 DLL 启动时读模组目录（DLL 所在目录）的 `tower-options.ini`，启动器的 设置 → 游戏 改的就是这个文件，用 `.cmd` 启动也生效，改完下次启动游戏生效。文件是玩家自己的，不在发布清单里，更新不会覆盖或删除（打包与更新器都把它列为私有文件）。
+
+- `debug=1`：调试模式，与放一个 `tower-debug.enable` 效果相同；启动器里关闭时会顺带删掉旧的标记文件。
+- `key.settle` 快速结算（原 Home）、`key.overlay` 显示/隐藏爬塔界面（原 F10）、`key.archive` 旅程档案（原 J）、`key.build` 地图界面的构筑面板（原 C）、`key.debug` 调试菜单（原 F8）。可选 F1–F12、Home/End/Insert/Delete/PageUp/PageDown/Pause/ScrollLock、字母、数字和小键盘 Num0–Num9；写错或没写的项用原来的键。界面上的按键提示（档案、构筑、调试窗口标题、结算提示）跟着改。两个功能绑同一个键时启动器会提醒。
+- 首页主按钮下面显示当前是单人还是无缝联机模式，点「切换」直接换。
+
+解析在核心库 `src/options.rs`（有测试），DLL 侧 `native/src/options.rs` 只负责找文件和把键名换成 imgui 的键；日志里有一行 `OPTIONS` 记录读到的值。启动器侧 `launcher/Tower.Launcher/TowerOptions.cs` 只改自己认识的行，注释和其他行原样保留。
+
 # 启动器与增量更新 · 2026-10-27
 
 包根目录新增 `ErdtreeTowerLauncher.exe`：以后更新只下载内容变化的文件，不用每次重下整包。

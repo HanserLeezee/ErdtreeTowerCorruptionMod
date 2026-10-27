@@ -951,7 +951,7 @@ fn tick_locked() {
         match emergency_end(&mut state,world,game) {
             Ok(true)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);},
             Ok(false)=>{sync_action_guard(&mut state,world);return;},
-            Err(error)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);report(&mut state,format!("结算失败：{error}；可再次按 Home 重试"));sync_action_guard(&mut state,world);return;},
+            Err(error)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);report(&mut state,format!("结算失败：{error}；可再次按 {} 重试",super::options::label(erdtree_tower::options::Hotkey::Settle)));sync_action_guard(&mut state,world);return;},
         }
     }
     let now=Instant::now();
@@ -988,7 +988,7 @@ fn tick_locked() {
         if state.party.is_none() {
             stop_map_combat(&state,world);
             if let Some(run)=state.view.run.as_mut(){run.end_on_death();record(run);}
-            report(&mut state,if quick_end{"已按 Home 结束本局。"}else{"已在赐福休息，本局结束。"});
+            report(&mut state,if quick_end{format!("已按 {} 结束本局。",super::options::label(erdtree_tower::options::Hotkey::Settle))}else{"已在赐福休息，本局结束。".into()});
         }
     }
     recover_party_at_hub(&mut state,world,game);
@@ -2765,7 +2765,7 @@ fn tick_chariot(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     let player=world.main_player.as_mut().ok_or("角色正在加载")?;
     let (started,hp,fp,restored)=state.stormveil.as_mut().unwrap();
     if game.warp_requested||i32::from(player.current_block_id)!=0x2d010000 {
-        if !*restored&&started.elapsed()>Duration::from_secs(60){return Err("泥头车竞技场加载超时，可按 Home 暂离结算".into());}
+        if !*restored&&started.elapsed()>Duration::from_secs(60){return Err(format!("泥头车竞技场加载超时，可按 {} 暂离结算",super::options::label(erdtree_tower::options::Hotkey::Settle)));}
         return Ok(());
     }
     let alive=player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag();
@@ -2783,7 +2783,7 @@ fn tick_chariot(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
         let clock=state.chariot_clock.get_or_insert(ChariotClock::Warmup(Instant::now()));
         let (spawn,finished,remaining)=clock.tick(Instant::now(),loaded);
         set_flag(45007881,spawn)?;
-        if let ChariotClock::Loading(at)=clock {if at.elapsed()>Duration::from_secs(20){return Err("战车加载超时，尚未开始生存计时；可按 Home 暂离结算".into());}}
+        if let ChariotClock::Loading(at)=clock {if at.elapsed()>Duration::from_secs(20){return Err(format!("战车加载超时，尚未开始生存计时；可按 {} 暂离结算",super::options::label(erdtree_tower::options::Hotkey::Settle)));}}
         if let Some(v)=state.view.room.as_mut(){v.loading=false;v.message=match clock {ChariotClock::Warmup(_)=>format!("战车将在 {remaining} 秒后出现"),ChariotClock::Loading(_)=>"正在加载战车……".into(),ChariotClock::Surviving(_)=>format!("泥头车生存：剩余 {remaining} 秒")};}
         let complete=if let Some(link)=state.party.as_mut(){link.event.storm_finish=finished;link.event.storm_decision==Some(Decision::Complete)}else{finished};
         if !complete{return Ok(());}

@@ -385,7 +385,7 @@ fn summary_page(ui:&Ui,record:&Record,gain:Option<Gain>,focus:&mut usize,from_ar
         if let Some(gain)=gain {
             let class=crate::map_ui::class_name(gain.class);
             let unlocked:Vec<_>=gain.unlocked().into_iter().map(|id|crate::reward_ui::talisman_description(id).0).collect();
-            let line=if !unlocked.is_empty() {format!("{class}熟练度 +{}  ·  升到 Lv {}，解锁开局护符「{}」（按 J 在旅程档案的传承页更换）",gain.xp,gain.after,unlocked.join("」「"))}
+            let line=if !unlocked.is_empty() {format!("{class}熟练度 +{}  ·  升到 Lv {}，解锁开局护符「{}」（按 {} 在旅程档案的传承页更换）",gain.xp,gain.after,unlocked.join("」「"),crate::options::label(erdtree_tower::options::Hotkey::Archive))}
                 else if gain.after>gain.before {format!("{class}熟练度 +{}  ·  升到 Lv {}",gain.xp,gain.after)}
                 else {format!("{class}熟练度 +{}  ·  Lv {}",gain.xp,gain.after)};
             text(800.0,742.0,&line,if unlocked.is_empty(){boon}else{gold},0.92,0.5);

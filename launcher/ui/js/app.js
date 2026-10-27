@@ -501,6 +501,12 @@
     var sub = el('div', 'cta-sub', subRowFor(key));
     /* 已安装且有更新时，副行给一个次级入口「立即更新」 */
     sub.addEventListener('click', function (e) {
+      if (e.target.closest('[data-act="mode"]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        onSettingChange('mode', setState.mode === '无缝联机' ? '单人' : '无缝联机');
+        return;
+      }
       var a = e.target.closest('[data-act="update"]');
       if (!a) return;
       e.preventDefault();
@@ -1111,7 +1117,7 @@
         return '有可用更新 ' + esc(g.updateTo) +
           ' · <a data-act="update">立即更新</a>';
       }
-      return '';
+      return g.note ? esc(g.note) + ' · <a data-act="mode">切换</a>' : '';
     }
     /* 模组装在启动器所在文件夹，没有「定位已有安装」这一说，只显示配置里的提示 */
     return esc((g.cta && g.cta.hint) || '');
@@ -1736,6 +1742,7 @@
         if (g) {
           if (p.installed != null) g.installed = !!p.installed;
           if (p.version) g.version = p.version;
+          if (p.note != null) g.note = p.note;
           g.updateTo = p.updateTo || null;
           if (state.route === 'launcher' && state.game === p.game) renderLauncher(p.game);
         }

@@ -9,7 +9,7 @@ namespace Tower.Update
     {
         /// <summary>更新器自己的工作目录：暂存、备份、进度记录与哈希缓存，不属于任何版本</summary>
         public const string WorkDir = ".tower-update";
-        static readonly string[] Private = { InstallState.FileName, "GamePath.txt" };
+        static readonly string[] Private = { InstallState.FileName, "GamePath.txt", "tower-options.ini" };
 
         public static void Check(string relative)
         {

@@ -29,6 +29,7 @@ pub mod journal;
 pub mod legacy;
 
 pub mod music;
+pub mod options;
 
 pub type RuleResult<T> = Result<T, String>;
 

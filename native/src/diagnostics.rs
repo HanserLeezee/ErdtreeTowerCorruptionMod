@@ -34,7 +34,7 @@ pub fn write(message:impl std::fmt::Display) {
     let _=writeln!(file,"{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z pid={} seq={} +{}ms {}",
         time.year,time.month,time.day,time.hour,time.minute,time.second,time.millis,std::process::id(),*serial,START.elapsed().as_millis(),text);
 }
-fn module_path(address:usize)->Option<PathBuf> {
+pub(crate) fn module_path(address:usize)->Option<PathBuf> {
     let mut buffer=vec![0u16;32768];
     let length=unsafe {GetModuleFileNameW(address as _,buffer.as_mut_ptr(),buffer.len() as u32)} as usize;
     (length>0&&length<buffer.len()).then(||PathBuf::from(String::from_utf16_lossy(&buffer[..length])))

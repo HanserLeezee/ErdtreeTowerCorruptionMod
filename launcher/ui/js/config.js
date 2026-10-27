@@ -9,6 +9,9 @@
    真实的版本、下载进度、更新状态由宿主程序（launcher/Tower.Launcher）通过 bridge 推送。
    ============================================================ */
 
+/* 爬塔按键可选的键（与 src/options.rs 的 KEYS 对应的常用子集） */
+var KEY_CHOICES = ['Home', 'End', 'Insert', 'Delete', 'PageUp', 'PageDown', 'Pause', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'J', 'K', 'L', 'O', 'P', 'U', 'I', 'M', 'N', 'B', 'C', 'V', 'X', 'Z', 'Num0', 'Num1', 'Num2', 'Num3', 'Num4', 'Num5', 'Num6', 'Num7', 'Num8', 'Num9'];
+
 window.HOYO_CONFIG = {
   app: {
     name: '黄金树爬塔',
@@ -204,6 +207,23 @@ window.HOYO_CONFIG = {
               { type: 'seg', key: 'mode', label: '启动模式', value: '单人', options: ['单人', '无缝联机'] },
               { type: 'static', label: '游戏目录', key: 'gameDir', value: '（未设置）' },
               { type: 'buttons', label: '目录', items: [{ text: '选择游戏目录…', action: 'chooseGameDir' }] },
+            ],
+          },
+          /* 下面两组写进模组目录的 tower-options.ini，游戏启动时读取（用 .cmd 启动也生效） */
+          {
+            title: '调试（下次启动游戏生效）',
+            rows: [
+              { type: 'switch', key: 'debug', label: '调试模式', hint: '游戏里按「调试菜单」键打开；联机时调试命令不执行', value: false },
+            ],
+          },
+          {
+            title: '按键（下次启动游戏生效）',
+            rows: [
+              { type: 'select', key: 'key.settle', label: '快速结算', hint: '暂离并结束本局', value: 'Home', options: KEY_CHOICES },
+              { type: 'select', key: 'key.overlay', label: '显示/隐藏爬塔界面', value: 'F10', options: KEY_CHOICES },
+              { type: 'select', key: 'key.archive', label: '旅程档案', value: 'J', options: KEY_CHOICES },
+              { type: 'select', key: 'key.build', label: '构筑面板（地图界面）', value: 'C', options: KEY_CHOICES },
+              { type: 'select', key: 'key.debug', label: '调试菜单', value: 'F8', options: KEY_CHOICES },
             ],
           },
         ],

@@ -20,7 +20,7 @@ from pathlib import Path
 SCHEMA = 1
 MANIFEST = 'tower-release.json'
 # Files that belong to the player or to a running session and are never part of a release
-PRIVATE = ('tower-install.json', 'GamePath.txt')
+PRIVATE = ('tower-install.json', 'GamePath.txt', 'tower-options.ini')
 
 
 def pack_name(version):

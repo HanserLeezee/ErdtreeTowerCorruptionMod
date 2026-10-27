@@ -11,7 +11,7 @@ use eldenring::{
     fd4::FD4TaskData,
     util::system::wait_for_system_init,
 };
-use erdtree_tower::{Class, Phase, Run};
+use erdtree_tower::{Class, Phase, Run, options::Hotkey};
 use fromsoftware_shared::{GameVersion, LANG_ID_EN, SharedTaskImpExt, program::Program};
 use hudhook::{
     Hudhook, ImguiRenderLoop, MessageFilter, RenderContext,
@@ -21,6 +21,7 @@ use hudhook::{
 };
 
 mod blessings;
+mod options;
 mod enemies;
 mod chariot;
 mod map_guards;
@@ -279,7 +280,7 @@ impl ImguiRenderLoop for TowerPreview {
 
     fn render(&mut self, ui: &mut Ui) {
         diagnostics::frame();
-        if ui.is_key_pressed_no_repeat(Key::Home) {
+        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Settle)) {
             if runtime::PLAYER_READY.load(Ordering::Relaxed) {
                 runtime::QUICK_END.store(true,Ordering::Relaxed);
                 log("Home: quick settlement requested");
@@ -291,7 +292,7 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let view = runtime::view();
         let map_open=self.visible&&view.as_ref().and_then(|v|v.run.as_ref()).or(self.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Map));
-        if ui.is_key_pressed_no_repeat(Key::F10)&&!map_open {
+        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Overlay))&&!map_open {
             self.visible = !self.visible;
             log(format!("F10: visible={}", self.visible));
         }
@@ -305,10 +306,10 @@ impl ImguiRenderLoop for TowerPreview {
         }
         // J：旅程档案（往期旅程与图鉴），战斗中不响应；档案打开时同一个键负责关闭
         let fighting=view.as_ref().and_then(|v|v.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
-        if ui.is_key_pressed_no_repeat(Key::J)&&!fighting&&!ui.io().want_text_input&&!run_screen::active()&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
+        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Archive))&&!fighting&&!ui.io().want_text_input&&!run_screen::active()&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
         let rewards=&mut self.rewards;
         let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
-        if ui.is_key_pressed_no_repeat(Key::F8) {debug_menu::toggle();}
+        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Debug)) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
         if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
             let draw=ui.get_foreground_draw_list();
@@ -405,6 +406,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
     let address = module.0 as usize;
     std::thread::spawn(move || {
         diagnostics::startup(address);
+        options::init(diagnostics::module_path(address));
         diagnostics::watchdog();
         if std::env::var("ERDTREE_TOWER_PREVIEW").as_deref() != Ok("1") {
             log("Initialization stopped: launcher marker missing");

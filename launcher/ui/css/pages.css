@@ -1117,6 +1117,12 @@
   display: block;
 }
 
+/* 选项多（如按键）时列表内滚动，不溢出设置窗口 */
+.sel-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 .sel-item {
   display: block;
   width: 100%;

@@ -6,7 +6,8 @@ use crate::enemies::Enemy;
 
 pub enum Command {Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32)}
 
-static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists());
+// tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
+static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()||crate::options::get().debug);
 static OPEN:AtomicBool=AtomicBool::new(false);
 static QUEUE:Mutex<VecDeque<Command>>=Mutex::new(VecDeque::new());
 static ROSTER:Mutex<Option<Vec<Enemy>>>=Mutex::new(None);
@@ -78,7 +79,7 @@ impl Menu {
         if !open() {return;}
         let size=ui.io().display_size;
         let mut keep=true;
-        ui.window("爬塔调试  [F8]").opened(&mut keep).position([size[0]*0.55,size[1]*0.06],Condition::FirstUseEver).size([size[0]*0.42,size[1]*0.86],Condition::FirstUseEver).build(|| {
+        ui.window(format!("爬塔调试  [{}]###tower-debug",crate::options::label(erdtree_tower::options::Hotkey::Debug))).opened(&mut keep).position([size[0]*0.55,size[1]*0.06],Condition::FirstUseEver).size([size[0]*0.42,size[1]*0.86],Condition::FirstUseEver).build(|| {
             let Some(view)=view else {ui.text("运行时尚未就绪");return;};
             ui.text_colored([0.9,0.8,0.5,1.0],&view.status);
             let Some(run)=view.run.as_ref() else {ui.text("尚未开始旅程：在大赐福开始新局后再使用");return;};

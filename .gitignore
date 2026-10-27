@@ -22,3 +22,4 @@ tower-*.json
 host.json
 guest.json
 GamePath.txt
+tower-options.ini

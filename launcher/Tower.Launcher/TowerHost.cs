@@ -150,9 +150,19 @@ namespace Tower.Launcher
 
         void Change(string key, JsonElement value)
         {
+            // 调试与改键写进模组目录的 tower-options.ini（游戏读它），不进启动器自己的设置
+            if (key == "debug" || key.StartsWith("key.", StringComparison.Ordinal))
+            {
+                ChangeOption(key, value);
+                return;
+            }
             switch (key)
             {
-                case "mode": settings.Mode = value.ValueKind == JsonValueKind.String && value.GetString() == "无缝联机" ? HostSettings.Seamless : HostSettings.Solo; break;
+                case "mode":
+                    settings.Mode = value.ValueKind == JsonValueKind.String && value.GetString() == "无缝联机" ? HostSettings.Seamless : HostSettings.Solo;
+                    settings.Save(paths.SettingsFile);
+                    PushStatus();  // 首页主按钮下面的模式提示跟着变
+                    return;
                 case "autoCheck": settings.AutoCheck = value.ValueKind == JsonValueKind.True; break;
                 case "closeExit": settings.CloseExit = value.ValueKind == JsonValueKind.True; break;
                 case "route":
@@ -162,6 +172,36 @@ namespace Tower.Launcher
                 default: return;
             }
             settings.Save(paths.SettingsFile);
+        }
+
+        string OptionsFile => Path.Combine(paths.InstallDir, TowerOptions.FileName);
+
+        void ChangeOption(string key, JsonElement value)
+        {
+            var hotkey = TowerOptions.Hotkeys.FirstOrDefault(h => "key." + h.Id == key);
+            if (key != "debug" && hotkey.Id == null) return;
+            var text = key == "debug" ? (value.ValueKind == JsonValueKind.True ? "1" : "0") : value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+            if (text.Length == 0) return;
+            try
+            {
+                TowerOptions.Write(OptionsFile, key, text);
+                // 关调试时连旧的 tower-debug.enable 标记文件一起删，否则游戏里仍然算开着
+                var flag = Path.Combine(paths.InstallDir, "tower-debug.enable");
+                if (key == "debug" && text == "0" && File.Exists(flag)) File.Delete(flag);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Toast("保存启动参数失败：" + e.Message, "error", 6000);
+                return;
+            }
+            if (hotkey.Id != null)
+            {
+                // 两个功能绑同一个键时两个都会触发：提醒一下，但不拦
+                var values = TowerOptions.Read(OptionsFile);
+                var clash = TowerOptions.Hotkeys.Where(h => h.Id != hotkey.Id && TowerOptions.Key(values, h.Id, h.Default).Equals(text, StringComparison.OrdinalIgnoreCase)).Select(h => h.Label).ToList();
+                if (clash.Count > 0) Toast($"「{hotkey.Label}」和「{string.Join("」「", clash)}」都是 {text}，按一下会同时触发", "warn", 6000);
+            }
+            if (GameRunning()) Toast("已保存，下次启动游戏生效", "info");
         }
 
         void Run(string name)
@@ -203,14 +243,17 @@ namespace Tower.Launcher
             var state = InstallState.Load(paths.InstallDir);
             var installed = IsInstalled(state);
             var updateTo = installed && latest != null && (state == null || latest.Version > state.Version) ? Label(latest.Version) : null;
-            form.Post("game", "status", new { game = Game, installed, version = state == null ? "" : Label(state.Version), updateTo });
+            var note = settings.Mode == HostSettings.Seamless ? "无缝联机模式" : "单人模式";
+            form.Post("game", "status", new { game = Game, installed, version = state == null ? "" : Label(state.Version), updateTo, note });
             PushValues(state);
         }
 
         void PushValues(InstallState? state)
         {
-            form.Post("settings", "values", new Dictionary<string, object?>
+            var options = TowerOptions.Read(OptionsFile);
+            var values = new Dictionary<string, object?>
             {
+                ["debug"] = TowerOptions.Debug(options) || File.Exists(Path.Combine(paths.InstallDir, "tower-debug.enable")),
                 ["mode"] = settings.Mode == HostSettings.Seamless ? "无缝联机" : "单人",
                 ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : "国内镜像",
                 ["mirrorInfo"] = mirror == null ? "未配置（只从 GitHub 更新）" : new Uri(mirror).Host,
@@ -219,7 +262,9 @@ namespace Tower.Launcher
                 ["gameDir"] = GameDir() ?? "（未设置：开始游戏时自动查找，找不到再询问）",
                 ["version"] = state != null ? Label(state.Version) : IsInstalled(state) ? "未知（不是通过启动器安装的）" : "未安装",
                 ["updateStatus"] = updateStatus,
-            });
+            };
+            foreach (var (id, _, fallback) in TowerOptions.Hotkeys) values["key." + id] = TowerOptions.Key(options, id, fallback);
+            form.Post("settings", "values", values);
         }
 
         /// <summary>「公告」分页换成最新版本的更新说明：每行一条（最多 4 条），点开是这个版本的发布页</summary>

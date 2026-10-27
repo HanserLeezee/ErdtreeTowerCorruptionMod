@@ -216,6 +216,7 @@ public sealed class UpdateTests : IDisposable
     [InlineData("a\\b.txt")]
     [InlineData(".tower-update/journal.json")]
     [InlineData("tower-install.json")]
+    [InlineData("tower-options.ini")]
     [InlineData("scene-assets/./x")]
     public void UnsafePathsAreRejected(string path) => Assert.Throws<InvalidDataException>(() => InstallPaths.Check(path));
 

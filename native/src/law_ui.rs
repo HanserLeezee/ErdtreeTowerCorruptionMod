@@ -53,7 +53,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
     if key(Key::GamepadFaceUp){screen.law=Law::default();}
     if ui.io().key_ctrl&&key(Key::V) {if let Some(law)=ui.clipboard_text().and_then(|text|Law::parse(&text)){screen.law=law;}}
     let mut action=if key(Key::Enter)||key(Key::GamepadFaceLeft){Some(LawAction::Start(screen.law))}else if key(Key::Escape)||key(Key::GamepadFaceRight){Some(LawAction::Back)}
-        else if key(Key::J)||key(Key::GamepadBack){Some(LawAction::Archive)}else{None};
+        else if key(crate::options::key(erdtree_tower::options::Hotkey::Archive))||key(Key::GamepadBack){Some(LawAction::Archive)}else{None};
     let mut hovered=None;let mut copy=false;
     ui.window("苦难律法##law").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
         .flags(WindowFlags::NO_DECORATION|WindowFlags::NO_BACKGROUND|WindowFlags::NO_MOVE|WindowFlags::NO_NAV|WindowFlags::NO_SCROLL_WITH_MOUSE).build(|| {
@@ -72,7 +72,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
         panel(&draw,p(1340.0,30.0),p(1564.0,90.0),s);
         drop(draw);
         if button("返回  [Esc / B]",36.0,34.0,196.0,52.0,0.9){action=Some(LawAction::Back);}
-        if button("旅程档案  [J / View]",246.0,34.0,236.0,52.0,0.85){action=Some(LawAction::Archive);}
+        if button(&format!("旅程档案  [{} / View]",crate::options::label(erdtree_tower::options::Hotkey::Archive)),246.0,34.0,236.0,52.0,0.85){action=Some(LawAction::Archive);}
         text(800.0,26.0,"苦 难 律 法",GOLD,2.0,0.5);
         let subtitle=screen.seed.map_or("接受的苦难越多，分数越高".to_string(),|seed|format!("以种子 {seed} 开局 · 接受的苦难越多，分数越高"));
         text(800.0,100.0,&subtitle,MUTED,0.8,0.5);
