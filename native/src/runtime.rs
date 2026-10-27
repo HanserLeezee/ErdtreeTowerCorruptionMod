@@ -25,6 +25,9 @@ fn encounter_state<T:Default>(cache:&mut Option<((u64,u8,i32),T)>,scope:Option<(
 }
 
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(15);
+// [fix] A bound foe that never enters the fight (e.g. Kaiden placed outside the arena) used to stall
+// victory forever. After the others die, an untouched full-HP survivor is retired after this long.
+const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 pub static QUICK_END:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub static PLAYER_READY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 fn can_end_run(phase:Option<&Phase>,host:bool,blocked:bool)->bool {
@@ -104,6 +107,8 @@ struct Pending {
     next_run: Run,
     block: i32,
     completed: bool,
+    // [fix] Since when every remaining live foe has sat untouched at full HP after the others died.
+    stall: Option<Instant>,
 }
 struct PartyScene {run:Run,block:i32,wave:u8,started:Instant,guards:Option<super::map_guards::Guards>,hunt:Option<super::map_scarabs::Hunt>}
 impl PartyScene {
@@ -132,10 +137,13 @@ fn tick_party_scene(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Re
         scene.wave=job.wave;scene.started=Instant::now();
     }
     if link.event.done.is_some() {
-        if job.player==link.config.player {
-            let run=state.view.run.as_mut().ok_or("个人事件进度未加载")?;
-            if run.phase!=(Phase::Node{id})||!run.regional_event.guards{return Err("个人守卫事件与结算不匹配".into());}
+        let run=state.view.run.as_mut().ok_or("个人事件进度未加载")?;
+        if job.player==link.config.player&&(run.phase!=(Phase::Node{id})||!run.regional_event.guards){return Err("个人守卫事件与结算不匹配".into());}
+        // [fix] The guard fight is shared: it also settles any guard outcome other players are still
+        // waiting on in this room, so their queued waves are never started.
+        if run.phase==(Phase::Node{id})&&run.regional_event.guards {
             run.regional_event.guards=false;run.regional_event.guard_slot=None;record_checked(run)?;
+            if matches!(link.event.request,Some(Kind::Guards(_))){link.event.request=None;}
         }
         if let Some(guards)=scene.guards.take(){guards.retire();}
         if let Some(player)=world.main_player.as_mut(){
@@ -477,6 +485,20 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
     }
     if !state.party.as_mut().unwrap().accept(&order)?{return Ok(());}
     match order {
+        Order::Law{seed,law,..}=>{
+            let run=state.view.run.as_ref().ok_or("律法同步时旅程尚未开启")?;
+            if run.seed!=seed{return Err("律法同步路线不一致".into());}
+            if run.law==law{return Ok(());}
+            let mut next=run.clone();next.set_law(law)?;
+            if let Some(flasks)=state.flasks.as_mut() {
+                let data=unsafe {world.main_player.as_mut().ok_or("律法同步时角色未加载")?.player_game_data.as_mut()};
+                flasks.set_bonus(data,next.class,next.flask_bonus,law.flask_cut())?;
+                flasks.restore(data,next.flasks)?;
+                next.flasks=flasks.total().min(next.flask_limit);
+            }
+            record_checked(&next)?;state.view.run=Some(next);
+            report(state,format!("已同步房主苦难律法：{} 分，律法码 {}",law.score(),law.code()));Ok(())
+        },
         Order::ForceEnd=>{
             super::log("HOME_SYNC received host force end; scheduling terminal settlement");
             QUICK_END.store(true,std::sync::atomic::Ordering::Relaxed);Ok(())
@@ -513,7 +535,9 @@ fn rebuild_lobby(changed:bool,at_hub:bool,hub_active:bool,phase:Option<&Phase>)-
     changed&&at_hub&&hub_active&&phase.is_none()
 }
 fn lobby_reconnect_error(error:Option<&str>)->bool {
-    error.is_some_and(|error|error=="队员已重新连接，需要重新建立会话")
+    // [fix] A teammate fault also only blocks until everyone is back at an idle hub with no run:
+    // rebuild_lobby() still requires that, so the host is no longer locked out until a restart.
+    error.is_some_and(|error|error=="队员已重新连接，需要重新建立会话"||error.starts_with("队友报告游戏执行失败"))
 }
 fn lobby_roster_changed(link:Option<&erdtree_tower::party_roster::Roster>,pending:Option<&erdtree_tower::party_roster::Roster>,current:Option<&erdtree_tower::party_roster::Roster>)->bool {
     link.or(pending).zip(current).is_some_and(|(old,current)|old!=current)
@@ -548,7 +572,27 @@ fn recover_party_at_hub(state:&mut Runtime,world:&WorldChrMan,game:&GameMan) {
     state.command=None;state.view.ballots.clear();state.view.busy=false;
     super::log("Empty or closed Seamless session released at hub; personal progress retained");
 }
+fn attendant_disabled()->bool {
+    static OFF:std::sync::LazyLock<bool>=std::sync::LazyLock::new(||std::env::var("ERDTREE_TOWER_NO_ATTENDANT").as_deref()==Ok("1"));
+    *OFF
+}
+fn stall_victory_enabled()->bool {
+    static ON:std::sync::LazyLock<bool>=std::sync::LazyLock::new(||std::env::var("ERDTREE_TOWER_STALL_VICTORY").as_deref()==Ok("1"));
+    *ON
+}
+fn diagnostic_stall_victory(enabled:bool,authority:bool,elapsed:Duration)->bool {enabled&&authority&&elapsed>=STALL_TIMEOUT}
+// [fix] Keep the attack-disable guard in sync on every tick, including the early-return error /
+// emergency-end paths. Before, those paths skipped ActionGuard::update, so a dialog that had just
+// disabled attacks (disabled_secondary_actions) could leave the player unable to attack for good.
+fn sync_action_guard(state:&mut Runtime,world:&mut WorldChrMan) {
+    let menu_active=super::input::capture_actions(state.view.shared_event,super::input::active(),
+        state.room.as_ref().is_some_and(|r|r.dialog_active())
+        || state.attendant.as_ref().is_some_and(|r|r.dialog_active())
+        || state.hub.as_ref().is_some_and(|h|h.dialog_active()));
+    if let Some(player)=world.main_player.as_mut() {state.action_guard.update(&mut player.chr_ins,menu_active);}
+}
 fn poll_blocked_hub(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan) {
+    sync_action_guard(state,world);
     if game.warp_requested||!world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==super::hub::BLOCK){return;}
     if let Some(mut hub)=state.hub.take() {
         if hub.active {
@@ -629,6 +673,8 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
     let present=world.main_player.is_some()&&!game.warp_requested;
     let at_hub=present&&state.view.run.is_none()&&state.hub.as_ref().is_some_and(|h|h.ready_for_party_restart())
         &&world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==super::hub::BLOCK&&p.chr_ins.modules.physics.standing_on_solid_ground);
+    let total=state.flasks.as_ref().map(|f|f.total());
+    {let link=state.party.as_mut().unwrap();link.law_flasks.observe(link.epoch,present&&alive&&link.fighting&&!link.victory,total);}
     let orders=state.party.as_mut().unwrap().poll(if present {state.view.run.as_ref()}else{None},alive,at_hub,state.rest_end.requested);
     for order in orders {apply_party_order(state,world,game,order)?;}
     if QUICK_END.load(std::sync::atomic::Ordering::Relaxed){return Ok(());}
@@ -842,6 +888,7 @@ pub fn tick() {
     if let Ok(mut state)=STATE.try_lock(){sync_map(&mut state);}
     tick_locked();
     if let Ok(mut state)=STATE.try_lock() {
+        if let Ok(world)=unsafe {WorldChrMan::instance_mut()}{sync_action_guard(&mut state,world);}
         sync_map(&mut state);
         let view=state.view.clone();let owner=state.identity;
         drop(state);
@@ -899,8 +946,8 @@ fn tick_locked() {
     if QUICK_END.load(std::sync::atomic::Ordering::Relaxed) {
         match emergency_end(&mut state,world,game) {
             Ok(true)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);},
-            Ok(false)=>return,
-            Err(error)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);report(&mut state,format!("结算失败：{error}；可再次按 Home 重试"));return;},
+            Ok(false)=>{sync_action_guard(&mut state,world);return;},
+            Err(error)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);report(&mut state,format!("结算失败：{error}；可再次按 Home 重试"));sync_action_guard(&mut state,world);return;},
         }
     }
     let now=Instant::now();
@@ -947,7 +994,7 @@ fn tick_locked() {
     super::native_talk::END_ALLOWED.store(end_allowed,std::sync::atomic::Ordering::Relaxed);
     if end_requested&&end_allowed {
         let result=state.party.as_mut().map_or(Ok(()),|p|p.end_run());
-        if let Err(error)=result {report(&mut state,error);return;}
+        if let Err(error)=result {report(&mut state,error);sync_action_guard(&mut state,world);return;}
         stop_map_combat(&state,world);
         if let Some(run)=state.view.run.as_mut(){run.end_on_death();record(run);}
         state.command=None;
@@ -969,7 +1016,7 @@ fn tick_locked() {
             state.view.ready=false;state.view.busy=false;state.command=None;report(&mut state,error);poll_blocked_hub(&mut state,world,game);return;
         }
     }
-    if QUICK_END.load(std::sync::atomic::Ordering::Relaxed){return;}
+    if QUICK_END.load(std::sync::atomic::Ordering::Relaxed){sync_action_guard(&mut state,world);return;}
     if let Some(player)=world.main_player.as_ref() {
         let current=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot);
         if (game.event_world_type==EventWorldType::Local||super::seamless::active())&&game.save_slot>=0&&owner_changed(state.hub.as_ref().map(|h|h.owner),current) {
@@ -1032,7 +1079,9 @@ fn tick_locked() {
         }}
     }
     super::boss_bars::sync(super::boss_bars::select(bars));
-    let attendant_allowed=state.room.is_none()&&!game.warp_requested
+    // [fix] Diagnostic switch: ERDTREE_TOWER_NO_ATTENDANT=1 skips the arena-side NPC entirely, to test
+    // whether it is what triggers the arena-arrival crash. The fog gate and fight do not need it.
+    let attendant_allowed=!attendant_disabled()&&state.room.is_none()&&!game.warp_requested
         &&world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp>0&&(
             (state.travel.is_some()&&state.view.run.as_ref().is_some_and(|r|super::arenas::for_act(r.act).block==i32::from(p.current_block_id))&&super::native_talk::flag(45007993).unwrap_or(false))
             ||state.pending.as_ref().is_some_and(|fight|fight.block==i32::from(p.current_block_id)&&fight.foes.iter().all(|f|f.entity_address.is_some()))));
@@ -1051,12 +1100,8 @@ fn tick_locked() {
     if !game.warp_requested&&!state.view.travelling {
         if let Some(player)=world.main_player.as_mut(){super::star_stream::tick(&mut player.chr_ins,contract_run);}
     }
-    let menu_active=super::input::capture_actions(state.view.shared_event,super::input::active(),
-        state.room.as_ref().is_some_and(|r|r.dialog_active())
-        || state.attendant.as_ref().is_some_and(|r|r.dialog_active())
-        || state.hub.as_ref().is_some_and(|h|h.dialog_active()));
+    sync_action_guard(&mut state,world);
     if let Some(player)=world.main_player.as_mut() {
-        state.action_guard.update(&mut player.chr_ins,menu_active);
         let data=unsafe {player.player_game_data.as_mut()};
         data.unlocked_talisman_slots=4;
         super::loadout::repair_item_icons(data);
@@ -1164,7 +1209,11 @@ fn tick_locked() {
                 if run.act==1&&run.visited.is_empty()&&run.completed_nodes==0 {if let Some(hub)=&state.hub {super::run_log::clear(&super::run_log::path(hub.owner));}}
                 if let Some(link)=&state.party {
                     let aligned=erdtree_tower::party_game::act_seed(link.config.seed,run.act).and_then(|seed|run.align_party_start(seed));
-                    if let Err(error)=aligned {report(&mut state,error);return;}
+                    if let Err(error)=aligned {
+                        if let Some(hub)=state.hub.as_mut(){hub.reopen_for_party(world);}
+                        super::log(format!("Resumed run rejected by party alignment: {error}; hub reopened"));
+                        report(&mut state,format!("{error}。保留的旅程与队伍不一致，请在大赐福选择“开始新旅程”。"));return;
+                    }
                 }
                 state.view.room=None;state.view.run=Some(run);state.identity=None;state.flasks=None;
                 state.view.busy=false;state.view.prompt=state.view.prompt.wrapping_add(1);
@@ -1592,8 +1641,9 @@ fn tick_locked() {
         return;
     };
     let party_mode=state.party.is_some();
+    let stall_authority=state.party.as_ref().is_none_or(|p|p.host());
     let pending=state.pending.as_mut().unwrap();
-    let (outcome, enemy_hp, bound) = poll_group(pending, world, player_dead&&!party_mode, block);
+    let (outcome, enemy_hp, bound) = poll_group(pending, world, player_dead&&!party_mode, block,stall_authority);
     let all_bound=pending.foes.iter().all(|foe|foe.fight.handle().is_some());
     if let Some(link)=state.party.as_mut(){link.bound=all_bound;}
     let pending=state.pending.as_mut().unwrap();
@@ -1612,8 +1662,11 @@ fn tick_locked() {
             runtime.boss_fight.tick(world,&handles,authority,flasks);
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
-            runtime.law_fight.tick(world,(run.seed,run.act,id),run.law,&handles,authority,flasks);
-            runtime.view.law_clock=runtime.law_fight.clock();
+            if runtime.party.as_ref().is_none_or(|p|p.fighting) {
+                let team=runtime.party.as_ref().map(|p|p.gate.flask_uses());
+                runtime.law_fight.tick(world,(run.seed,run.act,id),run.law,&handles,authority,flasks,team.as_deref());
+                runtime.view.law_clock=runtime.law_fight.clock();
+            }
             if runtime.bout.active() {
                 let named:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,f.spec.name))).collect();
                 if let Some(message)=runtime.bout.tick(world,&named) {runtime.view.status=message;}
@@ -2170,6 +2223,18 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
     set_flag(45010940,true)?;
     if locked {return tick_locked_chest(state,world,room);}
     if let Some(link)=state.party.as_mut() {
+        if run.regional_event.guards&&link.event.guards_cleared {
+            // [fix] This room's guards were already defeated by the party. A second wave would try to
+            // reload the same pre-placed guard entities, which never unload after death, and lock the
+            // room forever. Resolve the outcome locally instead.
+            if matches!(link.event.request,Some(erdtree_tower::party_events::Kind::Guards(_))){link.event.request=None;}
+            let mut next=run.clone();next.regional_event.guards=false;next.regional_event.guard_slot=None;
+            record_checked(&next)?;
+            set_flag(45010942,false)?;set_flag(45010995,true)?;
+            room.view.message="本房间的守卫已被队伍击败，可以继续探索或使用传送门离开。".into();
+            state.view.run=Some(next);
+            return Ok(());
+        }
         if run.regional_event.guards {
             let slot=run.regional_event.guard_slot.ok_or("旧事件缺少守卫箱位，请重新开始旅程")?;
             link.event.request=Some(erdtree_tower::party_events::Kind::Guards(slot));
@@ -2195,11 +2260,11 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             state.pending=Some(Pending {
                 entity_base:None,networked:false,
                 spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None}).collect(),
-                next_run:run.clone(),block:room.block,completed:false,
+                next_run:run.clone(),block:room.block,completed:false,stall:None,
             });
         }
         let pending=state.pending.as_mut().unwrap();
-        let (outcome,hp,bound)=poll_group(pending,world,false,room.block);
+        let (outcome,hp,bound)=poll_group(pending,world,false,room.block,true);
         state.view.enemy_hp=hp;
         if bound&&!run.law.lone_wolf() {pending.spirits.poll(world,room.block,true)?;}
         match outcome {
@@ -2434,7 +2499,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
         entity_base:None,networked:state.party.is_some(),
         spirits:Default::default(),
         foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None }).collect(),
-        next_run, block: i32::from(player.current_block_id), completed: false,
+        next_run, block: i32::from(player.current_block_id), completed: false, stall: None,
     });
     state.spawn_used = true;
     state.view.travelling = true;
@@ -2454,7 +2519,7 @@ fn log_map_enemy(world:&WorldChrMan,entity:u32,spec:super::enemies::Enemy) {
     }
     super::log(format!("Map enemy diagnostic: entity={entity} matching_entities={count} controls={controls:?}"));
 }
-fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block: i32) -> (Outcome, Option<(i32,i32)>, bool) {
+fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block: i32,authority:bool) -> (Outcome, Option<(i32,i32)>, bool) {
     if dead { return (Outcome::PlayerDied, None, false); }
     if block != pending.block { return (Outcome::LostEntity, None, false); }
     let mut outcomes = Vec::new();
@@ -2470,6 +2535,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
     let mut spawning = false;
     let roles:Vec<_>=pending.foes.iter().map(|f|super::enemies::role(&f.spec)).collect();
     let monster_node=matches!(pending.next_run.phase,Phase::Combat{id} if pending.next_run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Monster));
+    let mut untouched=Vec::new();
     for i in 0..count {
         if !erdtree_tower::encounter::may_spawn(pending.networked,monster_node,&roles,i,&outcomes) {
             outcomes.push(Outcome::Waiting);
@@ -2554,11 +2620,30 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
         let outcome = foe.fight.poll(false, observation, foe.requested.is_some_and(|t| t.elapsed() > SPAWN_TIMEOUT));
         if matches!(outcome,Outcome::SpawnTimedOut|Outcome::LostEntity)&&let Some(ids)=&map_ids {log_map_enemy(world,ids[i],foe.spec);}
         bound |= foe.fight.handle().is_some();
+        if outcome==Outcome::Waiting&&observation==Observation::Alive&&let Some(chr)=enemy&&chr.modules.data.hp>=chr.modules.data.max_hp {untouched.push(i);}
         if let Some(chr) = enemy {
             max_hp = max_hp.saturating_add(chr.modules.data.max_hp);
             if outcome != Outcome::Victory { hp = hp.saturating_add(chr.modules.data.hp.max(0)); }
         }
         outcomes.push(outcome);
+    }
+    let stalled=outcomes.contains(&Outcome::Victory)&&!untouched.is_empty()
+        &&outcomes.iter().enumerate().all(|(i,o)|*o==Outcome::Victory||untouched.contains(&i));
+    if !stalled {pending.stall=None;}
+    else if diagnostic_stall_victory(stall_victory_enabled(),authority,pending.stall.get_or_insert_with(Instant::now).elapsed()) {
+        let origin=world.main_player.as_ref().map(|p|(p.chr_ins.modules.physics.position.0-p.block_position.x,p.chr_ins.modules.physics.position.1-p.block_position.y,p.chr_ins.modules.physics.position.2-p.block_position.z));
+        for &i in &untouched {
+            let foe=&pending.foes[i];
+            if let Some(chr)=foe.fight.handle().and_then(|h|world.chr_ins_by_handle_mut(&h)).filter(|c|foe.entity_address==Some(std::ptr::from_ref(&**c) as usize)) {
+                let p=&chr.modules.physics.position;
+                let local=origin.map(|o|[p.0-o.0,p.1-o.1,p.2-o.2]);
+                super::log(format!("STALL_VICTORY retiring untouched foe {}/{} {} model={} entity={} handle={} hp={}/{} load={:?} disabled={} local={local:?} arena_center={:?}",
+                    i+1,count,foe.spec.name,foe.spec.model,chr.event_entity_id,chr.field_ins_handle,chr.modules.data.hp,chr.modules.data.max_hp,
+                    unsafe {chr.chr_set_entry.as_ref()}.chr_load_status,chr.debug_flags.character_disabled(),super::arenas::for_block(block).map(|a|a.center)));
+                chr.debug_flags.set_character_disabled(true);
+            }
+        }
+        return (Outcome::Victory,bound.then_some((0,max_hp)),bound);
     }
     (super::enemies::group_outcome(&outcomes, false), bound.then_some((hp,max_hp)),bound)
 }
@@ -2907,6 +2992,14 @@ fn request_travel(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn stall_victory_is_opt_in_and_host_only() {
+        for seconds in [0,59,60,3600] {
+            assert!(!super::diagnostic_stall_victory(false,true,std::time::Duration::from_secs(seconds)));
+            assert!(!super::diagnostic_stall_victory(true,false,std::time::Duration::from_secs(seconds)));
+            assert_eq!(super::diagnostic_stall_victory(true,true,std::time::Duration::from_secs(seconds)),seconds>=60);
+        }
+    }
+    #[test]
     fn remote_skip_closes_local_dialogue_before_awarding_and_reopening_map() {
         use erdtree_tower::{Class,NodeKind,Phase,Run,regional_events::Trial,stormveil::{Progress,Decision}};
         for trial in [false,true] {for host_first in [false,true] {
@@ -3090,7 +3183,8 @@ mod tests {
         for phase in [Phase::Map,Phase::Combat{id:0},Phase::Node{id:0},Phase::Dead] {
             assert!(!super::rebuild_lobby(retry,true,true,Some(&phase)));
         }
-        for error in [None,Some("队伍协议不匹配"),Some("上次联机领奖中断"),Some("队友报告游戏执行失败")] {
+        assert!(super::lobby_reconnect_error(Some("队友报告游戏执行失败，请查看队友日志")));
+        for error in [None,Some("队伍协议不匹配"),Some("上次联机领奖中断")] {
             assert!(!super::lobby_reconnect_error(error));
         }
     }

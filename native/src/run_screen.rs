@@ -10,11 +10,11 @@ static SCREEN:Mutex<VecDeque<Screen>>=Mutex::new(VecDeque::new());
 static PENDING:Mutex<Option<(Record,Option<Gain>)>>=Mutex::new(None);
 static SEED:Mutex<Option<u64>>=Mutex::new(None);
 static LAW_START:Mutex<Option<(Option<u64>,Law,Class)>>=Mutex::new(None);
-/// 联机开局：选完职业直接开局（苦难律法只能单人）
+/// 客机开局：选完职业后等待房主的苦难律法同步。
 static CLASS_START:Mutex<Option<Class>>=Mutex::new(None);
 static ACTIVE:AtomicBool=AtomicBool::new(false);
 enum Screen {Summary{record:Record,gain:Option<Gain>,from_archive:bool,focus:usize,opened:Option<f64>},Archive(Box<crate::archive_ui::Archive>),Notice{message:String,opened:Option<f64>},TrialRewards{items:Vec<u32>,opened:Option<f64>},Seed{input:String,error:String,digit:u8,opened:Option<f64>},Law{screen:crate::law_ui::LawScreen,seed:Option<u64>,record:Option<(u32,String)>,class:Class},
-    /// 选择职业；law 为 false 时（联机）选完直接开局
+    /// 选择职业；law 为 false 时（客机）选完直接开局
     Class{screen:crate::class_ui::ClassScreen,seed:Option<u64>,law:bool}}
 fn show(next:Screen) {
     let Ok(mut screens)=SCREEN.lock() else{return;};
@@ -48,7 +48,7 @@ pub fn hub_ready() {
 }
 pub fn seed_entry() {show(Screen::Seed{input:String::new(),error:String::new(),digit:0,opened:None});}
 pub fn take_seed()->Option<u64> {SEED.lock().ok()?.take()}
-/// 开局：先选职业（默认选中 current），单人再立苦难律法；seed 为空时随机开局
+/// 开局：先选职业（默认选中 current），单人或房主再立苦难律法；seed 为空时随机开局
 pub fn class_entry(seed:Option<u64>,law:bool,current:Class) {
     let focus=Class::PLAYABLE.iter().position(|c|*c==current).unwrap_or(0);
     show(Screen::Class{screen:crate::class_ui::ClassScreen::new(focus),seed,law});

@@ -9,6 +9,15 @@ fn seeded_start_allowed()->bool {
     unsafe {eldenring::cs::CSSessionManager::instance()}.ok()
         .is_some_and(|session|session.lobby_state==eldenring::cs::LobbyState::None||super::seamless::roster(session).is_ok_and(|r|r.members.len()==1&&r.local==r.host))
 }
+fn law_start_allowed()->bool {
+    use fromsoftware_shared::FromStatic;
+    if let Some(path)=super::party::manual_config() {
+        return std::fs::read_to_string(path).ok().and_then(|s|erdtree_tower::party_game::Config::decode(&s).ok()).is_some_and(|c|c.player==c.host);
+    }
+    if !super::seamless::active(){return true;}
+    unsafe {eldenring::cs::CSSessionManager::instance()}.ok()
+        .is_some_and(|s|s.lobby_state==eldenring::cs::LobbyState::None||super::seamless::roster(s).is_ok_and(|r|r.local==r.host))
+}
 #[derive(Debug,PartialEq,Eq)]
 enum WarpStep {Request,Wait,Ready,Failed}
 fn choice_allowed(npc:usize,choice:i32,party_ready:bool)->bool {
@@ -167,6 +176,10 @@ impl Hub {
         super::log(format!("Hub start: class={class:?} seeded={} law={}",seed.is_some(),law.code()));
     }
     pub fn ready_for_party_restart(&self)->bool {self.active&&!self.reset&&!self.start&&matches!(self.warp,WarpGate::Ready)}
+    pub fn reopen_for_party(&mut self,world:&mut WorldChrMan) {
+        if let Some(room)=self.room.take(){room.retire(world);}
+        self.active=true;self.start=false;self.seed=None;self.law=Default::default();self.resume=None;
+    }
     pub fn settling(&self)->bool {self.active&&self.settled}
     pub fn view(&self)->super::rooms::RoomView {
         self.room.as_ref().map(|r|r.view.clone()).unwrap_or(super::rooms::RoomView{message:"正在返回大赐福并准备角色……".into(),loading:true,completed:false})
@@ -248,7 +261,7 @@ impl Hub {
             return Ok(None);
         }
         if let Some((seed,law,class))=super::run_screen::take_law_start() {
-            if seeded_start_allowed() {self.begin(class,seed,law);}else{room.notice(9500105)?;}
+            if law_start_allowed()&&(seed.is_none()||seeded_start_allowed()) {self.begin(class,seed,law);}else{room.notice(9500105)?;}
             return Ok(None);
         }
         if let Some(class)=super::run_screen::take_class_start() {self.begin(class,None,Default::default());return Ok(None);}
@@ -263,9 +276,8 @@ impl Hub {
                 return Ok(None);
             }
             match (npc,choice) {
-                // 单人开局先立苦难律法；联机暂不支持，直接开局
-                // 开始新旅程：先选职业，单人再立苦难律法；联机选完职业直接开局
-                (0,1)=>super::run_screen::class_entry(None,seeded_start_allowed(),self.current_class()),
+                // 联机由房主选律法，客机选完职业后等待规则同步。
+                (0,1)=>super::run_screen::class_entry(None,law_start_allowed(),self.current_class()),
                 (0,3)=>{if seeded_start_allowed(){super::run_screen::seed_entry();}else{room.notice(9500105)?;}},
                 (0,2)=>{
                     if let Some(mut run)=self.resume.take().filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)) {

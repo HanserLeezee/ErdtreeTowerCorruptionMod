@@ -4,6 +4,7 @@ pub mod coordinator;
 pub mod party_rewards;
 pub mod party_link;
 pub mod party_game;
+pub mod party_law;
 pub mod party_vote;
 pub mod party_roster;
 pub mod party_handshake;
@@ -581,7 +582,6 @@ impl Run {
 
     pub fn align_party_start(&mut self,seed:u64)->RuleResult<()> {
         self.validate()?;
-        if !self.law.is_empty() {return Err("苦难律法旅程只能单人进行，请在大赐福开始新的共同旅程".into());}
         if self.seed==seed {return Ok(());}
         if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {
             return Err("已有旅程不能替换路线，请从大赐福开始共同旅程".into());

@@ -33,12 +33,20 @@ fn simultaneous_requests_wait_for_every_replica_and_every_receipt() {
         let mut gate=Gate::new((1..=count).collect());gate.stage=Stage::Service;gate.begin_events().unwrap();
         let mut reports=vec![Report::new(&run,0,true,false,true);count as usize];
         let mut completed=std::collections::HashSet::new();
+        // [fix] Guard fights are shared by the room: only the first guard request runs a wave; every
+        // later guard request (any player, any slot) is settled by that fight. Scarabs stay per player.
+        let mut guards_fought=false;
         for kind in [Kind::Guards(0),Kind::Scarabs(1),Kind::Guards(1),Kind::Scarabs(2),Kind::Guards(2),Kind::Scarabs(3)] {
             for (i,r) in reports.iter_mut().enumerate(){
                 r.event_request=Some(kind);
                 gate.report(i as u64+1,r.clone()).unwrap();gate.report(i as u64+1,r.clone()).unwrap();
             }
-            for owner in 1..=count {
+            let owners:Vec<u64>=match kind {
+                Kind::Guards(_) if guards_fought=>vec![],
+                Kind::Guards(_)=>{guards_fought=true;vec![1]},
+                Kind::Scarabs(_)=>(1..=count).collect(),
+            };
+            for owner in owners {
                 let Some(Order::EventStart(job))=gate.event_start().unwrap() else {panic!("missing queued request")};
                 assert_eq!(job.player,owner);assert_eq!(job.kind,kind);
                 assert!(completed.insert((owner,job.wave)));
@@ -62,7 +70,7 @@ fn simultaneous_requests_wait_for_every_replica_and_every_receipt() {
             }
             assert!(gate.event_start().unwrap().is_none());
         }
-        assert_eq!(completed.len(),count as usize*6);
+        assert_eq!(completed.len(),count as usize*3+1);
     }
 }
 

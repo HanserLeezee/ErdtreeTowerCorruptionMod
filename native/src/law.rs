@@ -35,14 +35,14 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,overtime:bool) {
 }
 /// 一场战斗内的律法：给每个刷出的敌人挂一次强化，限时计时，嫉妒的世界在玩家喝药时回复敌人
 #[derive(Default)]
-pub struct Fight {key:Option<(u64,u8,usize)>,applied:Vec<FieldInsHandle>,started:Option<Instant>,flasks:Option<u8>,limit:Option<u64>,missing:bool}
+pub struct Fight {key:Option<(u64,u8,usize)>,applied:Vec<FieldInsHandle>,started:Option<Instant>,flasks:Option<u8>,limit:Option<u64>,missing:bool,drinks:erdtree_tower::party_law::DrinkDeltas}
 impl Fight {
-    pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),law:Law,handles:&[FieldInsHandle],authority:bool,flasks:Option<u8>) {
+    pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),law:Law,handles:&[FieldInsHandle],authority:bool,flasks:Option<u8>,team:Option<&[(u64,u64)]>) {
         if self.key!=Some(key) {
             *self=Self{key:Some(key),started:Some(Instant::now()),limit:law.time_limit(),..Default::default()};
             if !law.is_empty() {super::log(format!("TOWER_LAW node={} act={} code={} score={}",key.2,key.1,law.code(),law.score()));}
         }
-        let drank=matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before);self.flasks=flasks;
+        let drank=team.map_or_else(||match (self.flasks,flasks){(Some(before),Some(after))=>u64::from(before.saturating_sub(after)),_=>0},|counts|self.drinks.take(counts));self.flasks=flasks;
         if law.is_empty()||!authority {return;}
         let effects=enemy_effects(law);
         if !ready(&effects) {if !self.missing{super::log("TOWER_LAW missing law effects; update regulation.bin");self.missing=true;}return;}
@@ -50,12 +50,12 @@ impl Fight {
             let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
             if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
             if !self.applied.contains(handle) {for id in &effects {chr.apply_speffect(*id,false);}self.applied.push(*handle);}
-            if drank&&law.envy_world() {
+            if drank>0&&law.envy_world() {
                 let data=&mut chr.modules.data;
-                data.hp=(i64::from(data.hp)+i64::from(data.max_hp.max(0))/10).min(i64::from(data.max_hp)) as i32;
+                data.hp=(i64::from(data.hp)+i64::from(data.max_hp.max(0))/10*drank.min(32) as i64).min(i64::from(data.max_hp)) as i32;
             }
         }
-        if drank&&law.envy_world() {super::log("TOWER_LAW envy world healed enemies");}
+        if drank>0&&law.envy_world() {super::log(format!("TOWER_LAW envy world healed enemies: flask_uses={drank}"));}
     }
     /// 限时战斗剩余秒数；超时后为负数
     pub fn clock(&self)->Option<i64> {

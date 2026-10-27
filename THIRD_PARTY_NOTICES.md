@@ -1,5 +1,7 @@
 # Third-party notices
 
+Co-op guard-room, input recovery, arena attendant, reconnect and cursor-hook fixes were adapted from the user-provided HansFix3 patch set (based on upstream 832688a). Its package identifies Hans as author and states GPL-3.0-or-later with this project's additional terms. Integration changes and provenance are recorded in `reference/HansFix3-integration.md`; the supplied DLL and launcher configuration were not imported.
+
 Erdtree Tower's own code and data are licensed under GPL-3.0-or-later with additional terms; see `LICENSE` and `ADDITIONAL-TERMS.md`. The third-party components below keep their own licenses.
 
 The preview DLL statically links pinned revisions of fromsoftware-rs (MIT option) and hudhook (MIT).

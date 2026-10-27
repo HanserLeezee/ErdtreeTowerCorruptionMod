@@ -193,7 +193,7 @@ fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8)->Vec<Enemy> {
 }
 fn encounter_allowed(kind:NodeKind,id:usize)->bool {
     !BOSSES.iter().any(|(group,e)|*group==id&&e.name=="铃珠猎人")
-        &&!BOSSES.iter().any(|(group,e)|*group==id&&matches!(e.model,4570|4580))
+        &&!BOSSES.iter().any(|(group,e)|*group==id&&matches!(e.model,4570|4580|4050|4602))
         &&!BOSSES.iter().any(|(group,e)|*group==id&&kind==NodeKind::Elite&&e.act==3&&e.model==4911)
         &&!BOSSES.iter().any(|(group,e)|*group==id&&kind==NodeKind::Boss&&e.act==1&&e.name=="死亡仪式鸟")
         &&(kind!=NodeKind::Boss||BOSSES.iter().filter(|(group,_)|*group==id).count()==1)
@@ -277,6 +277,13 @@ mod tests {
         for act in 1..=3 {for kind in [NodeKind::Monster,NodeKind::Elite,NodeKind::Boss] {for seed in 0..300 {
             assert!(roster(kind,seed,seed as usize%40,11,act).iter().all(|e|!matches!(e.model,4570|4580)));
         }}}
+    }
+    #[test]
+    fn reported_stalling_models_keep_slots_but_are_never_selected() {
+        for model in [4050,4602] {assert!(MAP_ENTITIES.iter().any(|(e,_)|e.model==model));}
+        for party in [false,true] {for act in 1..=3 {for kind in [NodeKind::Monster,NodeKind::Elite,NodeKind::Boss] {for seed in 0..300 {
+            assert!(roster_in(kind,seed,seed as usize%40,11,act,party).iter().all(|e|!matches!(e.model,4050|4602)));
+        }}}}
     }
     #[test]
     fn ordinary_rooms_exclude_bloodhound_knights_at_every_stage() {

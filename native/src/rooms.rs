@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 fn first_stale<T>(bindings:&[(T,usize)],mut lookup:impl FnMut(&T)->Option<usize>)->Option<usize> {
     bindings.iter().position(|(handle,address)|lookup(handle)!=Some(*address))
 }
+const SPAWN_SETTLE:Duration=Duration::from_secs(3);
+fn spawn_settled(since:&mut Option<Instant>,now:Instant,ready:bool)->bool {
+    if !ready {*since=None;return false;}
+    now.saturating_duration_since(*since.get_or_insert(now))>=SPAWN_SETTLE
+}
 fn service(hub:bool,kind:NodeKind,index:usize)->u32 {
     if kind==NodeKind::Event {return 6;}
     if hub {if index==2 {5}else{3+index as u32}} else if kind==NodeKind::Shop {if index==0 {2}else{5}} else if kind!=NodeKind::Camp||index==2 {5} else {index as u32}
@@ -55,6 +60,8 @@ pub struct Room {
     pub entry: u32,
     started: Instant,
     pending_since: Option<Instant>,
+    // [fix] When the player first stood still in this room; debug NPC spawns wait for it.
+    settled: Option<Instant>,
     handles: Vec<(FieldInsHandle, usize)>,
     talks: Vec<super::native_talk::NativeTalk>,
     saved_hp: i32,
@@ -151,6 +158,7 @@ impl Room {
             entry,
             started: Instant::now(),
             pending_since: None,
+            settled: None,
             handles: Vec::new(),
             talks: Vec::new(),
             saved_hp: hp,
@@ -174,6 +182,7 @@ impl Room {
             && !player.chr_ins.modules.physics.is_falling
             && player.chr_ins.modules.data.hp > 0
             && !player.chr_ins.chr_flags1c5.is_invincible();
+        let spawn_ready=spawn_settled(&mut self.settled,Instant::now(),arrived&&grounded);
         if !arrived || (!self.restored && !grounded) {
             self.view.loading = true;
             if self.started.elapsed() > Duration::from_secs(60) {
@@ -277,6 +286,11 @@ impl Room {
                 if self.pending_since.is_some() && at.elapsed() > Duration::from_secs(15) {
                     return Err(format!("服务 NPC {model} 生成超时，未消耗节点"));
                 }
+            } else if !spawn_ready {
+                // [fix] Arena-arrival crashes (eldenring+0x2360a9 via ersc.dll) all happened in the
+                // first seconds after this debug spawn was issued on a freshly loaded map. Wait until
+                // the player has stood on solid ground for a moment before creating the NPC.
+                self.view.message = "正在等待地图稳定……".into();
             } else if !world.debug_chr_creator.spawn {
                 let player = world.main_player.as_ref().unwrap();
                 let physics = &player.chr_ins.modules.physics;
@@ -422,6 +436,16 @@ fn npcs(kind: NodeKind) -> Vec<(i32, [f32; 3])> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn npc_spawning_requires_three_continuous_grounded_seconds() {
+        let start=std::time::Instant::now();let mut since=None;
+        assert!(!super::spawn_settled(&mut since,start,true));
+        assert!(!super::spawn_settled(&mut since,start+std::time::Duration::from_secs(2),true));
+        assert!(super::spawn_settled(&mut since,start+std::time::Duration::from_secs(3),true));
+        assert!(!super::spawn_settled(&mut since,start+std::time::Duration::from_secs(4),false));
+        assert!(!super::spawn_settled(&mut since,start+std::time::Duration::from_secs(5),true));
+        assert!(super::spawn_settled(&mut since,start+std::time::Duration::from_secs(8),true));
+    }
     use super::*;
     #[test]
     fn conditional_service_catalog_matches_native_menu_roles_and_models() {

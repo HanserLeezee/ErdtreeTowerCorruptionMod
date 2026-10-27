@@ -32,6 +32,8 @@ impl Config {
 }
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct Report {
+    #[serde(default)] pub law:crate::law::Law,
+    #[serde(default)] pub flask_uses:u64,
     #[serde(default)] pub drawing:Option<crate::map_drawing::Request>,
     #[serde(default)] pub trial:bool,
     #[serde(default)] pub trial_choice:Option<crate::regional_events::Trial>,
@@ -54,15 +56,16 @@ pub struct Report {
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Order {
+    Law{epoch:u64,seed:u64,law:crate::law::Law},
     MapDrawing(crate::map_drawing::Canvas),
     ForceEnd,
     ChariotPose{epoch:u64,sequence:u64,pose:[f32;3]},
@@ -81,6 +84,15 @@ pub enum Order {
 pub enum Stage {Map,Travel,Combat,Fighting,Service,Reward,Stopped}
 pub struct Gate {trial:Option<crate::regional_events::Trial>,pub epoch:u64,pub stage:Stage,peers:Vec<(u64,Option<Report>)>,events:Option<crate::party_events::Queue>,stormveil:Option<crate::stormveil::Decision>}
 impl Gate {
+    pub fn law_order(&self,run:&Run)->RuleResult<Option<Order>> {
+        if !self.all(|r|r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Ok(None);}
+        if self.all(|r|r.law==run.law){return Ok(None);}
+        if run.act!=1||!run.visited.is_empty()||run.phase!=Phase::Map {return Err("队伍苦难律法不一致，请重新开始共同旅程".into());}
+        Ok(Some(Order::Law{epoch:self.epoch,seed:run.seed,law:run.law}))
+    }
+    pub fn flask_uses(&self)->Vec<(u64,u64)> {
+        self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present&&r.epoch==self.epoch).map(|r|(*id,r.flask_uses))).collect()
+    }
     pub fn drawing_requests(&self)->Vec<(u64,crate::map_drawing::Request)> {
         self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present&&r.alive)
             .and_then(|r|r.drawing.as_ref().filter(|d|d.scope.seed==r.seed&&d.scope.act==r.act)).map(|d|(*id,d.clone()))).collect()
@@ -163,7 +175,7 @@ impl Gate {
     }
     pub fn disconnect(&mut self,id:u64){if let Some(p)=self.peers.iter_mut().find(|p|p.0==id){p.1=None;}}
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
-        if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch{return Err("队员旅程进度不匹配".into());}
+        if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
         self.peers.iter_mut().find(|p|p.0==id).ok_or("未知队员")?.1=Some(report);Ok(())
     }
@@ -172,7 +184,7 @@ impl Gate {
     }
     pub fn enter(&mut self,run:&Run,node:usize)->RuleResult<Order> {
         if self.events_unsettled()||!matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service)||!run.available().contains(&node)
-            ||!self.all(|r|r.alive&&r.map_ready&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Err("等待全员完成奖励与契约选择".into());}
+            ||!self.all(|r|r.alive&&r.map_ready&&r.law==run.law&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Err("等待全员同步律法并完成奖励与契约选择".into());}
         let has_stonesword_key=self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.has_stonesword_key));
         self.epoch=self.epoch.checked_add(1).ok_or("队伍序号耗尽")?;
         self.stage=if run.nodes[node].kind.combat(){Stage::Travel}else{Stage::Service};
@@ -182,7 +194,7 @@ impl Gate {
     }
     pub fn resolve_votes(&mut self,run:&Run,entropy:u64)->RuleResult<Option<Order>> {
         if self.events_unsettled()||!matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service)
-            ||!self.all(|r|r.alive&&r.map_ready&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Ok(None);}
+            ||!self.all(|r|r.alive&&r.map_ready&&r.law==run.law&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Ok(None);}
         let ids:Vec<_>=self.peers.iter().map(|p|p.0).collect();let available=run.available();
         let mut vote=crate::party_vote::Vote::new(self.epoch,&ids,&available)?;
         for (id,report) in &self.peers {

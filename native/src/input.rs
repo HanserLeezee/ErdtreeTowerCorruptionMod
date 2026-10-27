@@ -145,7 +145,6 @@ mod tests {
 #[link(name = "user32")]
 unsafe extern "system" {
     fn GetCursorPos(point:*mut DesktopPoint)->i32;
-    fn SetCursorPos(x: i32, y: i32) -> i32;
     fn GetForegroundWindow() -> isize;
 }
 
@@ -172,8 +171,29 @@ unsafe extern "system" fn cursor_position(x: i32, y: i32) -> i32 {
     unsafe { original(x, y) }
 }
 
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetModuleHandleW(name: *const u16) -> *mut c_void;
+    fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
+}
+// [fix] Hook the real user32!SetCursorPos. With the MinGW (windows-gnu) toolchain, `SetCursorPos as
+// *mut c_void` is the address of a local import thunk inside this DLL, so hooking it only caught this
+// DLL's own calls: the game kept re-centring the cursor while reward/oath screens were open.
+fn user32_set_cursor_pos() -> Result<*mut c_void, String> {
+    let name: Vec<u16> = "user32.dll".encode_utf16().chain(std::iter::once(0)).collect();
+    let module = unsafe { GetModuleHandleW(name.as_ptr()) };
+    if module.is_null() { return Err("Cursor hook: user32.dll not loaded".into()); }
+    let address = unsafe { GetProcAddress(module, c"SetCursorPos".as_ptr()) };
+    if address.is_null() { return Err("Cursor hook: SetCursorPos not found".into()); }
+    Ok(address)
+}
+
+#[test]
+fn cursor_hook_resolves_loaded_system_export() {
+    assert!(!user32_set_cursor_pos().unwrap().is_null());
+}
 pub unsafe fn install() -> Result<(), String> {
-    let address = SetCursorPos as *mut c_void;
+    let address = user32_set_cursor_pos()?;
     let hook = unsafe { MhHook::new(address, cursor_position as *mut c_void) }
         .map_err(|error| format!("Cursor hook: {error:?}"))?;
     ORIGINAL.store(hook.trampoline() as usize, Ordering::Release);

@@ -167,6 +167,6 @@ mod tests {
         let mut capped=plain.clone();capped.set_law(law(&[8])).unwrap();
         for _ in 0..4 {capped.grant(Reward::FlaskCapacity).unwrap();}
         assert_eq!(capped.flask_limit,17);assert!(capped.validate().is_ok());
-        assert!(capped.align_party_start(capped.seed).is_err(),"law runs stay solo");
+        assert!(capped.align_party_start(capped.seed).is_ok(),"matching party routes preserve the selected law");
     }
 }
