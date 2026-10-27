@@ -1,5 +1,6 @@
 //! The [`hudhook`](crate) overlay rendering engine.
 mod backend;
+pub(crate) mod ime;
 mod input;
 mod keys;
 pub(crate) mod msg_filter;

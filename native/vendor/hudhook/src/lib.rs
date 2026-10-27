@@ -141,6 +141,8 @@ pub mod mh;
 pub(crate) mod renderer;
 
 pub use renderer::msg_filter::MessageFilter;
+/// TOWER_PATCH (IME): where the active imgui text field is, so the IME windows open next to it
+pub use renderer::ime::set_position as set_ime_position;
 
 pub mod util;
 

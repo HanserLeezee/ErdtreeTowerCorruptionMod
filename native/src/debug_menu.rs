@@ -19,6 +19,10 @@ pub fn toggle() {
     let now=!OPEN.load(Ordering::Relaxed);OPEN.store(now,Ordering::Relaxed);
     crate::log(format!("DEBUG_MENU open={now}"));
 }
+/// 正在输入的文字框：让输入法的候选框开在它下面（中文输入见 hudhook 的 renderer/ime.rs）
+fn ime_here(ui:&Ui) {
+    if ui.is_item_active() {let min=ui.item_rect_min();let max=ui.item_rect_max();hudhook::set_ime_position(min[0],max[1]);}
+}
 fn send(command:Command) {if let Ok(mut queue)=QUEUE.lock(){queue.push_back(command);}}
 pub fn take()->Option<Command> {QUEUE.lock().ok()?.pop_front()}
 /// 下一场单人战斗改用指定的敌人，生成时取出
@@ -135,7 +139,7 @@ impl Menu {
         if ui.small_button("恢复正常抽取") {if let Ok(mut roster)=ROSTER.lock(){*roster=None;}if let Ok(mut bout)=BOUT.lock(){*bout=None;}}
         if self.count<1 {self.count=1;}
         ui.set_next_item_width(120.0);ui.input_int("数量",&mut self.count).build();self.count=self.count.clamp(1,4);
-        ui.set_next_item_width(240.0);ui.input_text("筛选##enemy",&mut self.enemy_filter).build();
+        ui.set_next_item_width(240.0);ui.input_text("筛选##enemy",&mut self.enemy_filter).build();ime_here(ui);
         let filter=self.enemy_filter.trim().to_owned();
         ui.child_window("##debug-enemies").size([0.0,0.0]).build(|| {
             ui.text_colored([0.7,0.7,0.7,1.0],"怪物池");
@@ -195,7 +199,7 @@ impl Menu {
         ui.separator();
         ui.text("按名称或说明搜索，例如：葛孚雷、致命一击、传说·");
         ui.set_next_item_width(320.0);
-        let enter=ui.input_text("##item-query",&mut self.item_query).enter_returns_true(true).build();
+        let enter=ui.input_text("##item-query",&mut self.item_query).enter_returns_true(true).build();ime_here(ui);
         ui.same_line();
         if (ui.button("搜索")||enter)||self.searched!=self.item_query&&self.item_query.chars().count()>=2 {
             self.items=crate::reward_ui::search_items(&self.item_query,80);self.searched=self.item_query.clone();

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::mem;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,9 +12,10 @@ use tracing::{error, warn};
 use windows::core::{Error, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC,
+    CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, WM_CHAR,
 };
 
+use crate::renderer::ime::{self, Ime};
 use crate::renderer::input::{imgui_wnd_proc_impl, WndProcType};
 use crate::renderer::RenderEngine;
 use crate::{util, ImguiRenderLoop, MessageFilter};
@@ -41,6 +42,8 @@ pub(crate) struct PipelineMessage(
 
 pub(crate) struct PipelineSharedState {
     pub(crate) message_filter: AtomicU32,
+    /// TOWER_PATCH (IME): imgui wanted text input on the last frame
+    pub(crate) want_text: AtomicBool,
     pub(crate) wnd_proc: WndProcType,
     pub(crate) tx: Sender<PipelineMessage>,
 }
@@ -89,6 +92,7 @@ impl<T: RenderEngine> Pipeline<T> {
         let (tx, rx) = mpsc::channel();
         let shared_state = Arc::new(PipelineSharedState {
             message_filter: AtomicU32::new(MessageFilter::empty().bits()),
+            want_text: AtomicBool::new(false),
             wnd_proc,
             tx,
         });
@@ -120,6 +124,7 @@ impl<T: RenderEngine> Pipeline<T> {
         let message_filter = self.render_loop.message_filter(self.ctx.io());
 
         self.shared_state.message_filter.store(message_filter.bits(), Ordering::SeqCst);
+        self.shared_state.want_text.store(self.ctx.io().want_text_input, Ordering::SeqCst);
 
         let io = self.ctx.io_mut();
 
@@ -211,6 +216,15 @@ unsafe extern "system" fn pipeline_wnd_proc(
         };
 
         Arc::clone(shared_state)
+    };
+
+    // TOWER_PATCH (IME): committed IME text goes to imgui as characters; see renderer/ime.rs
+    let push = |c: char| {
+        let _ = shared_state.tx.send(PipelineMessage(SendableHwnd(hwnd), WM_CHAR, WPARAM(c as usize), LPARAM(0)));
+    };
+    let lparam = match unsafe { ime::before(hwnd, msg, wparam, lparam, shared_state.want_text.load(Ordering::SeqCst), &push) } {
+        Ime::Forward(lparam) => lparam,
+        Ime::Handled => return LRESULT(0),
     };
 
     if let Err(e) = shared_state.tx.send(PipelineMessage(SendableHwnd(hwnd), msg, wparam, lparam)) {

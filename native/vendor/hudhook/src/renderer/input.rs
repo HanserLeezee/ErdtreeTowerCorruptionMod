@@ -336,7 +336,12 @@ pub fn imgui_wnd_proc_impl<T: RenderEngine>(
             let y = hiwordi(lparam as u32) as f32;
             io.add_mouse_pos_event([x, y]);
         },
-        WM_CHAR => io.add_input_character(char::from_u32(wparam as u32).unwrap()),
+        // TOWER_PATCH (IME): a lone surrogate used to panic here; IME text arrives as whole characters (renderer/ime.rs)
+        WM_CHAR => {
+            if let Some(c) = char::from_u32(wparam as u32) {
+                io.add_input_character(c);
+            }
+        },
         WM_SIZE => {
             pipeline.resize(loword(lparam as u32) as u32, hiword(lparam as u32) as u32);
         },
