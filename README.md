@@ -1,3 +1,12 @@
+# 修复：召唤师骨灰没死也不退还 · 2026-10-27
+
+召唤师「群灵」（胜利时召唤物还活着，这次召唤不消耗骨灰）原来只在胜利那一刻找“数量为 0 的骨灰”补回 1。两处问题：
+
+- 只写在普通战斗的胜利处理里，三重宝匣、贪欲祭坛等事件房间的守卫战没有；
+- 假设召唤时就扣掉骨灰次数。如果游戏是在召唤物离场时才扣，胜利那一刻找不到可补的，随后召唤物被收回、次数变 0，又被每 0.5 秒的清理当成用掉的骨灰删掉——正好是“没死也没还”。
+
+现在两处胜利都走 `keep_summoned_ash`：胜利前 2 秒内召唤物还在也算活着；先补一次，再开 20 秒保护期，期间召唤物离场后才出现的“用掉的骨灰”补回而不是清理（新的一场战斗开始时保护期结束）。两种扣次数的时机都覆盖。日志：`Spirit ash kept after victory`（胜利时补回）、`Spirit ash kept after the summon left`（离场后补回）、`Spirit ash: summon alive at victory, refund waits until it leaves`、`Spirit ash not kept: no living summon at victory`。
+
 # 额外 DLL 插件 · 2026-10-27
 
 启动器 设置 → 插件：「添加 DLL…」（连同同名配置文件、同名文件夹）或「添加插件文件夹…」（整个复制，顶层每个 DLL 登记），列表里可以开关、移除。插件复制进模组目录的 `plugins/`，清单是 `plugins/natives.toml`（ME3 `[[natives]]` 格式，`enabled = false` 表示停用，也可以手动改，手动加的 `load_after` 等选项启用/停用时原样保留）。拒绝 `ersc.dll`、`dinput8.dll`、me3 与爬塔自己的 DLL；添加前提醒插件是第三方程序。

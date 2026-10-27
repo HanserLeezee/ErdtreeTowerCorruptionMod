@@ -246,6 +246,10 @@ struct Runtime {
     identity: Option<(u32, i32)>,
     hub_failed: Option<((u32,i32),Instant)>,
     ashes_checked: Option<Instant>,
+    /// 最近一次看到召唤物在场的时间（召唤师「群灵」：胜利前一两秒还在也算活着）
+    summon_seen: Option<Instant>,
+    /// 召唤师胜利后的一小段时间：召唤物离场后才变成“用掉”的骨灰也补回，而不是清理掉
+    ash_guard: Option<Instant>,
     larval_retry: Option<Instant>,
     deepen_retry: Option<Instant>,
     build_checked: Option<Instant>,
@@ -297,6 +301,8 @@ fn fresh_runtime()->Runtime {
         identity: None,
         hub_failed: None,
         ashes_checked: None,
+        summon_seen: None,
+        ash_guard: None,
         larval_retry: None,
         deepen_retry: None,
         build_checked: None,
@@ -1164,9 +1170,22 @@ fn tick_locked() {
     }
     let identity = (player_data.character_id, game.save_slot);
     if game.event_world_type != EventWorldType::Local && state.party.is_none() && !super::seamless::active() {return;}
+    if world.summon_buddy_manager.player_has_alive_summon {state.summon_seen=Some(Instant::now());}
+    // 新的一场战斗开始，上一场的保护就不再适用
+    if state.pending.is_some() {state.ash_guard=None;}
     if state.pending.is_none() && !world.summon_buddy_manager.player_has_alive_summon && state.ashes_checked.is_none_or(|t|t.elapsed()>=Duration::from_millis(500)) {
         state.ashes_checked=Some(Instant::now());
-        if let Err(error)=super::loadout::clear_spent_ashes(player_data){super::log_repeating(error);}
+        if state.ash_guard.is_some_and(|t|t.elapsed()<ASH_GUARD) {
+            // 游戏若在召唤物离场时才扣骨灰次数，胜利那一刻补不到，这里补
+            match super::loadout::refund_spent_ashes(player_data) {
+                Ok(0)=>{},
+                Ok(count)=>{super::log(format!("Spirit ash kept after the summon left: {count}"));state.ash_guard=None;},
+                Err(error)=>super::log_repeating(format!("Spirit ash refund failed: {error}")),
+            }
+        } else {
+            state.ash_guard=None;
+            if let Err(error)=super::loadout::clear_spent_ashes(player_data){super::log_repeating(error);}
+        }
     }
     if state.hub.is_none() {
         if state.hub_failed.is_some_and(|(owner,at)|owner==identity&&at.elapsed()<Duration::from_secs(5)){return;}
@@ -1745,14 +1764,7 @@ fn tick_locked() {
             }
             state.view.run=Some(next.clone());
             if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,&next);super::contracts::heal_victory(&mut player.chr_ins,&next);}
-            // 召唤师：胜利时召唤物还活着，这次召唤不消耗骨灰（在收回召唤物之前补回）
-            if next.summoner()&&world.summon_buddy_manager.player_has_alive_summon && let Some(player)=world.main_player.as_mut() {
-                match super::loadout::refund_spent_ashes(unsafe {player.player_game_data.as_mut()}) {
-                    Ok(count) if count>0=>super::log(format!("Spirit ash kept after victory: {count}")),
-                    Ok(_)=>{},
-                    Err(error)=>super::log(format!("Spirit ash refund failed: {error}")),
-                }
-            }
+            if keep_summoned_ash(world,&next,state.summon_seen) {state.ash_guard=Some(Instant::now());}
             world.summon_buddy_manager.disappear_requested=true;
             state.reward_wait = Some((Instant::now(), next));
             state.reward_portal=Default::default();
@@ -2318,6 +2330,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         match outcome {
             Outcome::Victory => {
                 if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run);super::contracts::heal_victory(&mut player.chr_ins,run);}
+                if keep_summoned_ash(world,run,state.summon_seen) {state.ash_guard=Some(Instant::now());}
                 state.pending=None;state.event_start=None;state.view.enemy_hp=None;
                 let run=state.view.run.as_mut().unwrap();run.regional_event.guards=false;run.regional_event.guard_slot=None;record(run);
                 set_flag(45010942,false)?;set_flag(45010995,true)?;
@@ -2694,6 +2707,22 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
         return (Outcome::Victory,bound.then_some((0,max_hp)),bound);
     }
     (super::enemies::group_outcome(&outcomes, false), bound.then_some((hp,max_hp)),bound)
+}
+const ASH_GUARD:Duration=Duration::from_secs(20);
+/// 召唤师「群灵」：战斗胜利时召唤物还活着，这次召唤不消耗骨灰。
+/// 普通战斗和事件房间的守卫战都走这里。胜利前一两秒召唤物还在也算活着；先把已经用掉的骨灰补回，
+/// 返回 true 时由调用方开一段保护期：召唤物离场后才变成“用掉”的骨灰也补回（两种扣次数的时机都覆盖）。
+fn keep_summoned_ash(world:&mut WorldChrMan,run:&erdtree_tower::Run,summon_seen:Option<Instant>)->bool {
+    if !run.summoner() {return false;}
+    let alive=world.summon_buddy_manager.player_has_alive_summon||summon_seen.is_some_and(|t|t.elapsed()<Duration::from_secs(2));
+    if !alive {super::log("Spirit ash not kept: no living summon at victory");return false;}
+    let Some(player)=world.main_player.as_mut() else {return false;};
+    match super::loadout::refund_spent_ashes(unsafe {player.player_game_data.as_mut()}) {
+        Ok(0)=>super::log("Spirit ash: summon alive at victory, refund waits until it leaves"),
+        Ok(count)=>super::log(format!("Spirit ash kept after victory: {count}")),
+        Err(error)=>super::log(format!("Spirit ash refund failed: {error}")),
+    }
+    true
 }
 fn retire_group(pending:&Pending,world:&mut WorldChrMan){
     if pending.networked&&pending.entity_base.is_none() {
