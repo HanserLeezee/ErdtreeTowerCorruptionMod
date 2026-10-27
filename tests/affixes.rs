@@ -95,6 +95,19 @@ fn quality_follows_the_prefix_with_source_floors_and_old_runs_keep_vanilla_floor
         assert!(affixes::tier(affixes::roll_min(&run,3140000,seed,true,3).unwrap())==Some(3));
         let mut old=run.clone();old.affix_rules=2;
         assert_eq!(affixes::tier(affixes::roll(&old,3140000,seed,true).unwrap()),Some(3),"old runs keep the vanilla rarity floor");
-        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().affix_rules,3);
+        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().affix_rules,4);
     }
+}
+
+#[test]
+fn new_runs_use_the_relaxed_prefix_odds_and_old_runs_keep_theirs() {
+    assert_eq!((0..100).map(affixes::prefix_tier).fold([0;4],|mut n,t|{n[usize::from(t)]+=1;n}),[25,35,28,12]);
+    let count=|rules:u8|{
+        let mut n=[0u32;4];
+        for seed in 0..4000u64 {let mut run=Run::new(seed,Class::Samurai);run.affix_rules=rules;n[usize::from(affixes::tier(affixes::roll(&run,3140000,seed*7919^0x51,true).unwrap()).unwrap())]+=1;}
+        n
+    };
+    let new=count(4);let old=count(3);
+    for (tier,(share,tolerance)) in [(25,4),(35,4),(28,4),(12,3)].into_iter().enumerate() {assert!((new[tier] as i32*100/4000-share).abs()<=tolerance,"rules 4 tier {tier}: {new:?}");}
+    for (tier,(share,tolerance)) in [(45,4),(30,4),(18,4),(7,3)].into_iter().enumerate() {assert!((old[tier] as i32*100/4000-share).abs()<=tolerance,"rules 3 tier {tier}: {old:?}");}
 }

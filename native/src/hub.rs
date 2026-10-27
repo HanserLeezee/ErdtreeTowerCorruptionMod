@@ -154,7 +154,7 @@ impl Hub {
         let chosen=std::fs::read_to_string(path(owner,"reset")).or_else(|_|std::fs::read_to_string(path(owner,"class"))).ok().and_then(|s|s.parse().ok()).filter(|a|super::class_from_archetype(*a).is_some()).unwrap_or(if super::class_from_archetype(archetype).is_some(){archetype}else{0});
         let reset=resume.as_ref().is_none_or(|r| matches!(r.phase,Phase::Dead|Phase::Won)) || path(owner,"reset").exists();
         let paused=!reset&&path(owner,"paused").exists();
-        if paused {if let Some(run)=&resume {super::run_screen::summary(run);}}
+        if paused {if let Some(run)=&resume {super::run_screen::summary_with((erdtree_tower::journal::Record::new(run,super::run_log::read(&super::run_log::path(owner)),vec![],0),None));}}
         let settled=resume.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won));
         Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,law:Default::default(),settled})
     }
@@ -216,6 +216,10 @@ impl Hub {
         }
         super::run_screen::hub_ready();
         if self.start && party_ready {
+            // 开局护符：职业传承选用的护符，默认祖灵角；发放失败时保持待开局，下一帧重试
+            let talisman=super::legacy::talisman(self.owner,super::class_from_archetype(self.chosen).unwrap_or(Class::Vagabond));
+            super::items::give(&[((0x20000000|talisman) as i32,1,-1)])?;
+            super::log(format!("TOWER_LEGACY start talisman={talisman}"));
             self.active=false;self.start=false;
             if let Some(room)=self.room.take(){room.retire(world);}
             let class=super::class_from_archetype(self.chosen).unwrap_or(Class::Vagabond);
@@ -226,6 +230,7 @@ impl Hub {
             let mut run=Run::new_personal(seed,class,super::party::random_entropy()?);run.enable_contracts();
             run.set_law(std::mem::take(&mut self.law))?;
             if !run.law.is_empty() {super::log(format!("TOWER_LAW start code={} score={}",run.law.code(),run.law.score()));}
+            run.set_start_talisman(talisman)?;
             return Ok(Some(run));
         }
         if self.room.is_none() {

@@ -57,7 +57,9 @@ pub fn offers(run:&Run,node:usize)->Vec<Reward> {
     before_tool_rate(&limited,node)
 }
 pub(crate) fn before_tool_rate(run:&Run,node:usize)->Vec<Reward> {
-    let owned:Vec<_>=run.claimed_items.iter().map(|id|crate::affixes::base(*id)).filter(|id|!run.claimed_items.contains(id)).collect();
+    let mut owned:Vec<_>=run.claimed_items.iter().map(|id|crate::affixes::base(*id)).filter(|id|!run.claimed_items.contains(id)).collect();
+    // 职业传承选用的开局护符已经在身上，不再作为奖励出现
+    if run.start_talisman!=0&&!run.claimed_items.contains(&(0x20000000|run.start_talisman)) {owned.push(0x20000000|run.start_talisman);}
     if owned.is_empty(){return crate::affixes::rewards(run,node,casting_replaced(run,node,true));}
     let mut run=run.clone();run.claimed_items.extend(owned);
     crate::affixes::rewards(&run,node,casting_replaced(&run,node,true))

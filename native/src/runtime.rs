@@ -78,10 +78,12 @@ pub struct View {
     pub boss_affixes: Option<String>,
     /// 苦难律法限时战斗的剩余秒数，超时后为负
     pub law_clock: Option<i64>,
+    /// 身上词条装备的名称与词条（路线图的构筑面板）
+    pub build: Vec<super::reward_ui::Gear>,
 }
 fn initial_view()->View {
     View{shared_event:false,ballots:vec![],run:None,status:"进入角色后，从金色入口开始旅程。".into(),
-        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None}
+        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None,build:vec![]}
 }
 
 struct Foe {
@@ -232,6 +234,7 @@ struct Runtime {
     ashes_checked: Option<Instant>,
     larval_retry: Option<Instant>,
     deepen_retry: Option<Instant>,
+    build_checked: Option<Instant>,
     boss_fight: super::boss_affixes::Fight,
     growth: super::scaling::Growth,
     law_fight: super::law::Fight,
@@ -281,6 +284,7 @@ fn fresh_runtime()->Runtime {
         ashes_checked: None,
         larval_retry: None,
         deepen_retry: None,
+        build_checked: None,
         boss_fight: Default::default(),
         growth: Default::default(),
         law_fight: Default::default(),
@@ -794,16 +798,17 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     let owner=(data.character_id,game.save_slot);
     if game.save_slot<0{return Ok(false);}
     if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,data.archetype)?);}
+    super::legacy::set_owner(owner);
     if let Some(run)=state.view.run.as_ref() {
         let run=ended_progress(run);
         if let Ok(mut path)=SESSION_PATH.lock(){*path=Some(super::hub::path(owner,"json"));}
         record_checked(&run)?;
-        super::run_screen::summary(&run);
+        super::run_screen::summary_with(super::run_log::finish(&run,super::run_log::read(&super::run_log::path(owner)),Some(owner)));
     }else if super::hub::path(owner,"json").exists() {
         let path=super::hub::path(owner,"json");
         let run=ended_progress(&Run::decode(&std::fs::read_to_string(&path).map_err(|e|e.to_string())?)?);
         std::fs::write(path,run.encode()?).map_err(|e|e.to_string())?;
-        super::run_screen::summary(&run);
+        super::run_screen::summary_with(super::run_log::finish(&run,super::run_log::read(&super::run_log::path(owner)),Some(owner)));
     }
     state.hub.as_mut().unwrap().finish();
     let marker=super::hub::path(owner,"paused");
@@ -1085,6 +1090,7 @@ fn tick_locked() {
     };
     let player_data = unsafe { &mut *player.player_game_data.as_ptr() };
     state.view.runes = player_data.rune_count;
+    if state.build_checked.is_none_or(|t|t.elapsed()>=Duration::from_secs(1)) {state.build_checked=Some(Instant::now());state.view.build=equipped_build(player_data);}
     if let Some(run)=state.view.run.as_mut(){run.gold=player_data.rune_count;}
     let deepen_due=state.deepen_retry.is_none_or(|t|t.elapsed()>=Duration::from_secs(2));
     if deepen_due&&state.view.run.as_ref().is_some_and(|r|r.contract.as_ref().is_some_and(|c|c.deepened&&!c.gear_done)) {state.deepen_retry=Some(Instant::now());}
@@ -1103,6 +1109,7 @@ fn tick_locked() {
     }
     if state.hub.is_none() {
         if state.hub_failed.is_some_and(|(owner,at)|owner==identity&&at.elapsed()<Duration::from_secs(5)){return;}
+        super::legacy::set_owner(identity);
         match super::hub::Hub::new(identity,player_data.archetype) {
             Ok(hub)=>{
                 if let Ok(mut path)=SESSION_PATH.lock(){*path=Some(super::hub::path(identity,"json"));}
@@ -1117,7 +1124,8 @@ fn tick_locked() {
     if state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won))
         && state.hub.as_ref().is_some_and(|h|!h.active) {
         if let Some(run)=&state.view.run {
-            super::run_screen::summary(run);
+            let history=state.hub.as_ref().map(|hub|super::run_log::read(&super::run_log::path(hub.owner))).unwrap_or_default();
+            super::run_screen::summary_with(super::run_log::finish(run,history,state.hub.as_ref().map(|hub|hub.owner)));
             if let Some(hub)=&state.hub {
                 if let Ok(json)=run.encode(){let _=std::fs::write(super::hub::path(hub.owner,"summary.json"),json);}
                 if let Err(error)=super::law::record(hub.owner,run){super::log(error);}
@@ -1149,6 +1157,7 @@ fn tick_locked() {
         state.view.room=Some(hub.view());state.hub=Some(hub);
         match result {
             Ok(Some(mut run))=>{
+                if run.act==1&&run.visited.is_empty()&&run.completed_nodes==0 {if let Some(hub)=&state.hub {super::run_log::clear(&super::run_log::path(hub.owner));}}
                 if let Some(link)=&state.party {
                     let aligned=erdtree_tower::party_game::act_seed(link.config.seed,run.act).and_then(|seed|run.align_party_start(seed));
                     if let Err(error)=aligned {report(&mut state,error);return;}
@@ -1635,6 +1644,8 @@ fn tick_locked() {
     state.law_fight=Default::default();state.view.law_clock=None;state.ember_fight=Default::default();state.bout.end(world);
     let pending = state.pending.as_mut().unwrap();
     pending.completed = true;
+    let fought=if let Phase::Combat{id}=pending.next_run.phase {Some(id)} else {None};
+    let names:Vec<&'static str>=pending.foes.iter().map(|f|f.spec.name).collect();
     let result = match outcome {
         Outcome::Victory => Ok(()),
         Outcome::PlayerDied if pending.next_run.phase == Phase::Dead => Ok(()),
@@ -1642,6 +1653,11 @@ fn tick_locked() {
         _ => Ok(()),
     };
     let next = pending.next_run.clone();
+    if matches!(outcome,Outcome::Victory|Outcome::PlayerDied) {
+        if let Some(path)=SESSION_PATH.lock().ok().and_then(|p|p.clone()).map(|p|p.with_extension("history")) {
+            super::run_log::append(&path,&super::run_log::entry(&next,fought,outcome==Outcome::Victory,&names));
+        }
+    }
     if matches!(outcome,Outcome::LostEntity|Outcome::SpawnTimedOut|Outcome::PlayerDied){retire_group(pending,world);}
     state.view.enemy_hp = enemy_hp;
     state.view.busy = false;
@@ -1660,6 +1676,14 @@ fn tick_locked() {
             }
             state.view.run=Some(next.clone());
             if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,next.class);super::contracts::heal_victory(&mut player.chr_ins,&next);}
+            // 召唤师：胜利时召唤物还活着，这次召唤不消耗骨灰（在收回召唤物之前补回）
+            if next.class.keeps_living_spirit()&&world.summon_buddy_manager.player_has_alive_summon && let Some(player)=world.main_player.as_mut() {
+                match super::loadout::refund_spent_ashes(unsafe {player.player_game_data.as_mut()}) {
+                    Ok(count) if count>0=>super::log(format!("Spirit ash kept after victory: {count}")),
+                    Ok(_)=>{},
+                    Err(error)=>super::log(format!("Spirit ash refund failed: {error}")),
+                }
+            }
             world.summon_buddy_manager.disappear_requested=true;
             state.reward_wait = Some((Instant::now(), next));
             state.reward_portal=Default::default();
@@ -1732,6 +1756,15 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
     record_checked(&next)?;
     state.view.run=Some(next);
     Ok(message)
+}
+
+/// 当前握在手里的武器与身上防具中的词条装备
+fn equipped_build(data:&eldenring::cs::PlayerGameData)->Vec<super::reward_ui::Gear> {
+    let equipment=&data.equipment.chr_asm;
+    let weapons=[equipment.equipment.active_right_weapon_slot() as usize,equipment.equipment.active_left_weapon_slot() as usize];
+    weapons.into_iter().filter_map(|slot|equipment.equipment_param_ids.get(slot).copied().filter(|id|*id>0).map(|id|id as u32/100*100))
+        .chain((12..=15).filter_map(|slot|equipment.equipment_param_ids.get(slot).copied().filter(|id|*id>0).map(|id|0x10000000|id as u32)))
+        .filter_map(super::reward_ui::affix_summary).collect()
 }
 
 /// 精英战胜利免费送一个圣杯滴露（与奖励三选一无关）；发放失败只记日志，不影响领奖
@@ -2867,7 +2900,7 @@ fn request_travel(
 mod tests {
     fn ui_view()->super::View {
         super::View{shared_event:false,ballots:vec![],run:Some(erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai)),
-            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None}
+            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,law_clock:None,build:vec![]}
     }
     #[test]
     fn queued_selection_is_bounded_and_consumed_once_on_the_game_thread() {

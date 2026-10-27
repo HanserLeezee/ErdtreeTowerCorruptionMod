@@ -3,6 +3,7 @@ use erdtree_tower::{Class, NodeKind, Phase, Reward, Run};
 use hudhook::imgui::{Condition, ImColor32, StyleColor, Ui};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+
 #[derive(Default)]
 struct MapScroll {
     target: Option<f32>,
@@ -218,6 +219,14 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str)->bool {
                 ui.set_cursor_pos([size[0]-right+68.0*scale,y-10.0*scale]);ui.text(if kind==NodeKind::Boss{"首领"}else{kind.label()});
             }
             crate::map_ink::toolbar(ui,erdtree_tower::map_drawing::Scope::of(run),[size[0]-right+margin,555.0*scale],scale,view.ready&&!view.busy&&run.phase==Phase::Map);
+            ui.set_cursor_pos([size[0]-right+margin,size[1]-126.0*scale]);
+            if ui.button_with_size("档案  [J]",[right-2.0*margin,44.0*scale])||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadBack) {
+                crate::run_screen::archive_entry();
+            }
+            ui.set_cursor_pos([size[0]-right+margin,size[1]-74.0*scale]);
+            if ui.button_with_size("构筑  [C / Y]",[right-2.0*margin,44.0*scale])||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::C)||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadFaceUp) {
+                crate::build_panel::toggle();
+            }
             ui.set_cursor_pos([left+margin,margin]);
             let _paper=ui.push_style_color(StyleColor::ChildBg,[0.84,0.79,0.66,1.0]);
             let _ink=ui.push_style_color(StyleColor::Text,[0.20,0.17,0.11,1.0]);

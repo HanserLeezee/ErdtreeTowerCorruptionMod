@@ -24,6 +24,8 @@ pub mod embers;
 pub mod scaling;
 pub mod law;
 pub mod debug;
+pub mod journal;
+pub mod legacy;
 
 pub mod music;
 
@@ -47,6 +49,8 @@ impl Class {
     pub const ALL: [Self; 10] = [Self::Vagabond,Self::Warrior,Self::Hero,Self::Bandit,Self::Astrologer,Self::Prophet,Self::Prisoner,Self::Samurai,Self::Confessor,Self::Wretch];
     pub fn sorcerer(self)->bool {matches!(self,Self::Astrologer|Self::Prisoner)}
     pub fn cleric(self)->bool {matches!(self,Self::Prophet|Self::Confessor)}
+    /// 召唤师的“群灵”：战斗胜利时召唤物还活着就不消耗骨灰。职业重做加入召唤师之前没有职业具备
+    pub fn keeps_living_spirit(self)->bool {false}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -187,6 +191,9 @@ pub struct Run {
     pub scaling_rules: u8,
     #[serde(default,skip_serializing_if="no_law")]
     pub law: law::Law,
+    /// 职业传承选用的开局护符（0：旧存档，随身的祖灵角不计入）
+    #[serde(default,skip_serializing_if="no_start_talisman")]
+    pub start_talisman: u32,
     /// 新旅程：战斗奖励里会出现余烬
     #[serde(default)]
     pub ember_rewards: bool,
@@ -255,6 +262,7 @@ pub struct ShopStock {pub node:usize,pub items:Vec<[i32;4]>}
 
 fn first_act()->u8 {1}
 fn no_law(law:&law::Law)->bool {law.is_empty()}
+fn no_start_talisman(id:&u32)->bool {*id==0}
 fn mix(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9e3779b97f4a7c15);
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
@@ -477,12 +485,13 @@ impl Run {
         Self {
             schema: 6,
             affix_equipment: true,
-            affix_rules: 3,
+            affix_rules: 4,
             talisman_affixes: true,
             ruby_spells: false,
             boss_affixes: true,
             scaling_rules: 1,
             law: law::Law::default(),
+            start_talisman: 0,
             ember_rewards: true,
             embers: vec![],
             debug: false,
@@ -923,7 +932,7 @@ impl Run {
 
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>3||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
@@ -936,6 +945,7 @@ impl Run {
             || self.hp > self.max_hp
             || self.flask_bonus>4 || self.memory_bonus>6
             || !self.law.valid()
+            || !self.valid_start_talisman()
             || self.event_rules>1
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))

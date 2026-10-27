@@ -21,6 +21,8 @@ pub fn lookup(id:u32)->Option<&'static Item>{BY_ID.get(&id).map(|i|&CATALOG[*i])
 pub fn base(id:u32)->u32 {BY_ID.get(&id).map_or(id,|i|VARIANTS[*i].base)}
 pub fn tier(id:u32)->Option<u8>{BY_ID.get(&id).map(|i|VARIANTS[*i].tier)}
 pub fn profile(id:u32)->Option<u8>{BY_ID.get(&id).and_then(|i|VARIANTS[*i].profile)}
+/// 规则 4 起的前缀概率（0..100 的掷骰值）：普通 25%、稀有 35%、史诗 28%、传说 12%
+pub fn prefix_tier(value:u64)->u8 {match value {0..=24=>0,25..=59=>1,60..=87=>2,_=>3}}
 pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool)->Option<u32> {roll_min(run,id,entropy,repeat,0)}
 /// 规则 3 起品质只看前缀：不再按原版稀有度托底，改由来源决定保底（Boss 与试炼为传说、精英与上锁宝箱至少史诗）。
 /// 旧规则（affix_rules < 3）仍以原版稀有度为最低品质，忽略 min
@@ -32,7 +34,7 @@ pub fn roll_min(run:&Run,id:u32,entropy:u64,repeat:bool,min:u8)->Option<u32> {
     let start=if run.affix_rules>=2{crate::mix(run.reward_seed()^entropy^u64::from(id)^0xa4c4_7e99) as usize%groups.len()}else{0};
     let floor=if run.affix_rules>=3 {min.min(3)}else{BASE_RARITY.get(&id).copied().unwrap_or(0).min(3)};
     let value=crate::mix(run.reward_seed()^entropy^u64::from(id)^0xaff1_600d)%100;
-    let selected=(match value {0..=44=>0,45..=74=>1,75..=92=>2,_=>3}).max(floor);
+    let selected=(if run.affix_rules>=4 {prefix_tier(value)}else{match value {0..=44=>0,45..=74=>1,75..=92=>2,_=>3}}).max(floor);
     for n in 0..groups.len() {
         let variants=&groups[(start+n)%groups.len()];
         if let Some(id)=(0..4).map(|offset|(selected+offset)%4).filter(|t|*t>=floor).map(|t|variants[t as usize]).find(|variant|*variant!=0&&!run.claimed_items.contains(variant)){return Some(id);}

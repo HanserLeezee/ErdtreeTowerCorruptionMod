@@ -48,6 +48,10 @@ mod scaling;
 mod law;
 mod embers;
 mod debug_menu;
+mod run_log;
+mod build_panel;
+mod archive_ui;
+mod legacy;
 mod law_ui;
 mod reward_ui;
 mod random_ashes;
@@ -281,6 +285,9 @@ impl ImguiRenderLoop for TowerPreview {
             self.run = class_from_archetype(snapshot.archetype).map(|class| Run::new(42, class));
             log(format!("Class binding: archetype={}", snapshot.archetype));
         }
+        // J：旅程档案（往期旅程与图鉴），战斗中不响应；档案打开时同一个键负责关闭
+        let fighting=view.as_ref().and_then(|v|v.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
+        if ui.is_key_pressed_no_repeat(Key::J)&&!fighting&&!ui.io().want_text_input&&!run_screen::active()&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
         let rewards=&mut self.rewards;
         let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
         if ui.is_key_pressed_no_repeat(Key::F8) {debug_menu::toggle();}
@@ -349,7 +356,10 @@ impl ImguiRenderLoop for TowerPreview {
                     if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
                     else if run.contract_pending()||matches!(run.phase,Phase::Reward{..}) {self.rewards.draw(ui,run,view);}
                     else if run.story_index().is_ok() {self.rewards.draw_story(ui,run,view);}
-                    else if map_ui::draw(ui, run, view, &vitals) {self.visible=false;}
+                    else {
+                        if map_ui::draw(ui, run, view, &vitals) {self.visible=false;}
+                        if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}
+                    }
                 }
             }
             return;

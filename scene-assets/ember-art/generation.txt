@@ -1,0 +1,32 @@
+余烬徽记：emblems.png 由 OpenAI 兼容图像接口 gpt-image-2 按下方提示词一次生成（background=transparent，返回 1448×1086，原图像素未改动）。
+重新生成时也可以用 Codex 内置 image_gen 生成一张图集，保存为 scene-assets/ember-art/emblems.png，
+然后在仓库根目录运行 python scene-builder/ember_art.py scene-assets，切成 reward-icons/990000.rgba … 990011.rgba。
+12 张都在时奖励卡自动换成这些徽记；缺任何一张继续借用原版护符图标。
+要求：透明背景（PNG 带 alpha）、严格 4 列 × 3 行等大正方形格子、格子之间无分隔线、不出现任何文字。
+若一次生成不理想，可以只重生成整张图集，不要手工拼接不同批次（风格会不一致）。
+
+emblems.png prompt (transparent background):
+Production game UI icon sprite atlas on a truly transparent background. Landscape 4:3 image, EXACT regular grid of 4 columns by 3 rows, TWELVE equal square cells, one emblem centered in each cell with generous empty transparent padding, no gutters drawn, no grid lines, no frames around cells, no backdrop. Every emblem is a round medallion-like sigil of the same size and same visual weight, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing ember accent color per emblem, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle warm inner glow like a smoldering coal, never cartoonish, never glossy plastic. Absolutely NO text, letters, runes, numbers, labels or watermarks. Layout row-major, left to right, top to bottom:
+1 silent execution: a slender curved dagger pointing down through a closed eye, faint pale smoke, ember accent cool white.
+2 blessing of the blood lord: a chalice overflowing with blood drops beneath a thorned crown, ember accent deep crimson.
+3 eternal frost breath: a dragon skull exhaling a cone of ice crystals, ember accent pale icy blue.
+4 deathborn flame: a skull wreathed in black-gold flames with small sparks flying outward, ember accent dark gold and violet.
+5 blade of Miquella: a thin golden needle-like blade crossed with a blooming flower, petals turning into small drops, ember accent soft gold and rose.
+6 rise again of Hoarah Loux: a clenched gauntlet fist rising out of cracked earth with a faint golden ring of light, ember accent warm amber.
+7 heart of the ancient dragon: a stone dragon heart with lightning veins, ember accent pale gold lightning.
+8 blood for blood: two crossed blades dripping, a single drop falling between them, ember accent crimson.
+9 frenzied flame fever: a three-pronged swirling yellow fire eye, flames radiating, ember accent sickly bright yellow.
+10 echo of the sacred flask: a tilted sacred tear flask releasing a circular shockwave ring, ember accent warm gold-orange.
+11 feast of the god-devouring serpent: a coiled serpent biting its own tail around a small flask, ember accent deep orange.
+12 body of thorns: a human torso silhouette armored in sharp thorny brambles with spikes pointing outward, ember accent dark red.
+All twelve emblems share identical style, rim, disc size and lighting so they read as one set. Transparent canvas outside the discs.
+
+
+emblems-summon.png（召唤流余烬 990012–990015）同样由 gpt-image-2 一次生成（background=transparent），2 列 × 2 行，顺序与 Ember::ALL 的后四项一致。
+emblems-summon.png prompt (transparent background):
+Production game UI icon sprite atlas on a truly transparent background. Square image, EXACT regular grid of 2 columns by 2 rows, FOUR equal square cells, one emblem centered in each cell with generous empty transparent padding, no grid lines, no frames around cells, no backdrop. Every emblem is a round medallion-like sigil of the same size and same visual weight, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing spectral teal ember accent, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle inner glow like a smoldering coal, never cartoonish, never glossy plastic. Absolutely NO text, letters, runes, numbers, labels or watermarks. Layout row-major:
+1 mimic tear's surrogate: a silver mirror-like humanoid silhouette stepping in front of a kneeling warrior, shielding him, teal glow.
+2 bursting spirit remains: a translucent spirit wolf skull shattering outward into teal sparks and bone fragments.
+3 feast of the spirits: several small ghostly teal flames gathered around a golden chalice, rising wisps.
+4 command of the calling bell: an ornate small spirit calling bell ringing, concentric teal sound rings and a faint spectral wolf head above.
+All four emblems share identical style, rim, disc size and lighting with the existing twelve ember emblems so they read as one set. Transparent canvas outside the discs.

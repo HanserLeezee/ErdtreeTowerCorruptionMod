@@ -10,6 +10,8 @@ const BLOOD:i32=FIRST+10;
 const FROST:i32=FIRST+11;
 const REVENGE:i32=FIRST+20;
 const FLASH:i32=FIRST+40;
+/// 灵唤铃的号令：挂在召唤物身上
+const SPIRIT_COMMAND:i32=FIRST+50;
 fn frenzy_effect(stack:u8)->i32 {FIRST+30+i32::from(stack)}
 fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
 fn ready(ids:&[i32])->bool {unsafe {SoloParamRepository::instance()}.is_ok_and(|p|ids.iter().all(|id|p.get::<SpEffectParam>(*id as u32).is_some()))}
@@ -38,6 +40,8 @@ struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:boo
 pub struct Fight {
     key:Option<(u64,u8,usize)>,foes:Vec<Foe>,player_hp:Option<i32>,flasks:Option<u8>,
     lifesteal:i64,rose:bool,dragon_ready:Option<Instant>,revenge_until:Option<Instant>,pub frenzy:u8,feasts:u8,missing:bool,
+    /// 上一帧在场的召唤物位置（灵骸迸裂在它消失时引爆）
+    spirit:Option<[f32;3]>,
 }
 impl Fight {
     pub fn active(&self)->bool {self.key.is_some()}
@@ -73,8 +77,18 @@ impl Fight {
             }
             (foe.hp,foe.max,foe.pos,foe.alive)=(foe_hp,foe_max,pos,alive);
         }
+        // 召唤物：只看本机玩家的骨灰
+        let spirit=world.summon_buddy_chr_set.characters().find(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag())
+            .map(|c|{let q=c.modules.physics.position;(c.modules.data.hp,c.modules.data.max_hp,[q.0,q.1,q.2])});
+        let vanished=self.spirit.filter(|_|spirit.is_none());self.spirit=spirit.map(|(_,_,pos)|pos);
         // 玩家侧：所有玩家都生效
         let mut heal=0i64;
+        // 仿身泪滴的替身：受到的伤害一部分转给召唤物（召唤物至少留 1 点生命，不由余烬直接打倒）
+        let mut spirit_loss=0i32;
+        if has(Ember::SpiritLink)&&taken>0 && let Some((spirit_hp,_,_))=spirit {
+            spirit_loss=((i64::from(taken)*i64::from(embers::SPIRIT_SHARE_PERCENT)/100) as i32).min(spirit_hp-1).max(0);
+            heal+=i64::from(spirit_loss);
+        }
         if has(Ember::Miquella) {
             self.lifesteal+=hits.iter().map(|(_,d)|i64::from(*d)).sum::<i64>()*i64::from(embers::LIFESTEAL_PERCENT);
             heal+=self.lifesteal/100;self.lifesteal%=100;
@@ -101,6 +115,20 @@ impl Fight {
             }
             self.player_hp=Some(data.hp);
         }
+        // 众灵的盛宴、灵唤铃的号令、替身的分担：都作用在本机召唤物上
+        if spirit.is_some()&&(spirit_loss>0||has(Ember::SpiritCommand)||has(Ember::SpiritFeast)&&!deaths.is_empty()) {
+            let feast_heal=if has(Ember::SpiritFeast) {deaths.len() as i64}else{0};
+            if let Some(chr)=world.summon_buddy_chr_set.characters().find(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag()) {
+                let data=&mut chr.modules.data;
+                let restored=i64::from(data.max_hp)*i64::from(embers::SPIRIT_FEAST_HEAL_PERCENT)/100*feast_heal;
+                data.hp=(i64::from(data.hp)-i64::from(spirit_loss)+restored).clamp(1,i64::from(data.max_hp)) as i32;
+                if has(Ember::SpiritCommand)&&ready(&[SPIRIT_COMMAND])&&!chr.special_effect.entries().any(|e|e.param_id==SPIRIT_COMMAND) {chr.apply_speffect(SPIRIT_COMMAND,false);}
+            }
+            if feast_heal>0 {
+                let data=&mut world.main_player.as_mut().unwrap().chr_ins.modules.data;
+                data.fp=(i64::from(data.fp.max(0))+i64::from(data.max_fp)*i64::from(embers::SPIRIT_FEAST_FP_PERCENT)/100*feast_heal).min(i64::from(data.max_fp)) as i32;
+            }
+        }
         let feast=has(Ember::Feast)&&!deaths.is_empty()&&self.feasts<embers::FEAST_PER_FIGHT;
         if feast {self.feasts+=1;}
         // 敌人侧：只由房主（或单人）计算
@@ -123,6 +151,12 @@ impl Fight {
             for (index,foe) in self.foes.iter().enumerate() {
                 if foe.alive&&distance(foe.pos,here)<=embers::ECHO_RADIUS {wounds.push((index,embers::enemy_damage(foe.max,embers::ECHO_PERCENT,foe.boss)));}
             }
+        }
+        if has(Ember::SpiritBurst) && let Some(origin)=vanished {
+            for (index,foe) in self.foes.iter().enumerate() {
+                if foe.alive&&distance(foe.pos,origin)<=embers::SPIRIT_BURST_RADIUS {wounds.push((index,embers::enemy_damage(foe.max,embers::SPIRIT_BURST_PERCENT,foe.boss)));}
+            }
+            super::log("TOWER_EMBER spirit burst");
         }
         if has(Ember::Thorns)&&taken>0 {
             let nearest=self.foes.iter().enumerate().filter(|(_,f)|f.alive).min_by(|(_,a),(_,b)|distance(a.pos,here).total_cmp(&distance(b.pos,here)));

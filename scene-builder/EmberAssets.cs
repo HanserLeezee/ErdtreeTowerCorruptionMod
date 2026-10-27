@@ -1,9 +1,9 @@
 using SoulsFormats;
-// 余烬：誓约三选一里的机制增益。参数类效果放在 9670000 段，其余由运行时按事件施加。
+// 余烬：战斗奖励里的机制增益。参数类效果放在 9670000 段，其余由运行时按事件施加。
 // 无声处刑复制原版暗杀者匕首护符的三段触发（常驻 → 致命一击时触发 → 生效），保持相同的编号间隔。
 static class EmberAssets {
     public const int First=9670000;
-    const float ExecutionSeconds=5f,ExecutionStamina=0.5f,RevengeRate=1.3f,FrenzyStep=0.02f;
+    const float ExecutionSeconds=5f,ExecutionStamina=0.5f,RevengeRate=1.3f,FrenzyStep=0.02f,CommandAttack=1.2f,CommandCut=0.8f;
     const int Buildup=12,FrenzyStacks=8,FlashVfx=1605000;
     static readonly string[] Kept=["spCategory","categoryPriority","effectTargetOpposeTarget","effectTargetFriendlyTarget","effectTargetSelfTarget","effectTargetSelf","effectTargetFriend","effectTargetEnemy","effectTargetPlayer","effectTargetAI","effectTargetLive","effectTargetGhost"];
     static void Set(PARAM.Row r,string key,object value)=>r[key].Value=Convert.ChangeType(value,r[key].Value.GetType());
@@ -37,6 +37,11 @@ static class EmberAssets {
         rows.Add(Player(p,First+20,"Tower ember revenge",RevengeRate,-1f));
         for(int stack=1;stack<=FrenzyStacks;stack++)rows.Add(Player(p,First+30+stack,$"Tower ember frenzy {stack}",1f+FrenzyStep*stack,-1f));
         var flash=Enemy(p,First+40,"Tower ember flash",1f);Set(flash,"vfxId",FlashVfx);rows.Add(flash);
+        // 灵唤铃的号令：挂在召唤物身上，伤害 +20%、受到的伤害 -20%（沿用敌人侧的中性模板）
+        var command=Enemy(p,First+50,"Tower ember spirit command",-1f);
+        foreach(var element in new[]{"physics","magic","fire","thunder","dark"})Set(command,element+"AttackPowerRate",CommandAttack);
+        foreach(var cut in new[]{"slash","blow","thrust","neutral","magic","fire","thunder","dark"})Set(command,cut+"DamageCutRate",CommandCut);
+        rows.Add(command);
         return rows;
     }
     static void Verify(PARAM p) {
@@ -55,25 +60,24 @@ static class EmberAssets {
         var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
         var count=Build(effects).Count;
         var existing=effects.Rows.Count(r=>r.ID>=First&&r.ID<First+100);
-        if(existing==count) {
-            // 早期版本的出血、冻伤行缺少发作内容：与定义不同的行原地换成新定义，其余照常校验
-            var replaced=0;
-            foreach(var expected in Build(effects)) {
-                int index=effects.Rows.FindIndex(r=>r.ID==expected.ID);
-                if(!expected.Cells.All(c=>System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,effects.Rows[index][c.Def.InternalName].Value))){effects.Rows[index]=expected;replaced++;}
-            }
-            if(replaced>0){file.Bytes=effects.Write();Console.WriteLine($"Replaced {replaced} outdated ember effects");}
-            Verify(effects);
+        var expectedIds=Build(effects).Select(r=>r.ID).ToHashSet();
+        if(effects.Rows.Any(r=>r.ID>=First&&r.ID<First+100&&!expectedIds.Contains(r.ID)))throw new Exception("Ember effect range 9670000-9670099 already in use");
+        // 早期版本的行与定义不同时原地换成新定义（出血、冻伤补上发作内容），后来新增的余烬效果追加进来
+        var (replaced,added)=(0,0);
+        foreach(var expected in Build(effects)) {
+            int index=effects.Rows.FindIndex(r=>r.ID==expected.ID);
+            if(index<0){effects.Rows.Add(expected);added++;}
+            else if(!expected.Cells.All(c=>System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,effects.Rows[index][c.Def.InternalName].Value))){effects.Rows[index]=expected;replaced++;}
         }
-        else if(existing>0) throw new Exception("Ember effect range 9670000-9670099 already in use");
-        else {foreach(var row in Build(effects))effects.Rows.Add(row);effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=effects.Write();}
+        if(replaced+added>0){effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=effects.Write();Console.WriteLine($"Ember effects: {added} added, {replaced} replaced");}
+        Verify(effects);
         var others=reg.Files.Where(f=>f!=file).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
         Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
         SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
         var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
         foreach(var f in check.Files.Where(f=>f.Name!=file.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
         var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);Verify(actual);
-        if(actual.Rows.Count!=original.Rows.Count+(existing>0?0:count))throw new Exception("Unexpected effect count");
+        if(actual.Rows.Count!=original.Rows.Count+(count-existing))throw new Exception("Unexpected effect count");
         var rows=actual.Rows.ToDictionary(r=>r.ID);
         foreach(var row in original.Rows.Where(r=>r.ID<First||r.ID>=First+100))foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing effect changed: {row.ID}");
         string Hash(string p)=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p)));

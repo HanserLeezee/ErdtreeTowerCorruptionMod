@@ -1,7 +1,7 @@
 use hudhook::imgui::{Condition,DrawListMut,ImColor32,Key,TextureId,Ui,WindowFlags};
 use erdtree_tower::law::{BRANCHES,GRADES,Law,NODES};
 
-pub enum LawAction {Start(Law),Back}
+pub enum LawAction {Start(Law),Back,Archive}
 pub struct LawScreen {pub law:Law,pub seed:Option<u64>,focus:usize,opened:Option<f64>,copied:Option<f64>}
 impl LawScreen {pub fn new(law:Law)->Self {Self{law,seed:None,focus:0,opened:None,copied:None}}}
 
@@ -18,7 +18,7 @@ fn moved(focus:usize,dx:i32,dy:i32)->usize {
         .min_by_key(|&i|{let (ix,iy)=(i32::from(NODES[i].col),i32::from(NODES[i].row));if dx!=0 {(iy-y).abs()*10+(ix-x).abs()}else{(ix-x).abs()*10+(iy-y).abs()}}).unwrap_or(focus)
 }
 /// 带金色边框与四角装饰的暗色面板
-fn panel(draw:&DrawListMut<'_>,min:[f32;2],max:[f32;2],s:f32) {
+pub(crate) fn panel(draw:&DrawListMut<'_>,min:[f32;2],max:[f32;2],s:f32) {
     draw.add_rect_filled_multicolor(min,max,ImColor32::from_rgba(16,13,9,228),ImColor32::from_rgba(16,13,9,228),ImColor32::from_rgba(8,7,5,236),ImColor32::from_rgba(8,7,5,236));
     draw.add_rect(min,max,ImColor32::from_rgba(171,143,87,120)).thickness(1.0*s).build();
     let gold=ImColor32::from_rgba(214,180,112,230);let l=18.0*s;
@@ -27,7 +27,7 @@ fn panel(draw:&DrawListMut<'_>,min:[f32;2],max:[f32;2],s:f32) {
     }
 }
 /// 两端渐隐的金色装饰线，中间一颗菱形
-fn ornament(draw:&DrawListMut<'_>,center:[f32;2],half:f32,s:f32) {
+pub(crate) fn ornament(draw:&DrawListMut<'_>,center:[f32;2],half:f32,s:f32) {
     let (x,y)=(center[0],center[1]);
     draw.add_rect_filled_multicolor([x-half,y-0.7*s],[x-8.0*s,y+0.7*s],ImColor32::from_rgba(214,180,112,0),ImColor32::from_rgba(214,180,112,220),ImColor32::from_rgba(214,180,112,220),ImColor32::from_rgba(214,180,112,0));
     draw.add_rect_filled_multicolor([x+8.0*s,y-0.7*s],[x+half,y+0.7*s],ImColor32::from_rgba(214,180,112,220),ImColor32::from_rgba(214,180,112,0),ImColor32::from_rgba(214,180,112,0),ImColor32::from_rgba(214,180,112,220));
@@ -52,7 +52,8 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
     if key(Key::GamepadFaceDown){screen.law=screen.law.toggle(screen.focus);}
     if key(Key::GamepadFaceUp){screen.law=Law::default();}
     if ui.io().key_ctrl&&key(Key::V) {if let Some(law)=ui.clipboard_text().and_then(|text|Law::parse(&text)){screen.law=law;}}
-    let mut action=if key(Key::Enter)||key(Key::GamepadFaceLeft){Some(LawAction::Start(screen.law))}else if key(Key::Escape)||key(Key::GamepadFaceRight){Some(LawAction::Back)}else{None};
+    let mut action=if key(Key::Enter)||key(Key::GamepadFaceLeft){Some(LawAction::Start(screen.law))}else if key(Key::Escape)||key(Key::GamepadFaceRight){Some(LawAction::Back)}
+        else if key(Key::J)||key(Key::GamepadBack){Some(LawAction::Archive)}else{None};
     let mut hovered=None;let mut copy=false;
     ui.window("苦难律法##law").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
         .flags(WindowFlags::NO_DECORATION|WindowFlags::NO_BACKGROUND|WindowFlags::NO_MOVE|WindowFlags::NO_NAV|WindowFlags::NO_SCROLL_WITH_MOUSE).build(|| {
@@ -71,6 +72,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
         panel(&draw,p(1340.0,30.0),p(1564.0,90.0),s);
         drop(draw);
         if button("返回  [Esc / B]",36.0,34.0,196.0,52.0,0.9){action=Some(LawAction::Back);}
+        if button("旅程档案  [J / View]",246.0,34.0,236.0,52.0,0.85){action=Some(LawAction::Archive);}
         text(800.0,26.0,"苦 难 律 法",GOLD,2.0,0.5);
         let subtitle=screen.seed.map_or("接受的苦难越多，分数越高".to_string(),|seed|format!("以种子 {seed} 开局 · 接受的苦难越多，分数越高"));
         text(800.0,100.0,&subtitle,MUTED,0.8,0.5);

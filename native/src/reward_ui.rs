@@ -9,7 +9,7 @@ static RARITIES:LazyLock<HashMap<u32,u8>>=LazyLock::new(||include_str!("../../sc
     let (id,rarity)=line.split_once('\t').unwrap();(id.parse().unwrap(),rarity.parse().unwrap())
 }).collect());
 pub fn item_quality(id:u32)->u8 {RARITIES.get(&erdtree_tower::rewards::spirit_base(id)).copied().unwrap_or(0).min(3)}
-fn rarity_color(tier:usize)->[f32;4] {
+pub(crate) fn rarity_color(tier:usize)->[f32;4] {
     static COLORS:LazyLock<[[f32;4];4]>=LazyLock::new(|| {
         let rows:Vec<_>=include_str!("../../scene-assets/equipment-colors.txt").lines().enumerate().map(|(index,line)| {
             let (id,hex)=line.split_once('|').unwrap();assert_eq!(id.parse::<usize>().unwrap(),index);
@@ -55,6 +55,30 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
     }
     result
 });
+/// 路线图的构筑面板：词条装备的名称与词条行（只保留带数值的行）；id 为奖励编号（防具带 0x10000000 标记）
+/// 构筑面板里的一件词条装备：图标、品质、名字与带数值的词条
+#[derive(Clone,Debug,Default,PartialEq)]
+pub struct Gear {pub icon:u32,pub quality:u8,pub name:String,pub lines:Vec<String>}
+pub fn affix_summary(id:u32)->Option<Gear> {
+    let quality=erdtree_tower::affixes::tier(id)?;
+    let detail=DETAILS.get(&id)?;
+    let lines=detail.info.lines().filter(|l|l.chars().any(|c|c.is_ascii_digit())&&(l.contains('+')||l.contains('-'))).map(str::to_owned).collect();
+    Some(Gear{icon:detail.icon,quality,name:detail.name.clone(),lines})
+}
+/// 图鉴：所有词条装备上出现过的词条名（去掉数值，按装备编号的先后）
+pub fn affix_names()->&'static [String] {
+    static NAMES:LazyLock<Vec<String>>=LazyLock::new(|| {
+        let mut ids:Vec<_>=DETAILS.keys().copied().filter(|id|erdtree_tower::affixes::tier(*id).is_some()).collect();ids.sort_unstable();
+        let mut names:Vec<String>=Vec::new();
+        for gear in ids.into_iter().filter_map(affix_summary) {
+            for name in gear.lines.iter().filter_map(|line|erdtree_tower::journal::affix_name(line)) {if !names.iter().any(|n|n==name){names.push(name.to_owned());}}
+        }
+        names
+    });
+    &NAMES
+}
+/// 护符赐福的护符图标
+pub fn talisman_icon(id:u32)->Option<u32> {DETAILS.get(&(0x20000000|id)).map(|detail|detail.icon)}
 /// 调试菜单：按名称或说明搜索可以直接发放的奖励物品（含词条装备）
 pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
     let query=query.trim();if query.is_empty() {return vec![];}
@@ -75,8 +99,19 @@ fn item_id(run:&Run,reward:&Reward)->Option<u32> {
         _=>None,
     }
 }
+/// 余烬徽记（scene-builder/ember_art.py 生成的 990000 起 12 张）；缺任何一张就整套借用原版护符图标
+const EMBER_EMBLEMS:u32=990000;
+static EMBLEMS_READY:LazyLock<bool>=LazyLock::new(|| {
+    let root=crate::LOG_PATH.with_file_name("scene-assets").join("reward-icons");
+    (0..erdtree_tower::embers::Ember::ALL.len() as u32).all(|i|std::fs::metadata(root.join(format!("{}.rgba",EMBER_EMBLEMS+i))).is_ok_and(|m|m.len()==160*160*4))
+});
+pub fn ember_icon(ember:erdtree_tower::embers::Ember)->Option<u32> {
+    if *EMBLEMS_READY {return Some(EMBER_EMBLEMS+ember.index() as u32);}
+    DETAILS.get(&(0x20000000|erdtree_tower::embers::icon_talisman(ember))).map(|detail|detail.icon)
+}
 fn card_icon(run:&Run,reward:&Reward)->Option<u32> {
-    let id=match reward {Reward::StarStream=>Some(0x40000000|4200),Reward::Ember(ember)=>Some(0x20000000|erdtree_tower::embers::icon_talisman(*ember)),_=>item_id(run,reward)};
+    if let Reward::Ember(ember)=reward {return ember_icon(*ember);}
+    let id=match reward {Reward::StarStream=>Some(0x40000000|4200),_=>item_id(run,reward)};
     id.and_then(|id|DETAILS.get(&id)).map(|detail|detail.icon)
 }
 fn card_summary(detail:&Detail)->String {
@@ -418,7 +453,9 @@ impl Panel {
                     Reward::Ember(ember)=>("余烬",ember.name().into(),format!("{}\n本局生效",ember.effect())),
                 };
                 let tier=quality(run,reward);
-                let quality_color=rarity_color(tier);
+                // 余烬：橙红色的类别与标题，外加一圈余火色的外框，和普通奖励区分开
+                let ember=matches!(reward,Reward::Ember(_));
+                let quality_color=if ember {[0.98,0.58,0.32,1.0]}else{rarity_color(tier)};
                 if let Some(texture)=if tier==1 {self.rare_blue}else{None} {
                     let light=card_light(tier,selected,hover,now);
                     ui.get_window_draw_list().add_image(texture,[x,y],[x+width,y+height])
@@ -438,6 +475,12 @@ impl Panel {
                     let draw=ui.get_window_draw_list();
                     for (offset,alpha,thickness) in [(3.0,35,9.0),(2.0,80,4.0),(1.0,220,1.5)] {
                         draw.add_rect([x-offset*scale,y-offset*scale],[x+width+offset*scale,y+height+offset*scale],ImColor32::from_rgba(225,204,143,alpha)).rounding(2.0*scale).thickness(thickness*scale).build();
+                    }
+                }
+                if ember {
+                    let draw=ui.get_window_draw_list();
+                    for (offset,alpha,thickness) in [(6.0,40,10.0),(4.0,90,4.0),(2.0,230,2.0)] {
+                        draw.add_rect([x-offset*scale,y-offset*scale],[x+width+offset*scale,y+height+offset*scale],ImColor32::from_rgba(236,120,58,alpha)).rounding(4.0*scale).thickness(thickness*scale).build();
                     }
                 }
                 center(ui,x+width*0.5,y+61.0*scale,category,quality_color);
@@ -668,7 +711,7 @@ pub fn poll_pad(io:&mut Io,active:bool,map:bool) {
 fn feed_pad(io:&mut Io,pad:&Gamepad,found:bool,map:bool) {
     MAP_CONFIRM.with(|state|state.borrow_mut().update(found&&map,found&&pad.buttons&0x1000!=0));
     io.backend_flags.set(hudhook::imgui::BackendFlags::HAS_GAMEPAD,found);
-    for (key,mask) in [(Key::GamepadDpadUp,1),(Key::GamepadDpadDown,2),(Key::GamepadDpadLeft,4),(Key::GamepadDpadRight,8),(Key::GamepadFaceDown,0x1000),(Key::GamepadFaceRight,0x2000),(Key::GamepadFaceLeft,0x4000),(Key::GamepadFaceUp,0x8000)] {
+    for (key,mask) in [(Key::GamepadDpadUp,1),(Key::GamepadDpadDown,2),(Key::GamepadDpadLeft,4),(Key::GamepadDpadRight,8),(Key::GamepadFaceDown,0x1000),(Key::GamepadFaceRight,0x2000),(Key::GamepadFaceLeft,0x4000),(Key::GamepadFaceUp,0x8000),(Key::GamepadBack,0x20),(Key::GamepadL1,0x100),(Key::GamepadR1,0x200)] {
         io.add_key_event(key,found&&pad_direction(pad,mask,map));
     }
     if !found||!map {MAP_POINTER.with(|state|*state.borrow_mut()=MapPointer::default());}

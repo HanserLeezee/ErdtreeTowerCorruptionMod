@@ -33,6 +33,17 @@ pub fn repair_weapon_slots(data:&mut PlayerGameData)->Result<(),String> {
 fn spent_ash(quantity:u32,goods_type:Option<u8>)->bool {
     quantity==0 && matches!(goods_type,Some(7|8))
 }
+/// 召唤师：战斗胜利时召唤物还活着，这次召唤不消耗骨灰——把用掉的骨灰补回 1 次，之后就不会被清理
+pub fn refund_spent_ashes(data:&mut PlayerGameData)->Result<usize,String> {
+    let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"物品参数尚未就绪")?;
+    let mut refunded=0;
+    for entry in data.equipment.equip_inventory_data.items_data.normal_entries_mut() {
+        let Some(e)=entry.as_option_mut() else{continue};
+        let kind=if e.item_id.category()==ItemCategory::Goods {params.get::<eldenring::cs::EquipParamGoods>(e.item_id.param_id()).map(|p|p.goods_type())}else{None};
+        if spent_ash(e.quantity,kind) {e.quantity=1;refunded+=1;}
+    }
+    Ok(refunded)
+}
 pub fn clear_spent_ashes(data:&mut PlayerGameData)->Result<(),String> {
     let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"物品参数尚未就绪")?;
     let inventory=&data.equipment.equip_inventory_data.items_data;
@@ -164,7 +175,8 @@ pub fn reset(data: &mut PlayerGameData, archetype: u8) -> Result<(), String> {
     super::items::give_flasks(true,true)?;
     super::physick::ensure(data)?;
     super::items::give(&[(0x40000000|8590,1,-1)])?;
-    super::items::give(&[(0x40000000|8158,1,-1),(0x20000000|6110,1,-1)])?;
+    // 开局护符（默认祖灵角，职业传承可以更换）在大赐福开局时发放
+    super::items::give(&[(0x40000000|8158,1,-1)])?;
     super::passives::give_starting(data,super::class_from_archetype(archetype).unwrap())?;
     super::log(format!("Initial class restored: archetype={archetype}, level={}",data.level));
     Ok(())

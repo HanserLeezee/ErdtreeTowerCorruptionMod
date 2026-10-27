@@ -1,0 +1,13 @@
+职业插画：classes.png 由 OpenAI 兼容图像接口 gpt-image-2 按下方提示词一次生成（不透明背景），原图像素未改动；
+classes.rgba 是同一张图的无损 RGBA 运行时格式。图集 3 列 × 2 行，顺序与 native/src/class_ui.rs 的 ROLES 一致：
+守誓骑士、狂战士、影刃 / 星辉术士、祷誓者、召唤师。
+
+classes.png prompt:
+Production game UI illustration atlas, landscape 3:2 image, EXACT regular grid of 3 columns by 2 rows, SIX equal tiles edge-to-edge, zero gutters, no borders, no frames, no text. Each tile is a self-contained character vignette for a class selection card in a premium dark fantasy action RPG inspired by Elden Ring. Unified style across all six: painterly dark fantasy illustration with fine antique gold line engraving accents, muted desaturated palette, charcoal black backgrounds, dramatic rim light, each figure centered and shown from the knees up, the lower 20 percent of every tile fading smoothly into near-black so card text can sit below. One restrained signature accent color per tile. Absolutely NO text, letters, runes, numbers, logos, UI or watermarks. Layout row-major:
+TOP LEFT oathsworn knight: armored knight in weathered plate holding a tall heater shield forward and a longsword low, braced to block, warm gold accent light on the shield rim.
+TOP MIDDLE berserker: hulking warrior in fur and scarred plate raising a massive greataxe overhead mid-roar, torn cloak, embers and crimson red accent light.
+TOP RIGHT shadow blade: lean hooded swordsman in dark lamellar armor crouched low, katana drawn backward, longbow on the back, wisps of mist and faint blood droplets, cold steel blue accent.
+BOTTOM LEFT glintstone sorcerer: robed astrologer with a tall crystal staff casting a blue glintstone comet, small floating star motes, deep blue accent.
+BOTTOM MIDDLE oath cleric: hooded priest raising a sacred seal, soft golden healing light and drifting golden motes around the hands, warm pale gold accent.
+BOTTOM RIGHT summoner: cloaked figure ringing a small spirit calling bell, two translucent spectral wolves and a skeletal militiaman spirit rising in glowing teal mist behind, teal spectral accent.
+All six share identical rendering style, lighting direction and framing so they read as one set.
