@@ -49,7 +49,16 @@ $ersc = Join-Path $GameDir 'SeamlessCoop\ersc.dll'
 foreach ($file in @($launcher,$settingsPath,$ersc)) {
     if (!(Test-Path -LiteralPath $file -PathType Leaf)) {throw "Missing dependency: $file"}
 }
-if ((Get-FileHash -LiteralPath $ersc).Hash -ne 'FCD11A1849FD37851BB449BE30F1525CF498F63FD1FA568C4E15030EBE7CB251') {throw 'Expected inspected Seamless Co-op 2.0.1.'}
+# Seamless Co-op builds verified with this package. Other builds still launch: the tower DLL's revival fix checks the
+# Seamless build itself and switches off on a mismatch; everything else was only tested on the builds listed here.
+$verifiedSeamless = @(
+    'FCD11A1849FD37851BB449BE30F1525CF498F63FD1FA568C4E15030EBE7CB251' # 2.0.1 (revival fix supported)
+    '0A093D8490967BF19C62F895FDF1FDA21840282D2B2B371B9B4FC24A0CFE146E' # 2.0.2 (revival fix not ported, it turns itself off)
+)
+$erscHash = (Get-FileHash -LiteralPath $ersc).Hash
+if ($verifiedSeamless -notcontains $erscHash) {
+    Write-Warning "This Seamless Co-op build is not verified with the tower (SHA256 $erscHash). Launching anyway: the revival fix turns itself off; all players must use the same Seamless build."
+}
 $proxy = Join-Path $GameDir 'dinput8.dll'
 if (Test-Path -LiteralPath $proxy) {throw 'Existing dinput8.dll detected. It will not be overwritten.'}
 $settings = [IO.File]::ReadAllText($settingsPath)

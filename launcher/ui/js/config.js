@@ -9,6 +9,9 @@
    真实的版本、下载进度、更新状态由宿主程序（launcher/Tower.Launcher）通过 bridge 推送。
    ============================================================ */
 
+/* 无缝联机多人缩放可选的百分比 */
+var SCALE_CHOICES = ['0', '5', '10', '15', '20', '25', '30', '35', '40', '45', '50', '60', '70', '80', '90', '100', '120', '150', '200'];
+
 /* 爬塔按键可选的键（与 src/options.rs 的 KEYS 对应的常用子集） */
 var KEY_CHOICES = ['Home', 'End', 'Insert', 'Delete', 'PageUp', 'PageDown', 'Pause', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'J', 'K', 'L', 'O', 'P', 'U', 'I', 'M', 'N', 'B', 'C', 'V', 'X', 'Z', 'Num0', 'Num1', 'Num2', 'Num3', 'Num4', 'Num5', 'Num6', 'Num7', 'Num8', 'Num9'];
 
@@ -253,6 +256,48 @@ window.HOYO_CONFIG = {
               { type: 'static', label: '单个 DLL', value: '连同同名的配置文件、同名文件夹一起复制' },
               { type: 'static', label: '文件夹', value: '整个文件夹复制，顶层每个 DLL 都登记，用不到的关掉' },
               { type: 'static', label: '手动配置', value: 'plugins\\natives.toml（ME3 的 [[natives]] 格式）' },
+            ],
+          },
+        ],
+      },
+      {
+        key: 'coop', name: '联机',
+        groups: [
+          {
+            title: '无缝联机（Seamless Co-op，需自行安装到游戏目录）',
+            rows: [
+              { type: 'static', label: '版本', key: 'erscInfo', value: '—' },
+              { type: 'buttons', label: '',
+                items: [{ text: '下载页', action: 'seamlessDownload' }, { text: '打开 SeamlessCoop 文件夹', action: 'seamlessFolder' },
+                  { text: '打开配置文件', action: 'seamlessIni' }] },
+            ],
+          },
+          {
+            title: '联机设置（写入游戏目录的 ersc_settings.ini，下次启动生效）',
+            rows: [
+              { type: 'input', key: 'ersc.cooppassword', label: '联机密码', hint: '双方填同一个；最多 64 字，不能含 ; # =', placeholder: '输入后按回车或点别处保存', value: '' },
+              { type: 'switch', key: 'ersc.death_debuffs', label: '死亡惩罚', hint: '无缝联机自带的死亡减益', value: true },
+              { type: 'switch', key: 'ersc.allow_summons', label: '允许召唤骨灰', hint: '关掉后用不了骨灰（召唤师职业依赖骨灰）', value: true },
+              { type: 'switch', key: 'ersc.skip_splash_screens', label: '跳过开场动画', value: false },
+            ],
+          },
+          {
+            title: '多人缩放（每多一名玩家增加的百分比，无缝联机设置）',
+            rows: [
+              { type: 'select', key: 'ersc.enemy_health_scaling', label: '敌人生命', value: '35', options: SCALE_CHOICES },
+              { type: 'select', key: 'ersc.enemy_damage_scaling', label: '敌人伤害', value: '0', options: SCALE_CHOICES },
+              { type: 'select', key: 'ersc.enemy_posture_scaling', label: '敌人韧性', value: '15', options: SCALE_CHOICES },
+              { type: 'select', key: 'ersc.boss_health_scaling', label: 'Boss 生命', value: '100', options: SCALE_CHOICES },
+              { type: 'select', key: 'ersc.boss_damage_scaling', label: 'Boss 伤害', value: '0', options: SCALE_CHOICES },
+              { type: 'select', key: 'ersc.boss_posture_scaling', label: 'Boss 韧性', value: '20', options: SCALE_CHOICES },
+            ],
+          },
+          {
+            title: '由爬塔的无缝入口决定（在配置文件里改了也不生效）',
+            rows: [
+              { type: 'static', label: '存档后缀', value: 'ertowercoop（与单人、原版无缝存档分开）' },
+              { type: 'static', label: '入侵', value: '关闭' },
+              { type: 'static', label: '死亡后观战', value: '开启' },
             ],
           },
         ],

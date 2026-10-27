@@ -1,0 +1,63 @@
+using System.Text;
+using Tower.Update;
+using Xunit;
+
+/// <summary>无缝联机配置：只改已有的、启动器管理的项，注释与其他行保留，第一次修改前备份</summary>
+public sealed class SeamlessSettingsTests : IDisposable
+{
+    readonly string game = Path.Combine(Path.GetTempPath(), "tower-seamless-tests-" + Guid.NewGuid().ToString("N"));
+    const string Sample = "﻿; Seamless Co-op settings\r\n[GAMEPLAY]\r\nallow_invaders = 1\r\ndeath_debuffs = 1\r\nallow_summons = 1\r\n\r\n[SCALING]\r\nenemy_health_scaling = 35\r\nboss_health_scaling = 100\r\n\r\n[PASSWORD]\r\ncooppassword = \r\n\r\n[SAVE]\r\nsave_file_extension = co2\r\n";
+
+    public SeamlessSettingsTests()
+    {
+        Directory.CreateDirectory(Path.Combine(game, "SeamlessCoop"));
+        File.WriteAllText(Path.Combine(game, "SeamlessCoop", "ersc_settings.ini"), Sample, new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(game, "SeamlessCoop", "ersc.dll"), "not the verified build");
+    }
+
+    public void Dispose() { try { Directory.Delete(game, true); } catch (IOException) { } }
+
+    [Fact]
+    public void EditsKeepEverythingElseAndBackUpTheOriginalOnce()
+    {
+        var settings = new SeamlessSettings(game);
+        settings.Write("cooppassword", "  tower42 ");
+        settings.Write("death_debuffs", "0");
+        settings.Write("enemy_health_scaling", "50");
+        var text = File.ReadAllText(settings.IniFile);
+        Assert.Contains("; Seamless Co-op settings", text);
+        Assert.Contains("allow_invaders = 1", text);
+        Assert.Contains("cooppassword = tower42\r\n", text);
+        Assert.Contains("death_debuffs = 0", text);
+        Assert.Contains("enemy_health_scaling = 50", text);
+        Assert.Equal(new byte[] { 0xef, 0xbb, 0xbf }, File.ReadAllBytes(settings.IniFile).Take(3));
+        Assert.Equal(Sample, File.ReadAllText(settings.IniFile + SeamlessSettings.BackupSuffix, Encoding.UTF8).Insert(0, "﻿"));
+        var values = settings.Read();
+        Assert.Equal("tower42", values["cooppassword"]);
+        Assert.Equal("0", values["death_debuffs"]);
+    }
+
+    [Theory]
+    [InlineData("cooppassword", "")]
+    [InlineData("cooppassword", "a;b")]
+    [InlineData("death_debuffs", "2")]
+    [InlineData("enemy_health_scaling", "-5")]
+    [InlineData("save_file_extension", "sl2")]
+    [InlineData("allow_invaders", "1")]
+    [InlineData("mod_language", "english")]
+    [InlineData("boss_damage_scaling", "10")]  // 示例配置里没有这一项：不新增
+    public void InvalidValuesForcedKeysAndMissingKeysAreRefused(string key, string value) =>
+        Assert.Throws<InvalidOperationException>(() => new SeamlessSettings(game).Write(key, value));
+
+    [Fact]
+    public void AnUnverifiedDllIsReportedAndAMissingOneMeansNotInstalled()
+    {
+        var settings = new SeamlessSettings(game);
+        var (installed, verified, label) = settings.Version();
+        Assert.True(installed);
+        Assert.False(verified);
+        Assert.Contains("未验证：可以启动", label);
+        File.Delete(settings.Dll);
+        Assert.False(settings.Version().Installed);
+    }
+}

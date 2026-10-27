@@ -155,6 +155,11 @@ namespace Tower.Launcher
         void Change(string key, JsonElement value)
         {
             // 调试与改键写进模组目录的 tower-options.ini（游戏读它），不进启动器自己的设置
+            if (key.StartsWith("ersc.", StringComparison.Ordinal))
+            {
+                ChangeSeamless(key.Substring(5), value);
+                return;
+            }
             if (key == "debug" || key == "dlc" || key.StartsWith("key.", StringComparison.Ordinal))
             {
                 ChangeOption(key, value);
@@ -179,6 +184,59 @@ namespace Tower.Launcher
         }
 
         string OptionsFile => Path.Combine(paths.InstallDir, TowerOptions.FileName);
+
+        // ---------------- 无缝联机 ----------------
+
+        SeamlessSettings? Seamless() => GameDir() is { } dir ? new SeamlessSettings(dir) : null;
+
+        (string path, long size, DateTime time, string label)? versionCache;
+
+        /// <summary>版本要算 ersc.dll 的哈希：文件没变就用上次的结果</summary>
+        string SeamlessLabel(SeamlessSettings? seamless)
+        {
+            if (seamless == null) return "先在「游戏」里设置游戏目录";
+            var info = new FileInfo(seamless.Dll);
+            if (info.Exists && versionCache is { } cache && cache.path == info.FullName && cache.size == info.Length && cache.time == info.LastWriteTimeUtc) return cache.label;
+            string label;
+            try { label = seamless.Version().Label; }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { label = "读取失败：" + e.Message; }
+            if (info.Exists) versionCache = (info.FullName, info.Length, info.LastWriteTimeUtc, label);
+            return label;
+        }
+
+        void ChangeSeamless(string key, JsonElement value)
+        {
+            var seamless = Seamless();
+            if (seamless == null) { Toast("先在「游戏」里设置游戏目录", "warn"); return; }
+            var text = value.ValueKind switch
+            {
+                JsonValueKind.True => "1",
+                JsonValueKind.False => "0",
+                JsonValueKind.String => value.GetString() ?? "",
+                _ => value.ToString(),
+            };
+            try
+            {
+                seamless.Write(key, text);
+                Log.Write($"无缝联机设置：{key}{(key == SeamlessSettings.Password ? "（已修改）" : " = " + text)}");
+                Toast(key == SeamlessSettings.Password ? "联机密码已保存，和队友填同一个" : "已保存" + (GameRunning() ? "，下次启动游戏生效" : ""), "success");
+            }
+            catch (Exception e) when (e is InvalidOperationException || e is IOException || e is UnauthorizedAccessException)
+            {
+                Toast(e.Message, "error", 6000);
+            }
+            PushValues(InstallState.Load(paths.InstallDir));
+        }
+
+        void AddSeamlessValues(Dictionary<string, object?> values)
+        {
+            var seamless = Seamless();
+            values["erscInfo"] = SeamlessLabel(seamless);
+            var ini = seamless?.Read() ?? new Dictionary<string, string>();
+            values["ersc." + SeamlessSettings.Password] = ini.TryGetValue(SeamlessSettings.Password, out var password) ? password : "";
+            foreach (var key in SeamlessSettings.Switches) values["ersc." + key] = ini.TryGetValue(key, out var on) && on == "1";
+            foreach (var key in SeamlessSettings.Scalings) values["ersc." + key] = ini.TryGetValue(key, out var percent) ? percent : "（无此项）";
+        }
 
         // ---------------- 额外 DLL 插件 ----------------
 
@@ -275,6 +333,15 @@ namespace Tower.Launcher
                     PluginsChanged(null);
                     break;
                 case "removePlugin": RemovePlugin(Text(data, "path")); break;
+                case "seamlessDownload": OpenUrl("https://www.nexusmods.com/eldenring/mods/510"); break;
+                case "seamlessFolder":
+                    if (Seamless() is { } folder && Directory.Exists(folder.Folder)) OpenFolder(folder.Folder);
+                    else Toast("还没有设置游戏目录，或游戏目录里没有 SeamlessCoop 文件夹", "warn");
+                    break;
+                case "seamlessIni":
+                    if (Seamless() is { } ini && File.Exists(ini.IniFile)) OpenDocument(ini.IniFile, "https://www.nexusmods.com/eldenring/mods/510");
+                    else Toast("没找到无缝联机的配置文件 ersc_settings.ini", "warn");
+                    break;
                 case "checkUpdate": _ = CheckAsync(true); break;
                 case "verify": _ = UpdateAsync(true); break;
                 case "chooseGameDir": ChooseGameDir(); break;
@@ -333,6 +400,7 @@ namespace Tower.Launcher
                 ["updateStatus"] = updateStatus,
             };
             foreach (var (id, _, fallback) in TowerOptions.Hotkeys) values["key." + id] = TowerOptions.Key(options, id, fallback);
+            AddSeamlessValues(values);
             form.Post("settings", "values", values);
         }
 
@@ -585,6 +653,8 @@ namespace Tower.Launcher
                 var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
                 using var process = Process.Start(new ProcessStartInfo(powershell, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = paths.InstallDir })!;
                 Toast(mode == HostSettings.Seamless ? "正在启动（无缝联机）…" : "正在启动（单人）…", "info", 6000);
+                if (mode == HostSettings.Seamless && Seamless() is { } seamless && seamless.Installed && !seamless.Version().Verified)
+                    Toast("这个无缝联机版本还没验证过：照常启动，联机复活修复会自动关闭；联机双方要用同一个版本", "warn", 8000);
                 // 加载器拉起游戏后脚本可能一直等到游戏退出，也可能马上结束：两种情况都只盯「脚本报错」和「游戏起来了」
                 var started = false;
                 for (var waited = 0; !process.HasExited || (!started && process.ExitCode == 0 && waited < 120); waited++)

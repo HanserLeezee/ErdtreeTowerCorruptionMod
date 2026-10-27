@@ -773,7 +773,8 @@
     if (!key) return;
     var patch = {};
     patch[key] = value;
-    saveStore(patch);
+    /* 无缝联机的设置（含联机密码）只写游戏目录里的配置，不留在页面存储里 */
+    if (key.indexOf('ersc.') !== 0) saveStore(patch);
     setState[key] = value;
     loadRuntime();
     applyLocalSettings();
