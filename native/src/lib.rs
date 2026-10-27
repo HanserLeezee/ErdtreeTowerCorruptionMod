@@ -51,6 +51,7 @@ mod debug_menu;
 mod run_log;
 mod build_panel;
 mod archive_ui;
+mod class_ui;
 mod legacy;
 mod law_ui;
 mod reward_ui;

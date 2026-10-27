@@ -181,15 +181,17 @@ mod tests {
 
 pub fn class_name(class: Class) -> &'static str {
     match class {
-        Class::Vagabond => "流浪骑士",
-        Class::Samurai => "武士",
-        Class::Astrologer => "观星者",
-        Class::Prophet => "预言家",
+        // 职业重做后的六个职业（沿用原版出身的编号）
+        Class::Vagabond => "守誓骑士",
+        Class::Hero => "狂战士",
+        Class::Samurai => "影刃",
+        Class::Astrologer => "星辉术士",
+        Class::Prophet => "祷誓者",
+        Class::Confessor => "召唤师",
+        // 不再可选的旧职业（旧存档）
         Class::Warrior => "剑士",
-        Class::Hero => "勇者",
         Class::Bandit => "盗贼",
         Class::Prisoner => "囚犯",
-        Class::Confessor => "密使",
         Class::Wretch => "一贫如洗",
     }
 }

@@ -176,7 +176,8 @@ pub fn stock(run:&Run)->Vec<Stock> {
     result.extend(select(catalog.iter().filter(|s|s.kind==4).cloned().collect(),2,run.seed,visit));
     let pool=CATALOG.iter().filter(|s|s.kind==ItemKind::Talisman&&s.random_eligible()).map(|s|Stock{kind:2,id:(s.id&0x0fffffff) as i32,price:talisman_price(super::reward_ui::item_quality(s.id)),quantity:1}).collect();
     result.extend(select(pool,2,run.seed,visit));
-    if !run.law.lone_wolf()&&hash(run.seed ^ visit as u64 ^ 0xa549)%4==0 {
+    // 召唤师的商店常备骨灰
+    if !run.law.lone_wolf()&&(run.summoner()||hash(run.seed ^ visit as u64 ^ 0xa549)%4==0) {
         result.extend(select(CATALOG.iter().filter(|s|s.kind==ItemKind::Spirit).map(|s|Stock{kind:3,id:(s.id&0x0fffffff) as i32,price:2000,quantity:1}).collect(),1,run.seed,visit));
     } else {
         let pool=extras("food").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
@@ -421,7 +422,7 @@ mod tests {
         use erdtree_tower::{Class,rewards::{CATALOG,ItemKind}};
         for class in Class::ALL {
             for seed in 0..64 {
-                let rows=stock(&Run::new(seed,class));
+                let run=Run::new(seed,class);let rows=stock(&run);
                 assert_eq!(rows.len(),STOCK_COUNT as usize);
                 assert_eq!(rows.iter().map(|s|(s.kind,s.id)).collect::<std::collections::HashSet<_>>().len(),rows.len());
                 for kind in [ItemKind::Sorcery,ItemKind::Incantation,ItemKind::Armor] {
@@ -430,7 +431,7 @@ mod tests {
                 assert_eq!(rows.iter().filter(|s|s.kind==0&&s.quantity==1).count(),5);
                 let spirit=rows.iter().filter(|s|s.kind==3&&erdtree_tower::rewards::lookup(0x40000000|s.id as u32).is_some_and(|c|c.kind==ItemKind::Spirit)).count();
                 let crystal=rows.iter().any(|s|s.kind==3&&CATALOG.iter().any(|i|i.id==0x40000000|s.id as u32&&i.kind==ItemKind::Crystal));
-                assert_eq!(spirit,usize::from(!crystal&&hash(seed ^ 0xa549)%4==0));
+                assert_eq!(spirit,usize::from(!crystal&&(run.summoner()||hash(seed ^ 0xa549)%4==0)));
                 for (group,quantity) in [("food",5),("knife",20)] {
                     let pool=extras(group);
                     let selected:Vec<_>=rows.iter().filter(|s|pool.iter().any(|p|p.kind==s.kind&&p.id==s.id)).collect();

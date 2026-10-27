@@ -135,7 +135,7 @@ fn tick_party_scene(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Re
         }
         if let Some(guards)=scene.guards.take(){guards.retire();}
         if let Some(player)=world.main_player.as_mut(){
-            if victory_healing_allowed(player) {super::passives::heal_victory(&mut player.chr_ins,scene.run.class);super::contracts::heal_victory(&mut player.chr_ins,&scene.run);}
+            if victory_healing_allowed(player) {super::passives::heal_victory(&mut player.chr_ins,&scene.run);super::contracts::heal_victory(&mut player.chr_ins,&scene.run);}
         }
         link.event.applied=Some(job.wave);state.view.shared_event=false;return Ok(());
     }
@@ -678,7 +678,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
                 for entity in super::enemies::map_entities(&super::enemies::node_roster(run,id))? {super::enemies::request_map_entity(entity,false)?;}
                 state.reward_wait=Some((Instant::now(),run.clone()));state.view.busy=true;
                 state.reward_portal=Default::default();
-                if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run.class);super::contracts::heal_victory(&mut player.chr_ins,run);}
+                if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run);super::contracts::heal_victory(&mut player.chr_ins,run);}
                 give_elite_tear(world,run,id);
                 super::log(format!("Party victory received epoch={}",link.epoch));
             }
@@ -1675,9 +1675,9 @@ fn tick_locked() {
                 }
             }
             state.view.run=Some(next.clone());
-            if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,next.class);super::contracts::heal_victory(&mut player.chr_ins,&next);}
+            if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,&next);super::contracts::heal_victory(&mut player.chr_ins,&next);}
             // 召唤师：胜利时召唤物还活着，这次召唤不消耗骨灰（在收回召唤物之前补回）
-            if next.class.keeps_living_spirit()&&world.summon_buddy_manager.player_has_alive_summon && let Some(player)=world.main_player.as_mut() {
+            if next.summoner()&&world.summon_buddy_manager.player_has_alive_summon && let Some(player)=world.main_player.as_mut() {
                 match super::loadout::refund_spent_ashes(unsafe {player.player_game_data.as_mut()}) {
                     Ok(count) if count>0=>super::log(format!("Spirit ash kept after victory: {count}")),
                     Ok(_)=>{},
@@ -2196,7 +2196,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         if bound&&!run.law.lone_wolf() {pending.spirits.poll(world,room.block,true)?;}
         match outcome {
             Outcome::Victory => {
-                if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run.class);super::contracts::heal_victory(&mut player.chr_ins,run);}
+                if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run);super::contracts::heal_victory(&mut player.chr_ins,run);}
                 state.pending=None;state.event_start=None;state.view.enemy_hp=None;
                 let run=state.view.run.as_mut().unwrap();run.regional_event.guards=false;run.regional_event.guard_slot=None;record(run);
                 set_flag(45010942,false)?;set_flag(45010995,true)?;

@@ -157,7 +157,7 @@ pub(crate) fn before_elites(run:&Run,node:usize)->Vec<Reward> {weighted(run,node
 pub(crate) fn before_base_talismans(run:&Run,node:usize)->Vec<Reward> {weighted(run,node,false)}
 fn weighted(run:&Run,node:usize,base_only:bool)->Vec<Reward> {
     let mut offers=ranked_pool(run,node,true,&CATALOG,base_only);
-    if run.law.lone_wolf()||crate::mix(run.reward_seed() ^ node as u64 ^ 0xa549) % 4 != 0 {
+    if run.law.lone_wolf()||!run.summoner()&&crate::mix(run.reward_seed() ^ node as u64 ^ 0xa549) % 4 != 0 {
         offers.retain(|r|!matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)));
     }
     offers.truncate(3);
@@ -192,7 +192,12 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
     for (index,kind) in [ItemKind::Weapon,ItemKind::Armor,ItemKind::Sorcery,ItemKind::Incantation,ItemKind::Spirit,ItemKind::Talisman,ItemKind::Tool].into_iter().enumerate() {
         if kind==ItemKind::Tool&&!base_only {continue;}
         if kind==ItemKind::Spirit&&!spirits {continue;}
-        let pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&(!base_only||item.random_eligible())).collect();
+        let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&(!base_only||item.random_eligible())).collect();
+        // 职业规则 1：武器约七成从职业擅长的类型里出
+        if kind==ItemKind::Weapon&&run.class_rules>=1&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
+            let favored:Vec<_>=pool.iter().copied().filter(|i|run.class.weapon_types().contains(&((i.id&0x0fffffff)/1_000_000))).collect();
+            if !favored.is_empty() {pool=favored;}
+        }
         if !pool.is_empty() {
             let roll=crate::mix(run.reward_seed()^(node as u64*97+index as u64+1234));
             categories.push(Reward::Item(pool[roll as usize%pool.len()].id));
@@ -200,7 +205,18 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
     }
     let mut indexed:Vec<_>=categories.into_iter().enumerate().collect();
     indexed.sort_by_key(|(index,_)|crate::mix(run.reward_seed()^(node as u64*167+*index as u64+9876)));
-    indexed.into_iter().map(|(_,reward)|reward).collect()
+    let mut result:Vec<_>=indexed.into_iter().map(|(_,reward)|reward).collect();
+    // 职业规则 1：术士一半的奖励页必有魔法、祷誓者必有祷告，召唤师每页都有骨灰
+    if run.class_rules>=1 && let Some((kind,always))=favored_kind(run.class) {
+        if always||crate::mix(run.reward_seed()^(node as u64*173)^0xfa70)%2==0 {
+            if let Some(index)=result.iter().position(|r|matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|i.kind==kind))) {let reward=result.remove(index);result.insert(0,reward);}
+        }
+    }
+    result
+}
+/// 职业偏爱的奖励类型，以及是否每页都保证出现
+fn favored_kind(class:Class)->Option<(ItemKind,bool)> {
+    match class {Class::Astrologer=>Some((ItemKind::Sorcery,false)),Class::Prophet=>Some((ItemKind::Incantation,false)),Class::Confessor=>Some((ItemKind::Spirit,true)),_=>None}
 }
 
 #[cfg(test)]

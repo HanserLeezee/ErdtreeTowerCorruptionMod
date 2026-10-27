@@ -84,6 +84,19 @@ pub struct State {
     /// 本幕选择了深化：不送装备，改送一个圣杯滴露
     #[serde(default,skip_serializing_if="std::ops::Not::not")] pub deepened:bool,
 }
+/// 每幕第一张誓约卡的职业倾向
+fn preferred(class:Class,roll:u64)->Kind {
+    let kinds:&[Kind]=match class {
+        Class::Vagabond=>&[Kind::Guard,Kind::Steel],
+        Class::Hero=>&[Kind::Breaker,Kind::Blood],
+        Class::Samurai=>&[Kind::Execution,Kind::Combo],
+        Class::Astrologer|Class::Prisoner=>&[Kind::Mystic],
+        Class::Prophet=>&[Kind::Mystic,Kind::Guard],
+        Class::Confessor=>&[Kind::Mystic,Kind::Hunter],
+        _=>&[Kind::Steel,Kind::Breaker,Kind::Combo,Kind::Guard],
+    };
+    kinds[roll as usize%kinds.len()]
+}
 impl State {
     pub fn new(seed:u64,class:Class,act:u8,previous:Option<Kind>,peak:u8)->Self {
         let roll=crate::mix(seed^0xc071ac7);
@@ -99,7 +112,7 @@ impl State {
     /// 新规则：两份新誓约（不与已有的重复），已有誓约未满级时加一张深化卡
     pub fn start(seed:u64,class:Class,act:u8,held:Vec<Oath>,peak:u8)->Self {
         let roll=crate::mix(seed^0xc071ac7);
-        let preferred=if class.sorcerer()||class.cleric(){Kind::Mystic}else{[Kind::Steel,Kind::Breaker,Kind::Combo,Kind::Guard][roll as usize%4]};
+        let preferred=preferred(class,roll);
         let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|!held.iter().any(|o|o.kind==*k)).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
         let first=if pool.contains(&preferred){preferred}else{pool[0]};

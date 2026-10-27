@@ -1,5 +1,5 @@
 use std::{collections::VecDeque,sync::{Mutex,atomic::{AtomicBool,Ordering}}};
-use erdtree_tower::Run;
+use erdtree_tower::{Class,Run};
 #[cfg(test)]
 use erdtree_tower::Phase;
 use hudhook::imgui::{Ui,Key,Condition,StyleColor,TextureId};
@@ -9,12 +9,16 @@ use erdtree_tower::{journal::{Outcome,Record},legacy::Gain};
 static SCREEN:Mutex<VecDeque<Screen>>=Mutex::new(VecDeque::new());
 static PENDING:Mutex<Option<(Record,Option<Gain>)>>=Mutex::new(None);
 static SEED:Mutex<Option<u64>>=Mutex::new(None);
-static LAW_START:Mutex<Option<(Option<u64>,Law)>>=Mutex::new(None);
+static LAW_START:Mutex<Option<(Option<u64>,Law,Class)>>=Mutex::new(None);
+/// 联机开局：选完职业直接开局（苦难律法只能单人）
+static CLASS_START:Mutex<Option<Class>>=Mutex::new(None);
 static ACTIVE:AtomicBool=AtomicBool::new(false);
-enum Screen {Summary{record:Record,gain:Option<Gain>,from_archive:bool,focus:usize,opened:Option<f64>},Archive(Box<crate::archive_ui::Archive>),Notice{message:String,opened:Option<f64>},TrialRewards{items:Vec<u32>,opened:Option<f64>},Seed{input:String,error:String,digit:u8,opened:Option<f64>},Law{screen:crate::law_ui::LawScreen,seed:Option<u64>,record:Option<(u32,String)>}}
+enum Screen {Summary{record:Record,gain:Option<Gain>,from_archive:bool,focus:usize,opened:Option<f64>},Archive(Box<crate::archive_ui::Archive>),Notice{message:String,opened:Option<f64>},TrialRewards{items:Vec<u32>,opened:Option<f64>},Seed{input:String,error:String,digit:u8,opened:Option<f64>},Law{screen:crate::law_ui::LawScreen,seed:Option<u64>,record:Option<(u32,String)>,class:Class},
+    /// 选择职业；law 为 false 时（联机）选完直接开局
+    Class{screen:crate::class_ui::ClassScreen,seed:Option<u64>,law:bool}}
 fn show(next:Screen) {
     let Ok(mut screens)=SCREEN.lock() else{return;};
-    if screens.iter().any(|s|match (s,&next) {(Screen::Notice{message:a,..},Screen::Notice{message:b,..})=>a==b,(Screen::Seed{..},Screen::Seed{..})|(Screen::Law{..},Screen::Law{..})=>true,_=>false}) {return;}
+    if screens.iter().any(|s|match (s,&next) {(Screen::Notice{message:a,..},Screen::Notice{message:b,..})=>a==b,(Screen::Seed{..},Screen::Seed{..})|(Screen::Law{..},Screen::Law{..})|(Screen::Class{..},Screen::Class{..})=>true,_=>false}) {return;}
     screens.push_back(next);ACTIVE.store(true,Ordering::Relaxed);
 }
 pub fn party_notice(message:String) {show(Screen::Notice{message,opened:None});}
@@ -44,9 +48,18 @@ pub fn hub_ready() {
 }
 pub fn seed_entry() {show(Screen::Seed{input:String::new(),error:String::new(),digit:0,opened:None});}
 pub fn take_seed()->Option<u64> {SEED.lock().ok()?.take()}
-/// 开局前选择苦难律法；seed 为空时随机开局
-pub fn law_entry(seed:Option<u64>,record:Option<(u32,String)>) {let mut screen=crate::law_ui::LawScreen::new(Law::default());screen.seed=seed;show(Screen::Law{screen,seed,record});}
-pub fn take_law_start()->Option<(Option<u64>,Law)> {LAW_START.lock().ok()?.take()}
+/// 开局：先选职业（默认选中 current），单人再立苦难律法；seed 为空时随机开局
+pub fn class_entry(seed:Option<u64>,law:bool,current:Class) {
+    let focus=Class::PLAYABLE.iter().position(|c|*c==current).unwrap_or(0);
+    show(Screen::Class{screen:crate::class_ui::ClassScreen::new(focus),seed,law});
+}
+fn law_screen(seed:Option<u64>,class:Class)->Screen {
+    let mut screen=crate::law_ui::LawScreen::new(Law::default());screen.seed=seed;
+    let record=crate::legacy::owner().and_then(|owner|crate::law::best(owner,class)).map(|best|(best,crate::map_ui::class_name(class).to_owned()));
+    Screen::Law{screen,seed,record,class}
+}
+pub fn take_law_start()->Option<(Option<u64>,Law,Class)> {LAW_START.lock().ok()?.take()}
+pub fn take_class_start()->Option<Class> {CLASS_START.lock().ok()?.take()}
 fn parse_seed(text:&str)->Result<u64,&'static str> {
     let text=text.trim();
     if text.is_empty()||!text.bytes().all(|c|c.is_ascii_digit()){return Err("请输入数字种子");}
@@ -57,10 +70,21 @@ pub fn draw(ui:&Ui,icon:&mut dyn FnMut(u32)->Option<TextureId>)->bool {
     let Some(current)=screen.front_mut() else{return false;};
     let mut next=None;
     let done=match current {
-        Screen::Law{screen:law,seed,record}=>match crate::law_ui::draw(ui,law,icon,record.as_ref().map(|(best,class)|(*best,class.as_str()))) {
-            Some(crate::law_ui::LawAction::Start(law))=>{if let Ok(mut start)=LAW_START.lock(){*start=Some((*seed,law));}true},
-            Some(crate::law_ui::LawAction::Back)=>true,
+        Screen::Law{screen:law,seed,record,class}=>match crate::law_ui::draw(ui,law,icon,record.as_ref().map(|(best,class)|(*best,class.as_str()))) {
+            Some(crate::law_ui::LawAction::Start(law))=>{if let Ok(mut start)=LAW_START.lock(){*start=Some((*seed,law,*class));}true},
+            // 返回：回到选择职业
+            Some(crate::law_ui::LawAction::Back)=>{next=Some(Screen::Class{screen:crate::class_ui::ClassScreen::new(Class::PLAYABLE.iter().position(|c|c==class).unwrap_or(0)),seed:*seed,law:true});true},
             Some(crate::law_ui::LawAction::Archive)=>{next=Some(Screen::Archive(Box::new(crate::archive_ui::Archive::new(crate::run_log::records()))));false},
+            None=>false,
+        },
+        Screen::Class{screen:classes,seed,law}=>match crate::class_ui::draw(ui,classes) {
+            Some(crate::class_ui::ClassAction::Pick(index))=>{
+                let class=Class::PLAYABLE[index.min(Class::PLAYABLE.len()-1)];
+                if *law {next=Some(law_screen(*seed,class));}
+                else if let Ok(mut start)=CLASS_START.lock() {*start=Some(class);}
+                true
+            },
+            Some(crate::class_ui::ClassAction::Back)=>true,
             None=>false,
         },
         Screen::Archive(archive)=>match crate::archive_ui::draw(ui,archive,icon) {
@@ -106,7 +130,7 @@ fn render(ui:&Ui,current:&mut Screen,icon:&mut dyn FnMut(u32)->Option<TextureId>
                 let ready=ui.time()-opened>=0.35;
                 if (ui.button("确定，继续选路  [Enter / A]")||ui.is_key_pressed(Key::Enter)||ui.is_key_pressed(Key::GamepadFaceDown))&&ready {close=true;}
             },
-            Screen::Summary{..}|Screen::Seed{..}|Screen::Law{..}|Screen::Archive(_)=>unreachable!(),
+            Screen::Summary{..}|Screen::Seed{..}|Screen::Law{..}|Screen::Class{..}|Screen::Archive(_)=>unreachable!(),
         }
     });
     close

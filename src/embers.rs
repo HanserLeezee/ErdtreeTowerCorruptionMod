@@ -83,9 +83,9 @@ pub fn reward(run:&crate::Run,node:usize)->Option<Ember> {
     }
     offer(roll>>8,&run.embers,carries_spirit(run))
 }
-/// 身上带着骨灰：拿到过任何骨灰奖励
+/// 身上带着骨灰：召唤师（开局就有骨灰），或拿到过任何骨灰奖励
 pub fn carries_spirit(run:&crate::Run)->bool {
-    run.claimed_items.iter().any(|id|crate::rewards::lookup(*id).is_some_and(|i|i.kind==crate::rewards::ItemKind::Spirit))
+    run.summoner()||run.claimed_items.iter().any(|id|crate::rewards::lookup(*id).is_some_and(|i|i.kind==crate::rewards::ItemKind::Spirit))
 }
 /// 借用原版护符的图标
 pub fn icon_talisman(ember:Ember)->u32 {match ember {

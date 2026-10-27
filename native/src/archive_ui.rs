@@ -30,7 +30,7 @@ impl Archive {
         for (name,_) in &codex.affixes {if !affixes.contains(name) {affixes.push(name.clone());}}
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|t|t.as_secs());
         let legacy=crate::legacy::owner().map(|owner|(owner,crate::legacy::load(owner)));
-        let class=recent_class(&recent).and_then(|c|Class::ALL.iter().position(|x|*x==c)).unwrap_or(0);
+        let class=recent_class(&recent).and_then(|c|Class::PLAYABLE.iter().position(|x|*x==c)).unwrap_or(0);
         Self{records:recent,codex,bosses,affixes,tab:0,selected:0,focus:0,follow:true,opened:None,now,legacy,class,talent:0,column:1,notice:None}
     }
     fn unlocked(&self,item:Item)->bool {
@@ -333,8 +333,8 @@ fn legacy_keys(archive:&mut Archive,pressed:&dyn Fn(&[Key])->bool,now:f64) {
     let (left,right,up,down)=(pressed(&[Key::LeftArrow,Key::A,Key::GamepadDpadLeft]),pressed(&[Key::RightArrow,Key::D,Key::GamepadDpadRight]),
         pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]),pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]));
     if archive.column==0 {
-        if up {archive.class=(archive.class+Class::ALL.len()-1)%Class::ALL.len();}
-        if down {archive.class=(archive.class+1)%Class::ALL.len();}
+        if up {archive.class=(archive.class+Class::PLAYABLE.len()-1)%Class::PLAYABLE.len();}
+        if down {archive.class=(archive.class+1)%Class::PLAYABLE.len();}
         if right||pressed(&[Key::Enter,Key::GamepadFaceDown]) {archive.column=1;}
     } else {
         if left {archive.column=0;}
@@ -344,7 +344,7 @@ fn legacy_keys(archive:&mut Archive,pressed:&dyn Fn(&[Key])->bool,now:f64) {
     }
 }
 fn choose(archive:&mut Archive,index:usize,now:f64) {
-    let class=Class::ALL[archive.class];let talisman=heritage::talismans(class)[index];
+    let class=Class::PLAYABLE[archive.class];let talisman=heritage::talismans(class)[index];
     let Some((owner,legacy))=&mut archive.legacy else{return};
     let result=legacy.get_mut(class).choose(class,talisman).map_err(str::to_owned).and_then(|_|crate::legacy::save(*owner,legacy));
     let name=crate::reward_ui::talisman_description(talisman).0;
@@ -366,11 +366,11 @@ fn legacy(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureId
         text(800.0,460.0,"载入角色后才能查看职业传承",DIM,1.0,0.5);return;
     };
     let now=ui.time();
-    // 左侧：十个职业与各自的熟练度
+    // 左侧：六个职业与各自的熟练度
     let draw=ui.get_window_draw_list();panel(&draw,p(70.0,176.0),p(430.0,800.0),s);drop(draw);
     text(250.0,190.0,"职  业",GOLD,1.05,0.5);
-    for (i,class) in Class::ALL.iter().enumerate() {
-        let y=232.0+i as f32*56.0;let entry=data.get(*class);let (level,into,need)=entry.progress();
+    for (i,class) in Class::PLAYABLE.iter().enumerate() {
+        let y=232.0+i as f32*88.0;let entry=data.get(*class);let (level,into,need)=entry.progress();
         let (min,max)=(p(88.0,y),p(412.0,y+50.0));
         ui.set_cursor_screen_pos(min);ui.set_window_font_scale(s);
         if ui.invisible_button(format!("class-{i}"),[max[0]-min[0],max[1]-min[1]])&&ready {archive.class=i;archive.column=0;}
@@ -385,7 +385,7 @@ fn legacy(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureId
         bar(ui,p(104.0,y+36.0),p(396.0,y+40.0),if need==0{1.0}else{into as f32/need as f32},s);
     }
     // 右上：选中职业的熟练度与当前开局护符
-    let class=Class::ALL[archive.class];let entry=data.get(class);let (level,into,need)=entry.progress();
+    let class=Class::PLAYABLE[archive.class];let entry=data.get(class);let (level,into,need)=entry.progress();
     let chosen=entry.chosen(class);
     let draw=ui.get_window_draw_list();panel(&draw,p(450.0,176.0),p(1530.0,300.0),s);drop(draw);
     text(478.0,190.0,crate::map_ui::class_name(class),GOLD,1.5,0.0);

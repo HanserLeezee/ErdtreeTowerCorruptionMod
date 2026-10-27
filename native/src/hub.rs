@@ -159,9 +159,12 @@ impl Hub {
         Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,law:Default::default(),settled})
     }
     pub fn finish(&mut self) { self.active=true;self.paused=false;self.settled=true;self.reset=true;self.start=false;self.resume=None;self.seed=None;self.law=Default::default();self.warp=WarpGate::default(); }
-    fn law_record(&self)->Option<(u32,String)> {
-        let class=super::class_from_archetype(self.chosen)?;
-        super::law::best(self.owner,class).map(|best|(best,super::map_ui::class_name(class).to_owned()))
+    /// 选职业界面默认选中上次的职业（旧职业时选第一个）
+    fn current_class(&self)->Class {super::class_from_archetype(self.chosen).filter(|c|c.playable()).unwrap_or(Class::PLAYABLE[0])}
+    /// 选定职业后开局：重置为该职业的出身再开始旅程
+    fn begin(&mut self,class:Class,seed:Option<u64>,law:erdtree_tower::law::Law) {
+        self.chosen=class.archetype();self.seed=seed;self.law=law;self.reset=true;self.start=true;
+        super::log(format!("Hub start: class={class:?} seeded={} law={}",seed.is_some(),law.code()));
     }
     pub fn ready_for_party_restart(&self)->bool {self.active&&!self.reset&&!self.start&&matches!(self.warp,WarpGate::Ready)}
     pub fn settling(&self)->bool {self.active&&self.settled}
@@ -241,13 +244,14 @@ impl Hub {
         }
         let room=self.room.as_mut().unwrap();
         if let Some(seed)=super::run_screen::take_seed() {
-            if seeded_start_allowed() {super::run_screen::law_entry(Some(seed),self.law_record());}else{room.notice(9500105)?;}
+            if seeded_start_allowed() {super::run_screen::class_entry(Some(seed),true,self.current_class());}else{room.notice(9500105)?;}
             return Ok(None);
         }
-        if let Some((seed,law))=super::run_screen::take_law_start() {
-            if seeded_start_allowed() {self.seed=seed;self.law=law;self.reset=true;self.start=true;}else{room.notice(9500105)?;}
+        if let Some((seed,law,class))=super::run_screen::take_law_start() {
+            if seeded_start_allowed() {self.begin(class,seed,law);}else{room.notice(9500105)?;}
             return Ok(None);
         }
+        if let Some(class)=super::run_screen::take_class_start() {self.begin(class,None,Default::default());return Ok(None);}
         if super::run_screen::active(){return Ok(None);}
         room.poll(world,game)?;
         if let Some((npc,choice))=room.hub_choice() {
@@ -260,7 +264,8 @@ impl Hub {
             }
             match (npc,choice) {
                 // 单人开局先立苦难律法；联机暂不支持，直接开局
-                (0,1)=>{if seeded_start_allowed(){super::run_screen::law_entry(None,self.law_record());}else{self.seed=None;self.law=Default::default();self.reset=true;self.start=true;}},
+                // 开始新旅程：先选职业，单人再立苦难律法；联机选完职业直接开局
+                (0,1)=>super::run_screen::class_entry(None,seeded_start_allowed(),self.current_class()),
                 (0,3)=>{if seeded_start_allowed(){super::run_screen::seed_entry();}else{room.notice(9500105)?;}},
                 (0,2)=>{
                     if let Some(mut run)=self.resume.take().filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)) {
@@ -274,7 +279,6 @@ impl Hub {
                     }
                     room.notice(9500030)?;
                 },
-                (1,1..=10)=>{self.chosen=[0,4,5,7,1,2,3,8,6,9][choice as usize-1];self.reset=true;},
                 _=>{},
             }
         }

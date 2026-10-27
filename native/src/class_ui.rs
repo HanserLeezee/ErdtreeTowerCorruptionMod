@@ -6,13 +6,14 @@ use crate::run_screen::wrapped;
 pub enum ClassAction {Pick(usize),Back}
 /// 一个职业的卡面：名字、定位、借用出身、机制名与说明、起手、擅长
 pub struct Role {pub name:&'static str,pub role:&'static str,pub base:&'static str,pub mechanic:(&'static str,&'static str),pub kit:&'static str,pub bias:&'static str,pub accent:(u8,u8,u8)}
+/// 顺序与 erdtree_tower::Class::PLAYABLE 一致
 pub const ROLES:[Role;6]=[
-    Role{name:"守誓骑士",role:"坦克 · 格挡反击",base:"流浪骑士",mechanic:("誓守","用盾挡下攻击后 3 秒内，下一次攻击伤害 +30%，且不消耗精力"),kit:"长剑、斧枪、鸢形盾",bias:"直剑、大剑、斧枪、中盾与大盾",accent:(196,160,96)},
-    Role{name:"狂战士",role:"重武器 · 残血爆发",base:"勇者",mechanic:("狂血","生命低于一半时伤害 +20%、韧性提高；打赢一场战斗回复 8% 生命"),kit:"战斧、巨斧、大皮盾",bias:"斧、大斧、槌、大槌、特大武器",accent:(200,84,64)},
-    Role{name:"影刃",role:"敏捷 · 致命一击 · 出血",base:"武士",mechanic:("影步","背刺、弹反后的致命一击回复 30% 精力，并让敌人积累出血"),kit:"打刀、长弓、红棘木盾",bias:"刀、匕首、曲剑、弓",accent:(150,172,190)},
-    Role{name:"星辉术士",role:"远程法术",base:"观星者",mechanic:("星涌","进入战斗时专注回复一半；连续施法第 3 发起专注消耗减半"),kit:"辉石杖、短剑、辉石魔砾、辉石彗星",bias:"法杖与魔法",accent:(110,140,220)},
-    Role{name:"祷誓者",role:"祷告 · 治疗 · 辅助",base:"预言家",mechanic:("圣誓","治疗类祷告同时治疗周围队友；单人时治疗量 +30%"),kit:"短矛、指头圣印记、治疗、招来火焰",bias:"圣印记、祷告与矛",accent:(226,196,120)},
-    Role{name:"召唤师",role:"骨灰为核心",base:"密使",mechanic:("群灵","战斗胜利时召唤物还活着，这次召唤不消耗骨灰；骨灰奖励大幅增加，商店常备骨灰"),kit:"短剑、圆盾、离群野狼与骸骨民兵的骨灰",bias:"骨灰与轻武器",accent:(140,196,170)},
+    Role{name:"守誓骑士",role:"坦克 · 格挡反击",base:"流浪骑士",mechanic:("誓守","防御反击伤害 +30%，防御时精力消耗 -30%"),kit:"长剑、斧枪、鸢形盾",bias:"直剑、大剑、斧枪、中盾与大盾",accent:(196,160,96)},
+    Role{name:"狂战士",role:"重武器 · 残血爆发",base:"勇者",mechanic:("狂血","生命低于一半时造成的伤害 +20%；打赢一场战斗回复 8% 生命"),kit:"战斧、巨斧、大皮盾",bias:"斧、大斧、槌、大槌、特大武器",accent:(200,84,64)},
+    Role{name:"影刃",role:"敏捷 · 致命一击",base:"武士",mechanic:("影步","致命一击伤害 +30%，精力恢复速度提高"),kit:"打刀、长弓、红棘木盾",bias:"刀、匕首、曲剑、弓",accent:(150,172,190)},
+    Role{name:"星辉术士",role:"远程法术",base:"观星者",mechanic:("星涌","进入战斗时专注回复一半；魔法专注消耗 -15%"),kit:"辉石杖、短剑、辉石魔砾、辉石彗星",bias:"法杖与魔法",accent:(110,140,220)},
+    Role{name:"祷誓者",role:"祷告 · 治疗 · 辅助",base:"预言家",mechanic:("圣誓","祷告专注消耗 -15%；打赢一场战斗回复 25% 专注"),kit:"短矛、指头圣印记、治疗、招来火焰",bias:"圣印记、祷告与矛",accent:(226,196,120)},
+    Role{name:"召唤师",role:"骨灰为核心",base:"密使",mechanic:("群灵","战斗胜利时召唤物还活着，这次召唤不消耗骨灰；每页奖励都有骨灰，召唤流余烬必定可出"),kit:"阔剑、鸢形盾、圣印记、离群野狼与骸骨民兵的骨灰",bias:"骨灰、轻武器与祷告",accent:(140,196,170)},
 ];
 pub struct ClassScreen {pub focus:usize,opened:Option<f64>}
 impl ClassScreen {pub fn new(focus:usize)->Self {Self{focus:focus.min(ROLES.len()-1),opened:None}}}

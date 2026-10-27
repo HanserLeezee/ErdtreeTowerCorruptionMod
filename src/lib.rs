@@ -49,8 +49,25 @@ impl Class {
     pub const ALL: [Self; 10] = [Self::Vagabond,Self::Warrior,Self::Hero,Self::Bandit,Self::Astrologer,Self::Prophet,Self::Prisoner,Self::Samurai,Self::Confessor,Self::Wretch];
     pub fn sorcerer(self)->bool {matches!(self,Self::Astrologer|Self::Prisoner)}
     pub fn cleric(self)->bool {matches!(self,Self::Prophet|Self::Confessor)}
-    /// 召唤师的“群灵”：战斗胜利时召唤物还活着就不消耗骨灰。职业重做加入召唤师之前没有职业具备
-    pub fn keeps_living_spirit(self)->bool {false}
+    /// 职业重做后可选的六个职业，沿用原版出身的编号以便旧存档读取：
+    /// 流浪骑士→守誓骑士、勇者→狂战士、武士→影刃、观星者→星辉术士、预言家→祷誓者、密使→召唤师
+    pub const PLAYABLE:[Self;6]=[Self::Vagabond,Self::Hero,Self::Samurai,Self::Astrologer,Self::Prophet,Self::Confessor];
+    pub fn playable(self)->bool {Self::PLAYABLE.contains(&self)}
+    /// 原版出身编号（CharaInitParam 3000+编号）
+    pub fn archetype(self)->u8 {match self {
+        Self::Vagabond=>0,Self::Warrior=>1,Self::Hero=>2,Self::Bandit=>3,Self::Astrologer=>4,
+        Self::Prophet=>5,Self::Confessor=>6,Self::Samurai=>7,Self::Prisoner=>8,Self::Wretch=>9,
+    }}
+    /// 职业擅长的武器类型（武器编号 ÷ 1000000）：武器奖励约七成从这些类型里出
+    pub fn weapon_types(self)->&'static [u32] {match self {
+        Self::Vagabond=>&[2,3,18,31,32],          // 直剑、大剑、斧枪、中盾、大盾
+        Self::Hero=>&[4,11,12,14,15,23],          // 特大剑、槌、大槌、斧、大斧、特大武器
+        Self::Samurai=>&[1,7,8,9,40,41],          // 匕首、曲剑、大曲剑、刀、弓、长弓
+        Self::Astrologer=>&[33,1,5],              // 法杖、匕首、刺剑
+        Self::Prophet=>&[34,16,17],               // 圣印记、矛、大矛
+        Self::Confessor=>&[1,2,30,31],            // 匕首、直剑、小盾、中盾
+        _=>&[],
+    }}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -181,6 +198,9 @@ pub struct Run {
     pub affix_equipment: bool,
     #[serde(default)]
     pub affix_rules: u8,
+    /// 职业规则：1 起为职业重做后的六个职业（奖励偏向、职业机制）；旧存档为 0，保持原来的职业被动
+    #[serde(default)]
+    pub class_rules: u8,
     #[serde(default)]
     pub talisman_affixes: bool,
     #[serde(default)]
@@ -486,6 +506,7 @@ impl Run {
             schema: 6,
             affix_equipment: true,
             affix_rules: 4,
+            class_rules: 1,
             talisman_affixes: true,
             ruby_spells: false,
             boss_affixes: true,
@@ -546,6 +567,8 @@ impl Run {
         self.flasks=if full {self.flask_limit}else{self.flasks.min(self.flask_limit)};
         Ok(())
     }
+    /// 职业重做后的召唤师（群灵：胜利时召唤物还活着就不消耗骨灰；骨灰奖励更多）
+    pub fn summoner(&self)->bool {self.class_rules>=1&&self.class==Class::Confessor}
     pub fn full_flask_limit(&self)->u8 {let cut=self.law.flask_cut();10+self.flask_bonus*2-cut[0]-cut[1]}
 
     pub fn reward_seed(&self)->u64 {
@@ -932,7 +955,7 @@ impl Run {
 
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.class_rules>1||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))

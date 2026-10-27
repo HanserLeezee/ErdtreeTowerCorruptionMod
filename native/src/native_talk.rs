@@ -145,7 +145,8 @@ impl NativeTalk {
                     self.event(19,&[3,9500052,-1])?;
                     self.event(19,&[99,9500003,-1])?;
                 } else if self.service == 3 || self.service == 4 {
-                    let messages: &[i32] = if self.service == 3 { &[9500020,9500021,9500104] } else { &[9500022,9500023,9500024,9500025,9500060,9500061,9500062,9500063,9500064,9500065] };
+                    // 职业重做后职业在“开始新旅程”时选择，原来的 10 选 1 职业菜单不再列出选项
+                    let messages: &[i32] = if self.service == 3 { &[9500020,9500021,9500104] } else { &[] };
                     for (i,&message) in messages.iter().enumerate() { self.event(19,&[i as i32+1,message,-1])?; }
                     self.event(19,&[99,9500003,-1])?;
                 } else if self.service==0 {

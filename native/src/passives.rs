@@ -3,39 +3,71 @@ use eldenring::cs::{ChrIns,ChrInsExt,PlayerGameData,SoloParamRepository,SpEffect
 use fromsoftware_shared::FromStatic;
 const FIRST:i32=9800000;
 
-fn starting_gift(class:Class)->Option<(u32,i32)> {
-    match class {Class::Vagabond=>Some((10020,1)),Class::Wretch=>Some((8185,5)),_=>None}
+/// 开局附带的职业物品：(编号含类别位, 数量)
+fn starting_gift(class:Class)->&'static [(u32,i32)] {
+    match class {
+        Class::Vagabond=>&[(0x40000000|10020,1)],
+        Class::Wretch=>&[(0x40000000|8185,5)],
+        // 狂战士多带一把巨斧；召唤师带离群野狼与骸骨民兵的骨灰
+        Class::Hero=>&[(15000000,1)],
+        Class::Confessor=>&[(0x40000000|232000,1),(0x40000000|212000,1)],
+        _=>&[],
+    }
 }
 pub fn give_starting(data:&mut PlayerGameData,class:Class)->Result<(),String> {
-    if let Some((id,quantity))=starting_gift(class) {
-        let full=0x40000000|id;
-        super::random_ashes::give(&[(full as i32,quantity,-1)])?;
-        if super::loot::count(data,full)!=quantity as u64 {return Err("职业初始物品发放不完整".into());}
+    for &(id,quantity) in starting_gift(class) {
+        super::random_ashes::give(&[(id as i32,quantity,-1)])?;
+        if super::loot::count(data,id)!=quantity as u64 {return Err("职业初始物品发放不完整".into());}
     }
     Ok(())
 }
-fn victory_hp(class:Class,hp:i32,max_hp:i32)->i32 {
-    if class!=Class::Warrior || hp<=0 || max_hp<=0 {return hp;}
+/// 打赢一场战斗：狂战士（旧规则的剑士）回复 8% 生命，祷誓者回复 25% 专注
+fn victory_hp(run:&Run,hp:i32,max_hp:i32)->i32 {
+    let heals=if run.class_rules>=1 {run.class==Class::Hero}else{run.class==Class::Warrior};
+    if !heals || hp<=0 || max_hp<=0 {return hp;}
     (i64::from(hp)+i64::from(max_hp)*8/100).min(i64::from(max_hp)) as i32
 }
-pub fn heal_victory(chr:&mut ChrIns,class:Class) {
+fn victory_fp(run:&Run,fp:i32,max_fp:i32)->i32 {
+    if run.class_rules<1||run.class!=Class::Prophet||max_fp<=0 {return fp;}
+    (i64::from(fp.max(0))+i64::from(max_fp)*25/100).min(i64::from(max_fp)) as i32
+}
+pub fn heal_victory(chr:&mut ChrIns,run:&Run) {
     if chr.chr_flags1c5.death_flag(){return;}
     let data=&mut chr.modules.data;
-    data.hp=victory_hp(class,data.hp,data.max_hp);
+    data.hp=victory_hp(run,data.hp,data.max_hp);
+    data.fp=victory_fp(run,data.fp,data.max_fp);
 }
 pub fn shop_price(class:Class,base:i32)->i32 {
     if class==Class::Prisoner && base>0 {(i64::from(base)*80/100).max(1) as i32}else{base}
 }
-fn desired(run:Option<&Run>)->Option<i32> {
-    run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)).and_then(|r|match r.class {Class::Prophet=>Some(FIRST),Class::Confessor=>Some(FIRST+1),Class::Hero=>Some(FIRST+2),Class::Bandit=>Some(FIRST+3),Class::Samurai=>Some(FIRST+4),_=>None})
+/// 职业重做后的职业机制（scene-builder class-patch 写入的 9810000 段）
+const CLASS:i32=9810000;
+fn all()->impl Iterator<Item=i32> {(FIRST..=FIRST+4).chain([CLASS,CLASS+1,CLASS+10,CLASS+20,CLASS+21,CLASS+30,CLASS+40])}
+/// 当前应挂的效果；low 为生命低于一半（狂战士的狂血）
+fn desired(run:Option<&Run>,low:bool)->Vec<i32> {
+    let Some(run)=run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)) else{return vec![]};
+    if run.class_rules>=1 {
+        return match run.class {
+            Class::Vagabond=>vec![CLASS,CLASS+1],
+            Class::Hero=>if low {vec![CLASS+10]}else{vec![]},
+            Class::Samurai=>vec![CLASS+20,CLASS+21],
+            Class::Astrologer=>vec![CLASS+30],
+            Class::Prophet=>vec![CLASS+40],
+            Class::Bandit=>vec![FIRST+3],
+            _=>vec![],
+        };
+    }
+    match run.class {Class::Prophet=>vec![FIRST],Class::Confessor=>vec![FIRST+1],Class::Hero=>vec![FIRST+2],Class::Bandit=>vec![FIRST+3],Class::Samurai=>vec![FIRST+4],_=>vec![]}
 }
 pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
     let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{return;};
-    let want=desired(run);
+    let data=&chr.modules.data;
+    let low=data.max_hp>0&&i64::from(data.hp)*2<i64::from(data.max_hp);
+    let want=desired(run,low);
     let present:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
-    for id in FIRST..=FIRST+4 {
-        if present.contains(&id)&&want!=Some(id){chr.remove_speffect(id);}
-        if want==Some(id)&&!present.contains(&id)&&params.get::<SpEffectParam>(id as u32).is_some(){chr.apply_speffect(id,false);}
+    for id in all() {
+        if present.contains(&id)&&!want.contains(&id){chr.remove_speffect(id);}
+        if want.contains(&id)&&!present.contains(&id)&&params.get::<SpEffectParam>(id as u32).is_some(){chr.apply_speffect(id,false);}
     }
 }
 
@@ -43,18 +75,21 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>) {
 mod tests {
     use super::*;
     #[test]
-    fn class_gifts_are_exact_and_other_classes_receive_none() {
-        assert_eq!(starting_gift(Class::Vagabond),Some((10020,1)));
-        assert_eq!(starting_gift(Class::Wretch),Some((8185,5)));
-        for class in Class::ALL {if !matches!(class,Class::Vagabond|Class::Wretch){assert_eq!(starting_gift(class),None);}}
+    fn class_gifts_are_exact() {
+        assert_eq!(starting_gift(Class::Vagabond),&[(0x40000000|10020,1)]);
+        assert_eq!(starting_gift(Class::Confessor),&[(0x40000000|232000,1),(0x40000000|212000,1)]);
+        assert_eq!(starting_gift(Class::Hero),&[(15000000,1)]);
+        assert!(starting_gift(Class::Samurai).is_empty());
     }
     #[test]
-    fn warrior_heals_eight_percent_without_overheal_or_reviving() {
-        assert_eq!(victory_hp(Class::Warrior,300,1000),380);
-        assert_eq!(victory_hp(Class::Warrior,980,1000),1000);
-        assert_eq!(victory_hp(Class::Warrior,0,1000),0);
-        assert_eq!(victory_hp(Class::Samurai,300,1000),300);
-        assert_eq!(victory_hp(Class::Warrior,1,419),34);
+    fn victory_heals_follow_the_class_rules() {
+        let mut run=Run::new(1,Class::Hero);
+        assert_eq!(victory_hp(&run,300,1000),380);assert_eq!(victory_hp(&run,980,1000),1000);assert_eq!(victory_hp(&run,0,1000),0);
+        run.class=Class::Warrior;assert_eq!(victory_hp(&run,300,1000),300);
+        run.class_rules=0;assert_eq!(victory_hp(&run,300,1000),380,"old warrior saves keep their heal");
+        let mut cleric=Run::new(1,Class::Prophet);
+        assert_eq!((victory_fp(&cleric,10,100),victory_fp(&cleric,90,100)),(35,100));
+        cleric.class_rules=0;assert_eq!(victory_fp(&cleric,10,100),10);
     }
     #[test]
     fn prisoner_discount_covers_all_prices_once() {
@@ -64,21 +99,14 @@ mod tests {
         }
     }
     #[test]
-    fn added_passives_follow_class_and_end_with_run() {
-        for (class,offset) in [(Class::Hero,2),(Class::Bandit,3),(Class::Samurai,4)] {
-            let mut run=Run::new(1,class);
-            assert_eq!(desired(Some(&run)),Some(FIRST+offset));
-            run.phase=Phase::Dead;assert_eq!(desired(Some(&run)),None);
-            run.phase=Phase::Won;assert_eq!(desired(Some(&run)),None);
-        }
-    }
-    #[test]
-    fn effects_follow_class_and_clear_after_run() {
-        let mut run=Run::new(1,Class::Prophet);
-        assert_eq!(desired(Some(&run)),Some(FIRST));
-        run.class=Class::Confessor;assert_eq!(desired(Some(&run)),Some(FIRST+1));
-        run.class=Class::Warrior;assert_eq!(desired(Some(&run)),None);
-        run.class=Class::Prophet;run.phase=Phase::Dead;assert_eq!(desired(Some(&run)),None);
-        run.phase=Phase::Won;assert_eq!(desired(Some(&run)),None);assert_eq!(desired(None),None);
+    fn class_effects_follow_rules_and_end_with_run() {
+        let mut run=Run::new(1,Class::Vagabond);
+        assert_eq!(desired(Some(&run),false),vec![CLASS,CLASS+1]);
+        run.class=Class::Hero;assert_eq!((desired(Some(&run),false),desired(Some(&run),true)),(vec![],vec![CLASS+10]));
+        run.class=Class::Confessor;assert!(desired(Some(&run),true).is_empty());
+        run.class_rules=0;run.class=Class::Hero;assert_eq!(desired(Some(&run),false),vec![FIRST+2],"old saves keep the old passives");
+        run.phase=Phase::Dead;assert!(desired(Some(&run),false).is_empty());
+        assert!(desired(None,false).is_empty());
+        assert!(desired(Some(&Run::new(1,Class::Samurai)),false).iter().all(|id|all().any(|x|x==*id)));
     }
 }
