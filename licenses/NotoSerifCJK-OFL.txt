@@ -1,4 +1,4 @@
-Tower Title Serif（scene-assets/fonts/TowerTitleSerif-Bold.otf）是 Noto Serif CJK SC Bold 的子集，由 scene-builder/title_font.py 裁剪并改名。
+Tower Serif（scene-assets/fonts/TowerSerif-Regular.otf）与 Tower Title Serif（scene-assets/fonts/TowerTitleSerif-Bold.otf）分别是 Noto Serif CJK SC 常规体与粗体的子集，由 scene-builder/title_font.py 裁剪并改名。
 Copyright 2017-2024 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
 Source: https://github.com/notofonts/noto-cjk
 

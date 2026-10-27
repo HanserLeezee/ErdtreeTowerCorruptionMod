@@ -20,8 +20,10 @@ fn ranges(text:&str)->Vec<u32> {
     }
     out.push(0);out
 }
-/// 标题字体文件
+/// 标题字体文件（思源宋体粗体子集）
 pub fn title_font_path()->std::path::PathBuf {crate::LOG_PATH.with_file_name("scene-assets").join("fonts").join("TowerTitleSerif-Bold.otf")}
+/// 正文字体文件（思源宋体常规体子集）
+pub fn body_font_path()->std::path::PathBuf {crate::LOG_PATH.with_file_name("scene-assets").join("fonts").join("TowerSerif-Regular.otf")}
 /// 标题字体的 ImGui 句柄：启动时加载后登记在这里，各界面画标题时推入。
 /// 它指向字体图集里的字体，图集在整个渲染期间不会释放，且只在渲染线程上使用
 #[derive(Clone,Copy)]
@@ -133,16 +135,215 @@ pub fn draw(layer:Layer,pos:[f32;2],size:f32,text:&str,style:&Style,time:f32,alp
     }
     x-pos[0]
 }
-/// 品质前缀的特效：普通素色，稀有蓝色流光，史诗紫色呼吸发光，传说金色流光发光
-fn prefix_style(prefix:&str,color:[u8;3])->Option<Style> {
-    let light=color.map(|c|(u16::from(c)+(255-u16::from(c))*3/5) as u8);
-    match prefix {
-        "普通·"=>Some(Style{color,accent:color,effect:Effect::Plain,glow:false}),
-        "稀有·"=>Some(Style{color,accent:light,effect:Effect::Shimmer,glow:false}),
-        "史诗·"=>Some(Style{color,accent:light,effect:Effect::Pulse,glow:true}),
-        "传说·"=>Some(Style{color,accent:[255,244,200],effect:Effect::Shimmer,glow:true}),
-        _=>None,
+/// 中文换行：汉字之间都可以断行；连续的数字、英文与符号（如“-25%”）作为整体不拆开；
+/// “，。；）%”等标点不放在行首（放不下时挂在行尾），“（《”等不留在行尾；遇到换行符强制换行
+pub fn wrap_lines(text:&str,width:f32,measure:impl Fn(&str)->f32)->Vec<String> {
+    const NO_START:&str="，。、；：！？）》」』】%…·”’,.;:!?)";
+    const NO_END:&str="（《「『【“‘(";
+    let mut lines=Vec::new();
+    for paragraph in text.split('\n') {
+        // 切成记号：连续的 ASCII 可见字符一组，其余每个字一组
+        let mut tokens:Vec<String>=Vec::new();
+        for ch in paragraph.chars() {
+            let ascii=ch.is_ascii_graphic();
+            match tokens.last_mut() {Some(last) if ascii&&last.chars().all(|c|c.is_ascii_graphic())=>last.push(ch),_=>tokens.push(ch.to_string())}
+        }
+        let mut line=String::new();
+        for token in tokens {
+            if line.is_empty()&&token==" " {continue;}
+            let candidate=format!("{line}{token}");
+            if line.is_empty()||measure(&candidate)<=width||token.chars().all(|c|NO_START.contains(c)) {line=candidate;continue;}
+            // 换行：上一行末尾的开括号一起带到下一行
+            let mut next=String::new();
+            while let Some(last)=line.chars().last().filter(|c|NO_END.contains(*c)) {line.pop();next.insert(0,last);}
+            lines.push(line.trim_end().to_owned());
+            line=next+token.trim_start();
+        }
+        lines.push(line.trim_end().to_owned());
     }
+    lines
+}
+thread_local! {static WRAP_AT:std::cell::Cell<Option<f32>>=const {std::cell::Cell::new(None)};}
+/// 与 ImGui 的 push_text_wrap_pos 配对：记下换行位置（窗口内坐标）给 text_wrapped 用，离开作用域后恢复
+pub struct WrapAt(Option<f32>);
+pub fn wrap_at(right:f32)->WrapAt {WrapAt(WRAP_AT.with(|w|w.replace(Some(right))))}
+impl Drop for WrapAt {fn drop(&mut self) {WRAP_AT.with(|w|w.set(self.0));}}
+/// 代替 ImGui 的 text_wrapped：按中文规则换行，换行位置取 wrap_at 记下的位置，没有时取窗口内容区右边界；每行都从起始的横坐标开始
+pub fn text_wrapped(ui:&hudhook::imgui::Ui,text:impl AsRef<str>) {
+    let x=ui.cursor_pos()[0];
+    let right=WRAP_AT.with(|w|w.get()).unwrap_or_else(||ui.window_content_region_max()[0]);
+    for line in wrap_lines(text.as_ref(),(right-x).max(1.0),|t|ui.calc_text_size(t)[0]) {
+        ui.set_cursor_pos([x,ui.cursor_pos()[1]]);ui.text(line);
+    }
+}
+/// 传说品质名的描边金色（灾厄燃金的描边色）与字身的暗红紫（在四个相近色之间缓慢流动）
+const RIM:[u8;3]=[255,207,90];
+const CORE:[[u8;3];4]=[[77,0,33],[94,11,40],[69,0,29],[102,20,44]];
+fn mixf(a:[f32;3],b:[f32;3],t:f32)->[f32;3] {let t=t.clamp(0.0,1.0);[0,1,2].map(|i|a[i]*(1.0-t)+b[i]*t)}
+fn unit(c:[u8;3])->[f32;3] {c.map(|v|f32::from(v)/255.0)}
+fn v2(x:f32,y:f32)->sys::ImVec2 {sys::ImVec2{x,y}}
+/// 十字星芒：两条细长菱形交叉
+fn flare(list:*mut sys::ImDrawList,x:f32,y:f32,len:f32,spin:f32,color:[f32;3],alpha:f32) {
+    if alpha<=0.01||len<=0.3 {return;}
+    let thin=len*0.13;
+    for arm in 0..2 {
+        let (sin,cos)=(spin+arm as f32*std::f32::consts::FRAC_PI_2).sin_cos();
+        unsafe {sys::ImDrawList_AddQuadFilled(list,v2(x+cos*len,y+sin*len),v2(x-sin*thin,y+cos*thin),v2(x-cos*len,y-sin*len),v2(x+sin*thin,y-cos*thin),rgba(color,alpha));}
+    }
+}
+/// 闪光：约每 2 秒有六成机会亮一下（平均约 3.3 秒一次），0.5 秒内渐亮渐暗，返回 0..1 的亮度
+fn gleam(time:f32)->f32 {
+    let at=time.rem_euclid(2.0);
+    if noise((time/2.0).floor() as u32,7)<0.6&&at<0.5 {(at/0.5*std::f32::consts::PI).sin()}else{0.0}
+}
+const VIOLET:[[u8;3];4]=[[42,10,70],[58,18,98],[36,8,60],[68,24,110]];
+/// 字后的横向光带（传说金、史诗紫）：多层很淡的圆角矩形由外向内叠加，边缘不显形
+fn backdrop(list:*mut sys::ImDrawList,origin:[f32;2],total:f32,size:f32,tier:usize,time:f32,alpha:f32) {
+    let (color,strength)=match tier {3=>([1.0,0.6,0.18],0.014),2=>([0.62,0.38,1.0],0.009),_=>return};
+    let breath=0.5+0.5*(time*2.3).sin();
+    for layer in 0..8 {
+        let pad=size*(1.0-layer as f32*0.12);
+        let (top,bottom)=(origin[1]-pad*0.45,origin[1]+size+pad*0.45);
+        unsafe {sys::ImDrawList_AddRectFilled(list,v2(origin[0]-pad,top),v2(origin[0]+total+pad,bottom),rgba(color,strength*(0.7+0.6*breath)*alpha),(bottom-top)*0.5,0);}
+    }
+}
+/// 星光（灾厄 CosmicPurple 的做法）：位置固定，轮流亮起、上升、旋转；传说密、史诗稀
+fn sparkles(list:*mut sys::ImDrawList,origin:[f32;2],total:f32,size:f32,tier:usize,time:f32,alpha:f32) {
+    use std::f32::consts::{PI,TAU};
+    let (spacing,minimum,scale,outer,inner)=match tier {
+        3=>(0.65,4,1.0,[1.0,0.71,0.24],[1.0,0.97,0.88]),
+        2=>(1.45,3,0.8,[0.66,0.44,1.0],[0.95,0.9,1.0]),
+        _=>return,
+    };
+    let stars=((total/(size*spacing)).round() as u32).max(minimum);
+    for star in 0..stars {
+        let life=(time*3.0+noise(star,90)*TAU).rem_euclid(TAU);
+        if life>PI {continue;}
+        let glint=life.sin();
+        let (sx,sy)=(origin[0]+noise(star,0)*total,origin[1]+noise(star,50)*size*0.6-life*size*0.17);
+        let spin=time*(0.8+0.7*noise(star,130));
+        let reach=size*(0.06+0.14*glint)*scale;
+        flare(list,sx,sy,reach*1.6,spin,outer,glint*0.3*alpha);
+        flare(list,sx,sy,reach,spin,inner,glint*0.85*alpha);
+    }
+}
+/// 按品质画一段（文字, 主色）：先画光晕与描边，再画字身；品质越高效果越多（tier：0 普通、1 稀有、2 史诗、3 传说）。
+/// 传说：只往上飘的火焰副本 + 主色 8 方向描边 + 暗红紫字身；史诗：8 份绕圈的紫色副本 + 主色描边 + 暗紫字身；
+/// 稀有：一圈随呼吸明暗的柔光 + 深色描边 + 主色与浅色之间流动的字身；普通：深色描边 + 主色字身。
+/// 扫光 ((sin(kx − vt)+1)/2)^n 只落在字上：普通、稀有窄而淡，史诗、传说宽而柔；传说另有渐亮渐暗的闪光（flash 为 0..1）。返回整段宽度
+fn glyph_pass(list:*mut sys::ImDrawList,origin:[f32;2],size:f32,parts:&[(&str,[u8;3])],time:f32,alpha:f32,tier:usize,flash:f32)->f32 {
+    use std::f32::consts::FRAC_PI_4;
+    let breath=0.5+0.5*(time*2.3).sin();
+    let mut glyphs=Vec::new();
+    let mut x=origin[0];
+    for (text,color) in parts {
+        for (at,ch) in text.char_indices() {
+            let s=&text[at..at+ch.len_utf8()];let width=measure(s,size);
+            glyphs.push((x,width,s,*color));x+=width;
+        }
+    }
+    // 光晕
+    match tier {
+        3=>{
+            let pulse=1.0+0.1*(time*20.0).sin();
+            for &(gx,_,s,_) in &glyphs {
+                for k in 0..8 {
+                    let angle=k as f32*FRAC_PI_4+time*2.0;
+                    let distort=((origin[1]+k as f32*100.0+time*20.0)*0.05).sin()*size*0.05;
+                    glyph(list,size,[gx+angle.cos()*size*0.11*pulse+distort,origin[1]-angle.sin().abs()*size*0.14],rgba([1.0,0.55,0.16],0.12*alpha),s);
+                }
+            }
+        },
+        2=>{
+            let radius=size*0.08*(1.0+0.4*(time*5.0).sin());
+            for &(gx,_,s,_) in &glyphs {
+                for k in 0..8 {
+                    let (sin,cos)=(k as f32*FRAC_PI_4+time*2.0).sin_cos();
+                    glyph(list,size,[gx+cos*radius,origin[1]+sin*radius],rgba([0.69,0.44,1.0],0.13*alpha),s);
+                }
+            }
+        },
+        1=>{
+            for &(gx,_,s,color) in &glyphs {
+                for k in 0..8 {
+                    let (sin,cos)=(k as f32*FRAC_PI_4).sin_cos();
+                    glyph(list,size,[gx+cos*size*0.08,origin[1]+sin*size*0.08],rgba(unit(lighter(color)),0.09*(0.5+0.5*breath)*alpha),s);
+                }
+            }
+        },
+        _=>{},
+    }
+    // 描边：传说、史诗用主色 8 方向描边（传说闪光时变白金）；稀有、普通用深色描边保证清楚
+    if tier>=2 {
+        let radius=(size*if tier==3{0.06}else{0.05}).max(1.5);
+        for &(gx,_,s,color) in &glyphs {
+            let rim=mixf(unit(color),unit([255,244,200]),0.8*flash);
+            for k in 0..8 {
+                let (sin,cos)=(k as f32*FRAC_PI_4).sin_cos();
+                glyph(list,size,[gx+cos*radius,origin[1]+sin*radius],rgba(rim,alpha),s);
+            }
+        }
+    } else {
+        let outline=rgba([0.02,0.02,0.02],0.85*alpha);
+        for &(gx,_,s,_) in &glyphs {for (ox,oy) in [(-1.5,0.0),(1.5,0.0),(0.0,-1.5),(0.0,1.5),(1.5,1.5)] {glyph(list,size,[gx+ox,origin[1]+oy],outline,s);}}
+    }
+    // 字身
+    // 普通、稀有字身本来就亮，用窄峰；史诗、传说字身暗，用宽峰（约两个字宽、边缘渐变）并只提亮到四成多，避免单个字突然跳亮
+    let (speed,strength,sharpness,shine_color)=[(0.7,0.5,120,[255,255,255]),(1.1,0.85,120,[244,248,255]),(1.1,0.4,24,[234,212,255]),(1.2,0.45,24,[254,231,117])][tier.min(3)];
+    for (i,&(gx,width,s,color)) in glyphs.iter().enumerate() {
+        let body=match tier {
+            3|2=>{
+                let palette=if tier==3 {&CORE}else{&VIOLET};
+                let phase=(time*0.2-i as f32*0.07).rem_euclid(1.0)*palette.len() as f32;
+                let slot=phase as usize%palette.len();
+                mix(palette[slot],palette[(slot+1)%palette.len()],phase.fract())
+            },
+            1=>mix(color,lighter(color),0.5+0.5*(time*1.6-i as f32*0.5).sin()),
+            _=>unit(color),
+        };
+        let shine=((((gx+width*0.5-origin[0])*0.33/size-speed*time).sin()+1.0)*0.5).powi(sharpness)*strength;
+        let body=mixf(mixf(body,unit(shine_color),shine),unit([255,246,208]),0.25*flash);
+        glyph(list,size,[gx,origin[1]],rgba(body,alpha),s);
+    }
+    x-origin[0]
+}
+/// 传说品质名，照灾厄“燃金”稀有度的画法：字后金光、火焰副本与描边、暗红紫字身、柔和的扫光、约每 3.3 秒一次渐亮渐暗的闪光（主要在描边上，不抖动）、十字星光。
+/// parts 为（文字, 描边色）：补正属性等仍用各自的颜色描边。返回整段宽度
+fn auric(layer:Layer,pos:[f32;2],size:f32,parts:&[(&str,[u8;3])],time:f32,alpha:f32)->f32 {
+    let list=list(layer);
+    let (flash,origin)=(gleam(time),pos);
+    let total:f32=parts.iter().map(|(t,_)|measure(t,size)).sum();
+    backdrop(list,origin,total,size,3,time,alpha);
+    glyph_pass(list,origin,size,parts,time,alpha,3,flash);
+    sparkles(list,origin,total,size,3,time,alpha);
+    total
+}
+/// 传说品质名拆成（文字, 描边色）：前缀与装备名用金色描边，补正属性各用自己的颜色（全属性五色轮转），防具类型用类型色，斜杠灰色
+fn legendary_parts(text:&str,time:f32)->Vec<(&str,[u8;3])> {
+    let Some(rest)=text.strip_prefix("传说·") else {return vec![(text,RIM)]};
+    let mut parts=vec![(&text[..text.len()-rest.len()],RIM)];
+    if let Some((word,name))=rest.split_once('·') {
+        let dot=&rest[word.len()..word.len()+'·'.len_utf8()];
+        let mut middle=Vec::new();
+        if let Some(style)=armor(word) {middle.push((word,style.color));}
+        else if word=="全属性" {
+            let colors=["力气","灵巧","智力","信仰","感应"].map(|w|attribute(w).unwrap());
+            for (i,(at,ch)) in word.char_indices().enumerate() {
+                let phase=time*1.2+i as f32*0.9;let k=phase.floor() as usize;
+                let (a,b)=(colors[k%5],colors[(k+1)%5]);let t=phase.fract();
+                middle.push((&word[at..at+ch.len_utf8()],[0,1,2].map(|c|(f32::from(a[c])*(1.0-t)+f32::from(b[c])*t) as u8)));
+            }
+        } else if word.split('/').all(|w|attribute(w).is_some()) {
+            let mut start=0;
+            for (i,w) in word.split('/').enumerate() {
+                if i>0 {middle.push((&word[start-1..start],[150,142,126]));}
+                middle.push((&word[start..start+w.len()],attribute(w).unwrap()));start+=w.len()+1;
+            }
+        }
+        if !middle.is_empty() {parts.extend(middle);parts.push((dot,RIM));parts.push((name,RIM));return parts;}
+    }
+    parts.push((rest,RIM));
+    parts
 }
 /// 补正属性的颜色：力气赤红、灵巧翠绿、智力蔚蓝、信仰圣金、感应绯紫
 fn attribute(word:&str)->Option<[u8;3]> {
@@ -184,31 +385,32 @@ fn middle(layer:Layer,x:&mut f32,y:f32,size:f32,word:&str,time:f32,alpha:f32)->b
     }
     true
 }
-/// 物品名，如“传说·灵巧/信仰·亵渎圣剑”“史诗·物理·恶兆之子铠甲”：
-/// 品质前缀按品质带特效（传说金色流光发光，史诗紫色呼吸发光，稀有蓝色流光，普通素色）；
-/// 中间的补正组合每个属性各用自己的颜色（全属性五色轮转），防具类型各有样式；
-/// 最后的装备名用品质色，传说品质也是金色流光发光。x 是按 align 对齐的位置（0 左对齐、0.5 居中），返回整段宽度
+/// 物品名，如“传说·灵巧/信仰·亵渎圣剑”“史诗·物理·恶兆之子铠甲”，品质越高效果越多（见 glyph_pass）：
+/// 传说整行按灾厄“燃金”画（auric，补正属性与防具类型体现在描边颜色上）；
+/// 史诗加字后紫光与稀疏星光；稀有、普通只有柔光或描边与扫光。史诗及以下的补正组合与防具类型保留各自的颜色与动态效果（见 middle）。
+/// x 是按 align 对齐的位置（0 左对齐、0.5 居中），返回整段宽度
 pub fn quality_name(layer:Layer,x:f32,y:f32,size:f32,text:&str,color:[f32;4],tier:usize,align:f32,time:f32)->f32 {
     let rgb=[0,1,2].map(|i|(color[i].clamp(0.0,1.0)*255.0) as u8);let alpha=color[3];
     let total=measure(text,size);let mut x=x-total*align;
-    let legendary=Style{color:rgb,accent:[255,244,200],effect:Effect::Shimmer,glow:true};
-    let name_style=if tier>=3 {legendary}else{Style{color:rgb,accent:rgb,effect:Effect::Plain,glow:false}};
+    if tier>=3 {auric(layer,[x,y],size,&legendary_parts(text,time),time,alpha);return total;}
+    let list=list(layer);let origin=[x,y];
+    backdrop(list,origin,total,size,tier,time,alpha);
     let prefix=["普通·","稀有·","史诗·","传说·"].into_iter().find(|p|text.starts_with(p));
-    let Some(prefix)=prefix else {
-        draw(layer,[x,y],size,text,&name_style,time,alpha);return total;
+    let rest=match prefix {
+        Some(prefix)=>{x+=glyph_pass(list,[x,y],size,&[(prefix,rgb)],time,alpha,tier,0.0);&text[prefix.len()..]},
+        None=>text,
     };
-    x+=draw(layer,[x,y],size,prefix,&prefix_style(prefix,rgb).unwrap_or(name_style),time,alpha);
-    let rest=&text[prefix.len()..];
-    if let Some((word,name))=rest.split_once('·') {
+    let mut drawn=false;
+    if prefix.is_some()&&let Some((word,name))=rest.split_once('·') {
         let start=x;
         if middle(layer,&mut x,y,size,word,time,alpha) {
-            x+=draw(layer,[x,y],size,"·",&Style{effect:Effect::Plain,glow:false,..name_style},time,alpha);
-            draw(layer,[x,y],size,name,&name_style,time,alpha);
-            return total;
-        }
-        x=start;
+            x+=glyph_pass(list,[x,y],size,&[("·",rgb)],time,alpha,tier,0.0);
+            glyph_pass(list,[x,y],size,&[(name,rgb)],time,alpha,tier,0.0);
+            drawn=true;
+        } else {x=start;}
     }
-    draw(layer,[x,y],size,rest,&name_style,time,alpha);
+    if !drawn {glyph_pass(list,[x,y],size,&[(rest,rgb)],time,alpha,tier,0.0);}
+    sparkles(list,origin,total,size,tier,time,alpha);
     total
 }
 /// 一行由多段组成的特效文字（段之间插分隔符），整行居中画在 center_x
@@ -255,6 +457,12 @@ mod tests {
         assert_eq!(rgba([0.0,0.0,1.0],0.5)>>24,127);
         assert!((0..1000).all(|i|(0.0..=1.0).contains(&noise(i,7))));
         assert_eq!(mix([0,0,0],[255,255,255],0.5),[0.5019608,0.5019608,0.5019608]);
+        // 每个字宽 1：一行最多 6 个字
+        let width=|t:&str|t.chars().count() as f32;
+        assert_eq!(wrap_lines("举盾防御时受到的所有伤害 -25%（含物理）；防御时",6.0,width),vec!["举盾防御时受","到的所有伤害","-25%（含","物理）；防御","时"]);
+        assert_eq!(wrap_lines("一二三四五六，七",6.0,width),vec!["一二三四五六，","七"],"punctuation hangs at the line end");
+        assert_eq!(wrap_lines("一二三四五（六）",6.0,width),vec!["一二三四五","（六）"],"opening brackets move to the next line");
+        assert_eq!(wrap_lines("甲\n乙",6.0,width),vec!["甲","乙"]);
         assert_eq!(ranges("文乙丁丙"),vec![0x20,0x7e,0x4e01,0x4e01,0x4e19,0x4e19,0x4e59,0x4e59,0x6587,0x6587,0]);
     }
 }

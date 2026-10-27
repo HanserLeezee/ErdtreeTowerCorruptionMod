@@ -113,7 +113,7 @@ fn render(ui:&Ui,current:&mut Screen,icon:&mut dyn FnMut(u32)->Option<TextureId>
         match current {
             Screen::Notice{message,opened}=>{
                 let opened=*opened.get_or_insert(ui.time());
-                ui.text("暂时无法开始联机旅程");ui.separator();ui.spacing();ui.text_wrapped(message);
+                ui.text("暂时无法开始联机旅程");ui.separator();ui.spacing();crate::fancy_text::text_wrapped(ui,message);
                 ui.spacing();ui.text("详细原因已记录到 tower-preview.log。");ui.spacing();
                 if (ui.button("确定 [Enter / A]")||ui.is_key_pressed(Key::Enter)||ui.is_key_pressed(Key::GamepadFaceDown)||ui.is_key_pressed(Key::Escape)||ui.is_key_pressed(Key::GamepadFaceRight))&&ui.time()-opened>=0.35 {close=true;}
             },
@@ -123,10 +123,10 @@ fn render(ui:&Ui,current:&mut Screen,icon:&mut dyn FnMut(u32)->Option<TextureId>
                 ui.text("已获得以下护符赐福");ui.spacing();
                 for &id in items.iter() {
                     let (name,info)=crate::reward_ui::talisman_description(id);
-                    ui.text_colored([0.9,0.78,0.5,1.0],name);ui.text_wrapped(info);ui.spacing();ui.separator();ui.spacing();
+                    ui.text_colored([0.9,0.78,0.5,1.0],name);crate::fancy_text::text_wrapped(ui,info);ui.spacing();ui.separator();ui.spacing();
                 }
-                if items.is_empty(){ui.text_wrapped("已拥有全部可获得的护符赐福，本次没有新增赐福。");}
-                ui.text_wrapped("本局持续生效，不占护符栏位，无需装备。");ui.spacing();
+                if items.is_empty(){crate::fancy_text::text_wrapped(ui,"已拥有全部可获得的护符赐福，本次没有新增赐福。");}
+                crate::fancy_text::text_wrapped(ui,"本局持续生效，不占护符栏位，无需装备。");ui.spacing();
                 let ready=ui.time()-opened>=0.35;
                 if (ui.button("确定，继续选路  [Enter / A]")||ui.is_key_pressed(Key::Enter)||ui.is_key_pressed(Key::GamepadFaceDown))&&ready {close=true;}
             },
@@ -252,10 +252,13 @@ fn seed_page(ui:&Ui,input:&mut String,error:&mut String,selected:&mut u8,ready:b
 const ROMAN:[&str;4]=["","I","II","III"];
 const ACT_NAMES:[&str;3]=["第一幕","第二幕","第三幕"];
 /// 从 (x,y) 起写一段在 right 处折行的文字，返回下一行的 y（都是屏幕坐标）
+/// 按中文规则换行（见 fancy_text::wrap_lines），逐行画出
 pub(crate) fn wrapped(ui:&Ui,pos:[f32;2],right:f32,value:&str,color:[f32;4],scale:f32)->f32 {
-    ui.set_window_font_scale(scale);ui.set_cursor_screen_pos(pos);
-    let _wrap=ui.push_text_wrap_pos_with_pos(right-ui.window_pos()[0]);ui.text_colored(color,value);
-    ui.item_rect_max()[1]
+    ui.set_window_font_scale(scale);
+    let lines=crate::fancy_text::wrap_lines(value,(right-pos[0]).max(1.0),|t|ui.calc_text_size(t)[0]);
+    let step=ui.text_line_height_with_spacing();let mut y=pos[1];let mut bottom=pos[1];
+    for line in lines {ui.set_cursor_screen_pos([pos[0],y]);ui.text_colored(color,&line);bottom=ui.item_rect_max()[1];y+=step;}
+    bottom
 }
 /// 结算页：标题与终局说明，下方三块面板（旅程 · 誓约 · 余烬），底部种子与按钮。
 /// from_archive 时从旅程档案打开，第二个按钮改为返回档案

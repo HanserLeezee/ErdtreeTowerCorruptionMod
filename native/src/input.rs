@@ -44,7 +44,8 @@ pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime:
     if crate::debug_menu::open(){return player_present;}
     if crate::run_screen::active(){return player_present;}
     if view.room.is_some()||view.shared_event {
-        return false;
+        // 问号房的赌运事件卡片需要鼠标与手柄
+        return view.gamble&&player_present&&!view.shared_event;
     }
     visible
         && player_present
@@ -87,6 +88,7 @@ mod tests {
             boss_affix_list: vec![],
             law_clock: None,
             build: vec![],
+            gamble: false,
             run: None,
             status: String::new(),
             busy: false,
@@ -117,6 +119,7 @@ mod tests {
             boss_affix_list: vec![],
             law_clock: None,
             build: vec![],
+            gamble: false,
             run: None,
             status: String::new(),
             busy: true,

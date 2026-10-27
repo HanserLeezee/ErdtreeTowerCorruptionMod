@@ -225,7 +225,7 @@ pub struct Run {
     /// 用过调试菜单的旅程：不计入律法纪录，誓约进度不再校验
     #[serde(default,skip_serializing_if="std::ops::Not::not")]
     pub debug: bool,
-    /// 1：剧情事件加入骰子赌徒、盲盒商人与词条重铸台
+    /// 2：问号房的每个事件按权重单独抽取，加入骰子赌徒、盲盒商人与词条重铸台三个房间事件（0、1 为旧分配）
     #[serde(default)]
     pub event_rules: u8,
     #[serde(default="first_act")]
@@ -520,7 +520,7 @@ impl Run {
             ember_rewards: true,
             embers: vec![],
             debug: false,
-            event_rules: 1,
+            event_rules: 2,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -613,11 +613,11 @@ impl Run {
         self.reached_layer=self.nodes[id].layer+1;
         self.shop_purchased = 0;self.shop_stock=None;
         if self.nodes[id].kind==NodeKind::Event {
-            let event_roll=mix(self.seed ^ id as u64 ^ 0x10cced)%8;
-            self.regional_event.scarabs=event_roll==3;
-            self.regional_event.locked=event_roll==0;
-            self.regional_event.trial=matches!(event_roll,4|6|7);
-            self.regional_event.recovery=event_roll==5;
+            let draw=self.event_draw(id);
+            self.regional_event.scarabs=draw==events::Draw::Scarabs;
+            self.regional_event.locked=draw==events::Draw::Locked;
+            self.regional_event.trial=draw==events::Draw::Trial;
+            self.regional_event.recovery=draw==events::Draw::Spring;
 
         }
         if self.nodes[id].kind.combat() {
@@ -973,7 +973,7 @@ impl Run {
             || self.flask_bonus>4 || self.memory_bonus>6
             || !self.law.valid()
             || !self.valid_start_talisman()
-            || self.event_rules>1
+            || self.event_rules>2
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()
