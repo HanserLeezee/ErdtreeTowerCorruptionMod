@@ -4,7 +4,8 @@ using SoulsFormats;
 static class TowerScalingAssets {
     public const int GrowthFirst=9640000,GrowthSteps=11;
     public const float GrowthHp=0.03f,GrowthAttack=0.015f;
-    static bool AreaScaling(int id)=>id>=7000&&id<=7280;
+    // 本体区域强度 7000–7280；DLC 的区域强度 20007000–20007150（敌人）与 20007200–20007350（人形 NPC），之后追加的 DLC Boss 带着它们
+    static bool AreaScaling(int id)=>id>=7000&&id<=7280||id>=20007000&&id<=20007350;
     static readonly string[] Attacks=["physicsAttackPowerRate","magicAttackPowerRate","fireAttackPowerRate","thunderAttackPowerRate","darkAttackPowerRate"];
     public record Target(int Id,int Act,string Role,string Name);
     public static Dictionary<int,int[]> Tiers(string input)=>File.ReadAllLines(Path.Combine(input,"tower-scaling.txt")).Where(l=>!l.StartsWith('#')&&l.Length>0)
@@ -13,7 +14,7 @@ static class TowerScalingAssets {
         var targets=new List<Target>();
         foreach(var p in File.ReadAllLines(Path.Combine(input,"enemy-pools.txt")).Select(l=>l.Split('|')))
             targets.Add(new(900000000+int.Parse(p[2])*10000,int.Parse(p[0]),p[1] switch {"weak"=>"weak","elite"=>"elite",_=>"boss"},p[4]));
-        foreach(var p in BossAssets.Parts(input)) {targets.Add(new(BossAssets.Npc(p,false),p.Act,"boss",p.Name));targets.Add(new(BossAssets.Npc(p,true),p.Name=="坠星成兽"?3:p.Act,"elite",p.Name));}
+        foreach(var p in BossAssets.Parts(input)) {targets.Add(new(BossAssets.Npc(p,false),p.Act,"boss",p.Name));targets.Add(new(BossAssets.Npc(p,true),p.Name=="坠星成兽"||p.Name=="英雄石像鬼双人组"?3:p.Act,"elite",p.Name));}
         return targets;
     }
     static int Tier(Dictionary<int,int[]> tiers,Target t)=>tiers[t.Act][t.Role switch {"weak"=>0,"elite"=>1,_=>2}];

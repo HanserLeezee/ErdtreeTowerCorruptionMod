@@ -59,11 +59,11 @@ static class BossAffixAssets {
         var def=PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/SpEffect.xml");
         var original=PARAM.Read(file.Bytes);original.ApplyParamdef(def);
         var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
-        // 已打过补丁时原地更新、追加新词条的效果；98、99 是 text-update 写入的血条名称标记，保留不动
-        // 本段只放 Boss 词条效果：不再使用的行删除（98、99 两个标记除外）
-        var ids=Rows.Select(r=>r.id).Concat([First+98,First+99]).ToHashSet();
-        var existing=effects.Rows.Count(r=>r.ID>=First&&r.ID<First+98);
-        var removed=effects.Rows.RemoveAll(r=>r.ID>=First&&r.ID<First+98&&!ids.Contains(r.ID));
+        // 已打过补丁时原地更新、追加新词条的效果；97、98、99 是 text-update 写入的血条名称标记，保留不动
+        // 本段只放 Boss 词条效果：不再使用的行删除（97–99 三个标记除外）
+        var ids=Rows.Select(r=>r.id).Concat([First+97,First+98,First+99]).ToHashSet();
+        var existing=effects.Rows.Count(r=>r.ID>=First&&r.ID<First+97);
+        var removed=effects.Rows.RemoveAll(r=>r.ID>=First&&r.ID<First+97&&!ids.Contains(r.ID));
         var (added,replaced)=(0,0);
         foreach(var spec in Rows) {
             var row=Create(effects,spec);int index=effects.Rows.FindIndex(r=>r.ID==spec.id);
@@ -80,7 +80,7 @@ static class BossAffixAssets {
         var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);Verify(actual);
         if(actual.Rows.Count!=original.Rows.Count-existing+Rows.Length)throw new Exception("Unexpected effect count");
         var rows=actual.Rows.ToDictionary(r=>r.ID);
-        foreach(var row in original.Rows.Where(r=>r.ID<First||r.ID>=First+98))foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing effect changed: {row.ID}");
+        foreach(var row in original.Rows.Where(r=>r.ID<First||r.ID>=First+97))foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing effect changed: {row.ID}");
         string Hash(string p)=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p)));
         File.WriteAllText(Path.Combine(output,"boss-affix-build.json"),System.Text.Json.JsonSerializer.Serialize(new{effects=Rows.Select(r=>r.id),sourceRegulationSha256=Hash(Path.Combine(input,"regulation.bin")),regulationSha256=Hash(path)},new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
         Console.WriteLine($"Verified {Rows.Length} boss affix effects; all existing regulation data preserved");

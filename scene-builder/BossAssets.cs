@@ -62,9 +62,46 @@ static class BossAssets {
             script.Events.Add(ev);script.Events.Single(e=>e.ID==0).Instructions.Insert(0,new EMEVD.Instruction(2000,0,new object[]{0,(uint)ev.ID,0u}));
         }
     }
+    // 之后追加的 Boss（boss-pool.txt 末尾）：为还没有参数行的部件补上 950000000 + 序号×2（精英 +1），
+    // 做法与 Build + BalanceAssets 相同（复制原版行、去掉掉落、允许重复遭遇、按幕给卢恩、生命与卢恩按爬塔倍率）。已有行不动，可重复运行；
+    // 之后要再运行 tower-scaling-patch，把原版（含 DLC）的区域强度换成爬塔档位
+    public static void Append(string input,string output) {
+        if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
+        var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
+        BinderFile File_(string name)=>reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))==name);
+        PARAM Read(string name) {var p=PARAM.Read(File_(name).Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize($"work/SoulsRandomizers/diste/Defs/{name}.xml"));return p;}
+        var npcs=Read("NpcParam");var ai=Read("NpcThinkParam");var before=npcs.Rows.Count;var original=npcs.Rows.ToDictionary(r=>r.ID,r=>new PARAM.Row(r));
+        var parts=Parts(input);var added=new List<int>();
+        foreach(var p in parts) {
+            if(!ai.Rows.Any(r=>r.ID==p.Think))throw new Exception($"Missing boss AI: {p.Name}");
+            var source=npcs.Rows.SingleOrDefault(r=>r.ID==p.Source)??throw new Exception($"Missing boss source parameters: {p.Name}");
+            foreach(bool elite in new[]{false,true}) {
+                int id=Npc(p,elite);if(npcs.Rows.Any(r=>r.ID==id))continue;
+                if(p.Label.StartsWith("tower_champion_"))throw new Exception("Champion bosses must come from the full build");
+                var row=new PARAM.Row(source){ID=id,Name=p.Name};
+                int runes=(elite?p.Runes/3:p.Runes)/parts.Count(member=>member.Encounter==p.Encounter);
+                foreach(var (field,value) in new (string,object)[]{("itemLotId_enemy",-1),("itemLotId_map",-1),("isSoulGetByBoss",0),("disableRespawn",0),
+                    ("getSoul",BalanceAssets.Scale(runes)),("hp",BalanceAssets.ScaleHp(Convert.ToInt64(source["hp"].Value)))})row[field].Value=Convert.ChangeType(value,row[field].Value.GetType());
+                npcs.Rows.Add(row);added.Add(id);
+            }
+        }
+        npcs.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));File_("NpcParam").Bytes=npcs.Write();
+        var others=reg.Files.Where(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))!="NpcParam").ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
+        Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
+        SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
+        if(new FileInfo(path).Length>4799*1024)throw new Exception("Regulation exceeds the game's size limit");
+        var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
+        foreach(var f in check.Files.Where(f=>others.ContainsKey(f.Name)))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
+        var after=PARAM.Read(check.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="NpcParam").Bytes);after.ApplyParamdef(npcs.AppliedParamdef);
+        if(after.Rows.Count!=before+added.Count)throw new Exception("Unexpected NpcParam row count");
+        foreach(var row in after.Rows.Where(r=>original.ContainsKey(r.ID)))foreach(var cell in row.Cells)
+            if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,original[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing NpcParam changed: {row.ID}");
+        Console.WriteLine($"Added {added.Count} late boss parameter rows ({string.Join(",",added)}); existing rows and other params unchanged");
+    }
     public static void Verify(string output,Func<string,PARAM> read) {
         var parts=Parts(output);var npcs=read("NpcParam");var ai=read("NpcThinkParam");
-        if(parts.Select(p=>p.Encounter).Distinct().Count()!=105||parts.Length!=140||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
+        // 原有 105 组 140 个部件；之后追加 13 个单部件 Boss（追忆与 DLC，boss-pool.txt 第 11 列为 trial）
+        if(parts.Select(p=>p.Encounter).Distinct().Count()!=118||parts.Length!=153||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
         var names=BND4.Read(Path.Combine(output,"msg/zhocn/item_dlc02.msgbnd.dcx")).Files.Where(f=>f.Name.Contains("NpcName")).SelectMany(f=>FMG.Read(f.Bytes).Entries).ToList();
         foreach(var p in parts) {
             if(!ai.Rows.Any(r=>r.ID==p.Think)||!names.Any(e=>e.ID==9600000+p.Index&&e.Text==p.Name))throw new Exception("Boss AI/name missing");
@@ -93,6 +130,6 @@ static class BossAssets {
                 if(!script.Events.Single(e=>e.ID==0).Instructions.Any(i=>i.Bank==2000&&i.ID==0&&BitConverter.ToUInt32(i.ArgData,4)==ev.ID))throw new Exception("Boss bar event not registered");
             }
         }
-        Console.WriteLine("Verified 105 boss encounters, 140 source components, elite variants and native health bar events in all three arenas");
+        Console.WriteLine("Verified 118 boss encounters, 153 source components, elite variants and native health bar events in all three arenas");
     }
 }

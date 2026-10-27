@@ -6,9 +6,16 @@ static class MelinaAssets {
     public static string[] PreviewNames(string dir) {
         var pool=File.ReadAllLines(Path.Combine(dir,"enemy-pools.txt")).Select(l=>l.Split('|')).ToArray();
         bool Solo(string[] p)=>p.Length>5&&p[5]=="dlc";
-        return pool.Where(p=>!Solo(p)).Select(p=>p[4])
-            .Concat(File.ReadAllLines(Path.Combine(dir,"boss-pool.txt")).Select(l=>l.Split('|')[7]))
-            .Concat(pool.Where(Solo).Select(p=>p[4])).Distinct().ToArray();
+        // 与 native/src/enemies.rs 的 PREVIEW_NAMES 相同：之后追加的仅单人 Boss（boss-pool.txt 第 11 列为 solo 或 trial）、
+        // 仅单人的怪物（enemy-pools.txt 第 6 列为 solo）依次排在最后，原有编号不变
+        var bosses=File.ReadAllLines(Path.Combine(dir,"boss-pool.txt")).Select(l=>l.Split('|')).ToArray();
+        bool SoloBoss(string[] p)=>p.Length>10&&p[10].Length>0;
+        bool SoloEnemy(string[] p)=>p.Length>5&&p[5]=="solo";
+        return pool.Where(p=>!Solo(p)&&!SoloEnemy(p)).Select(p=>p[4])
+            .Concat(bosses.Where(p=>!SoloBoss(p)).Select(p=>p[7]))
+            .Concat(pool.Where(Solo).Select(p=>p[4]))
+            .Concat(bosses.Where(SoloBoss).Select(p=>p[7]))
+            .Concat(pool.Where(SoloEnemy).Select(p=>p[4])).Distinct().ToArray();
     }
     public static IEnumerable<(int id,string text)> PreviewTexts(string[] names) {
         for(int i=0;i<names.Length;i++)for(int n=1;n<=15;n++)yield return (PreviewFirst+i*16+n,$"{names[i]} ×{n}");

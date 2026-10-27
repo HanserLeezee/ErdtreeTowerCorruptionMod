@@ -16,12 +16,15 @@ const SWIFT_SPEED:f32=1.2;
 const BAR_MARKER:i32=FIRST+99;
 /// text-update 为新增词条的组合也写好血条名称后加入的第二个标记
 const BAR_MARKER_V2:i32=FIRST+98;
+/// text-update 为之后追加的 Boss（名称序号 140 起）写好全部带词条名称后加入的第三个标记
+const BAR_MARKER_V3:i32=FIRST+97;
 static BAR_NAMES:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
-/// 已生成的血条名称覆盖到哪一版：0 没有，1 最早的组合，2 全部组合
+/// 已生成的血条名称覆盖到哪一版：0 没有，1 最早的组合，2 全部组合，3 另含之后追加的 Boss
 fn bar_names_version()->u8 {
     let known=BAR_NAMES.load(std::sync::atomic::Ordering::Relaxed);
-    if known==2 {return 2;}
-    let version=unsafe {SoloParamRepository::instance()}.map_or(0,|p|if p.get::<SpEffectParam>(BAR_MARKER_V2 as u32).is_some(){2}else if p.get::<SpEffectParam>(BAR_MARKER as u32).is_some(){1}else{0});
+    if known==3 {return 3;}
+    let version=unsafe {SoloParamRepository::instance()}.map_or(0,|p|if p.get::<SpEffectParam>(BAR_MARKER_V3 as u32).is_some(){3}
+        else if p.get::<SpEffectParam>(BAR_MARKER_V2 as u32).is_some(){2}else if p.get::<SpEffectParam>(BAR_MARKER as u32).is_some(){1}else{0});
     BAR_NAMES.store(version,std::sync::atomic::Ordering::Relaxed);version
 }
 /// 调试菜单的“血条颜色标签测试”：打开后主 Boss 血条显示 text-update 写入的测试文字（带 <font color> 标签），
@@ -36,7 +39,8 @@ pub fn bar_name(affixes:&[Affix],name:i32)->i32 {
     if affixes.is_empty() {return name;}
     let version=bar_names_version();
     let index=erdtree_tower::boss_affixes::combos().iter().position(|c|c==affixes);
-    let covered=match version {2=>true,1=>index.is_some_and(|i|i<erdtree_tower::boss_affixes::legacy_combos()),_=>false};
+    let late=name-super::enemies::BOSS_NAME_FIRST>=erdtree_tower::boss_affixes::LATE_BOSS_FIRST;
+    let covered=if late {version>=3}else{match version {2|3=>true,1=>index.is_some_and(|i|i<erdtree_tower::boss_affixes::legacy_combos()),_=>false}};
     if !covered {return name;}
     erdtree_tower::boss_affixes::bar_name(affixes,name,super::enemies::BOSS_NAME_FIRST).unwrap_or(name)
 }

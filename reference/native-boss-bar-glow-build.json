@@ -1,0 +1,16 @@
+{
+  "experimental": true,
+  "gameVerified": false,
+  "class": "_01_000_FE_fla.BossFE_Bar_Ani_40",
+  "field": "BossList.Item_N_0.Name.Text",
+  "effect": "affix words coloured per affix and flowing towards a lighter tone; boss name flows between its colour and gold with a bright white-gold glint; thin gold rim, upward flickering plume and breathing outer glow tinted by the first affix",
+  "files": [
+    {
+      "file": "menu/01_000_fe.gfx",
+      "originalSha256": "cef2ba8350aa8a03b58729472c3b3b110af798881eedc8b4284a499f9b8754ed",
+      "patchedSha256": "b888deede7707bf5b2dc04779509e1a3946ca8deaa68a62e57ff7664346ebe5a",
+      "tagsVerified": 694,
+      "changedTag": "DoABC"
+    }
+  ]
+}

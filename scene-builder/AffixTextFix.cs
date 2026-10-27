@@ -64,19 +64,24 @@ static class AffixTextFix {
     public const int PoolNameFirst=9610000,BarNameFirst=9700000,BarNameStride=200,BossNameFirst=9600000,BarMarker=9620099;
     // 新增 8 种 Boss 词条后的组合：接在最早的 111 个组合之后，编号区间与标记见 src/boss_affixes.rs
     public const int LegacyCombos=111,BarNameSecond=9722200,BarNameSecondStride=144,BarMarkerV2=9620098,BarTagTest=9799999;
+    // 之后追加的 Boss（名称序号 140 起，追忆与 DLC）：序号 144 起的新组合名称放在第三段，写好后加入第三个标记（见 src/boss_affixes.rs）
+    public const int LateBossFirst=140,BarNameThird=9740000,BarNameThirdStride=64,BarMarkerV3=9620097;
     // 物品名颜色标签测试：把爬塔里用不到的原版道具“饶舌头颅”（2207）的名字换成带颜色标签的文字，调试菜单可以发放，用来确认原版菜单是否支持标签
     public const int TagTestGoods=2207;
     public const string TagTestGoodsName="<font color=\"#F2C85C\">传说</font>·<font color=\"#68CC92\">灵巧</font>/<font color=\"#EECE6C\">信仰</font>·颜色标签测试";
-    // 与 src/boss_affixes.rs 的 bar_name 相同：最早的组合 9700000 + 组合序号 × 200 + Boss 名称序号，之后的 9722200 + (组合序号 − 111) × 144 + Boss 名称序号
+    // 与 src/boss_affixes.rs 的 bar_name 相同：最早的组合 9700000 + 组合序号 × 200 + Boss 名称序号，之后的 9722200 + (组合序号 − 111) × 144 + Boss 名称序号，
+    // 名称序号 144 起放在第三段 9740000 + (组合序号 − 111) × 64 + (Boss 名称序号 − 144)
     static IEnumerable<(int id,string text)> AffixBarNames(string input,Dictionary<int,string> names) {
         var combos=File.ReadAllLines(Path.Combine(input,"boss-affix-combos.txt")).Select(l=>l.Split('|')).ToArray();
         var majors=File.ReadAllLines(Path.Combine(input,"boss-pool.txt")).Select(l=>l.Split('|')).Where(p=>p[9]=="1").Select(p=>int.Parse(p[2])).Distinct();
         foreach(var index in majors) {
-            if(index>=BarNameSecondStride)throw new Exception("Boss name index exceeds affix bar stride");
+            if(index>=BarNameSecondStride+BarNameThirdStride||index>=BarNameStride)throw new Exception("Boss name index exceeds affix bar stride");
             var boss=names.GetValueOrDefault(BossNameFirst+index)??throw new Exception($"Missing boss name {BossNameFirst+index}");
             foreach(var combo in combos) {
                 int number=int.Parse(combo[0]);
-                int id=number<LegacyCombos?BarNameFirst+number*BarNameStride+index:BarNameSecond+(number-LegacyCombos)*BarNameSecondStride+index;
+                int id=number<LegacyCombos?BarNameFirst+number*BarNameStride+index
+                    :index<BarNameSecondStride?BarNameSecond+(number-LegacyCombos)*BarNameSecondStride+index
+                    :BarNameThird+(number-LegacyCombos)*BarNameThirdStride+index-BarNameSecondStride;
                 yield return (id,$"{combo[1]} {boss}");
             }
         }
@@ -88,7 +93,7 @@ static class AffixTextFix {
         var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="SpEffectParam");
         var def=PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/SpEffect.xml");var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
         // 第一个标记：最早的组合已有名称；第二个标记：新增词条后的全部组合都已有名称
-        var missing=new[]{(BarMarker,"Tower boss affix bar names marker"),(BarMarkerV2,"Tower boss affix bar names marker v2")}.Where(m=>!effects.Rows.Any(r=>r.ID==m.Item1)).ToList();
+        var missing=new[]{(BarMarker,"Tower boss affix bar names marker"),(BarMarkerV2,"Tower boss affix bar names marker v2"),(BarMarkerV3,"Tower boss affix bar names marker v3")}.Where(m=>!effects.Rows.Any(r=>r.ID==m.Item1)).ToList();
         if(missing.Count==0)return false;
         foreach(var (id,name) in missing) {
             var marker=new PARAM.Row(effects.Rows.Single(r=>r.ID==BossAffixAssets.First+95)){ID=id,Name=name};
@@ -150,6 +155,13 @@ static class AffixTextFix {
             var fmg=FMG.Read(file.Bytes);dropped+=fmg.Entries.RemoveAll(e=>retired.Contains(e.ID));file.Bytes=fmg.Write();
         }
         var poolNames=PoolNames(input);var npcFile=messages.Files.First(f=>f.Name.Contains("NpcName"));var npcNames=FMG.Read(npcFile.Bytes);
+        // Boss 名称（9600000 + 名称序号）：原有的由完整构建写入；之后追加的 Boss（boss-pool.txt 末尾）在这里补上
+        var bossNames=File.ReadAllLines(Path.Combine(input,"boss-pool.txt")).Select(l=>l.Split('|')).GroupBy(p=>int.Parse(p[2])).ToDictionary(g=>BossNameFirst+g.Key,g=>g.First()[7]);
+        foreach(var (id,name) in bossNames) {
+            var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==id);
+            if(existing==null){npcNames.Entries.Add(new FMG.Entry(id,name));added++;}
+            else if(existing.Text!=name)throw new Exception($"Boss name collision: {id}");
+        }
         for(int i=0;i<poolNames.Count;i++) {
             var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==PoolNameFirst+i);
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(PoolNameFirst+i,poolNames[i]));added++;}
@@ -175,7 +187,8 @@ static class AffixTextFix {
         var npcCheck=FMG.Read(written.First(f=>f.Name.Contains("NpcName")).Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text);
         for(int i=0;i<poolNames.Count;i++)if(npcCheck.GetValueOrDefault(PoolNameFirst+i)!=poolNames[i])throw new Exception($"Enemy bar name missing: {poolNames[i]}");
         foreach(var (id,text) in barNames)if(npcCheck.GetValueOrDefault(id)!=text)throw new Exception($"Affix bar name missing: {id}");
-        var known=before[npcFile.ID].Select(e=>e.ID).Concat(barNames.Select(b=>b.id)).ToHashSet();
+        foreach(var (id,name) in bossNames)if(npcCheck.GetValueOrDefault(id)!=name)throw new Exception($"Boss name missing: {id}");
+        var known=before[npcFile.ID].Select(e=>e.ID).Concat(barNames.Select(b=>b.id)).Concat(bossNames.Keys).ToHashSet();
         foreach(var (id,_) in npcCheck)if(!known.Contains(id)&&!(id>=PoolNameFirst&&id<PoolNameFirst+poolNames.Count))throw new Exception($"Unexpected NPC name added: {id}");
         foreach(var line in File.ReadAllLines(Path.Combine(input,"affix-v2-catalog.txt")).Select(l=>l.Split('|')).Where(p=>p[0]=="weapon")) {
             if(!EquipmentStyleAssets.SameName(check[11].GetValueOrDefault(int.Parse(line[1])),line[4]))throw new Exception($"Weapon name differs from catalog: {line[1]}");

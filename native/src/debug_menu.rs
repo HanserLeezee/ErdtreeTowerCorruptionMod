@@ -148,7 +148,8 @@ impl Menu {
                 let names=parts.iter().map(|e|e.name).collect::<Vec<_>>();
                 if !filter.is_empty()&&!names.iter().any(|n|n.contains(filter.as_str())) {continue;}
                 let mut unique=names.clone();unique.dedup();
-                if ui.selectable(format!("第{}幕 {}（{} 只）##boss-{index}",parts[0].act,unique.join("＋"),parts.len())) {set_roster(parts);}
+                let trial=if parts[0].retired {"（试验）"}else{""};
+                if ui.selectable(format!("第{}幕 {}（{} 只）{trial}##boss-{index}",parts[0].act,unique.join("＋"),parts.len())) {set_roster(parts);}
             }
         });
     }

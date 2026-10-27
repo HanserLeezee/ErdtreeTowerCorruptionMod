@@ -13,6 +13,9 @@ excluded.add('Dragonkin Soldier of Nokstella')
 for row in csv.DictReader((root/'reference/本体Boss等级与抗性.csv').open(encoding='utf-8-sig')):
     values = list(row.values())
     name, key = values[0], values[-1]
+    # 爬塔试验 Boss（追忆与 DLC）直接追加在 boss-pool.txt 末尾，不从原版 Boss 报告导出
+    if '爬塔试验' in ','.join(str(v) for v in values):
+        continue
     hits = [r for r in raw if r['s']['Group'] == key] or [r for r in raw if r['s']['Key'] == key]
     assert hits, key
     if key in excluded | large:

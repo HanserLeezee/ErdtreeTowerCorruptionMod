@@ -14,12 +14,15 @@ pub struct Enemy {
     pub retired:bool,
     /// DLC 敌人：在原有联机实体之后追加槽位
     pub dlc:bool,
+    /// 仅单人：地图里没有预置实体（boss-pool.txt 第 11 列为 solo 或 trial），不分配联机槽位，联机时抽不到
+    pub solo:bool,
 }
 /// 联机时只能抽到地图里预先摆放过的敌人；由运行时每帧同步
 static PARTY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub fn set_party(active:bool) {PARTY.store(active,std::sync::atomic::Ordering::Relaxed);}
 fn party()->bool {PARTY.load(std::sync::atomic::Ordering::Relaxed)}
-fn selectable(e:&Enemy,_party:bool)->bool {!e.retired}
+/// 停用的不抽；仅单人的（地图里没有联机实体）联机时不抽
+fn selectable(e:&Enemy,party:bool)->bool {!e.retired&&!(party&&e.solo)}
 /// Boss 与精英版 Boss 的参数编号段（BossAssets.Npc）；DLC 怪物池的编号也在 950000000 之上，不能只比大小
 pub fn boss_npc(npc:i32)->bool {(950000000..950100000).contains(&npc)}
 fn enemy(name: &'static str, model: i32,act:u8,kind:NodeKind) -> Enemy {
@@ -28,13 +31,16 @@ fn enemy(name: &'static str, model: i32,act:u8,kind:NodeKind) -> Enemy {
         model,
         npc: 900000000 + model * 10000,
         think: model as u32 * 10000,
-        act,kind,bar:0,retired:false,dlc:false,
+        act,kind,bar:0,retired:false,dlc:false,solo:false,
     }
 }
 static PREVIEW_NAMES:LazyLock<Vec<&'static str>>=LazyLock::new(|| {
     let mut names=Vec::new();
     // 仅单人的敌人排在 Boss 之后，保持原有名称编号不变
-    for name in POOLS.iter().filter(|e|!e.dlc).map(|e|e.name).chain(BOSSES.iter().map(|(_,e)|e.name)).chain(POOLS.iter().filter(|e|e.dlc).map(|e|e.name)) {if !names.contains(&name){names.push(name);}}
+    // 之后追加的仅单人 Boss、仅单人的怪物依次排在最后（与 scene-builder MelinaAssets.PreviewNames 相同）
+    for name in POOLS.iter().filter(|e|!e.dlc&&!e.solo).map(|e|e.name).chain(BOSSES.iter().filter(|(_,e)|!e.solo).map(|(_,e)|e.name))
+        .chain(POOLS.iter().filter(|e|e.dlc).map(|e|e.name)).chain(BOSSES.iter().filter(|(_,e)|e.solo).map(|(_,e)|e.name))
+        .chain(POOLS.iter().filter(|e|e.solo).map(|e|e.name)) {if !names.contains(&name){names.push(name);}}
     names
 });
 pub fn preview_texts(group:&[Enemy])->Vec<i32> {
@@ -48,9 +54,10 @@ pub fn preview_texts(group:&[Enemy])->Vec<i32> {
 static POOLS:LazyLock<Vec<Enemy>>=LazyLock::new(||include_str!("../../scene-assets/enemy-pools.txt").lines().map(|line| {
     let p:Vec<_>=line.split('|').collect();
     let kind=match p[1]{"weak"=>NodeKind::Monster,"elite"=>NodeKind::Elite,"boss"=>NodeKind::Boss,_=>panic!("Invalid enemy tier")};
-    let flag=p.get(5).copied().unwrap_or("");
-    assert!(matches!(flag,""|"retired"|"dlc"),"Invalid enemy pool flag");
-    Enemy{retired:flag=="retired",dlc:flag=="dlc",..enemy(p[4],p[2].parse().unwrap(),p[0].parse().unwrap(),kind)}
+    // 第 6 列：空、retired（停用）、dlc，或 solo（之后追加、地图里没有联机实体的敌人，只在单人时出现）；DLC 敌人停用时写在第 7 列（dlc|retired）
+    let flag=p.get(5).copied().unwrap_or("");let extra=p.get(6).copied().unwrap_or("");
+    assert!(matches!(flag,""|"retired"|"dlc"|"solo")&&matches!(extra,"")||(flag=="dlc"&&extra=="retired"),"Invalid enemy pool flag");
+    Enemy{retired:flag=="retired"||extra=="retired",dlc:flag=="dlc",solo:flag=="solo",..enemy(p[4],p[2].parse().unwrap(),p[0].parse().unwrap(),kind)}
 }).collect());
 pub const POOL_NAME_FIRST:i32=9610000;
 pub const BOSS_NAME_FIRST:i32=9600000;
@@ -67,8 +74,8 @@ pub fn roster(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8) ->
 #[cfg(test)]
 pub(super) fn party_roster_for_test(kind:NodeKind,seed:u64,ordinal:usize,layer:usize,act:u8)->Vec<Enemy>{roster_in(kind,seed,ordinal,layer,act,true)}
 fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,party:bool) -> Vec<Enemy> {
-    if kind == NodeKind::Boss { return boss_roster(kind,seed,ordinal,act); }
-    if kind == NodeKind::Elite && act!=1 && (seed.wrapping_add(ordinal as u64))%4!=0 {return boss_roster(kind,seed/4,ordinal,act);}
+    if kind == NodeKind::Boss { return boss_roster(kind,seed,ordinal,act,party); }
+    if kind == NodeKind::Elite && act!=1 && (seed.wrapping_add(ordinal as u64))%4!=0 {return boss_roster(kind,seed/4,ordinal,act,party);}
     let seed=if kind==NodeKind::Elite {seed/4}else{seed};
     let stage = layer.min(11) / 3;
     let (strong, weak) = match (kind, stage) {
@@ -89,14 +96,18 @@ fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,part
     } else {choose_in(NodeKind::Elite, seed, ordinal * strong + i,act,party)})
         .chain((0..weak).map(|i| choose_in(NodeKind::Monster, seed, ordinal * weak + i,act,party))).collect()
 }
+/// Boss 池：第 11 列为空是原有的 Boss；solo 只在单人时出现；trial 是试验中的 Boss（追忆与 DLC），只能从调试菜单生成，不会被抽到
 static BOSSES:LazyLock<Vec<(usize,Enemy)>>=LazyLock::new(||include_str!("../../scene-assets/boss-pool.txt").lines().map(|line| {
     let p:Vec<_>=line.split('|').collect();let index=p[2].parse::<u32>().unwrap();
-    (p[1].parse().unwrap(),Enemy{name:p[7],model:p[3].parse().unwrap(),npc:950000000+index as i32*2,think:p[5].parse().unwrap(),act:p[0].parse().unwrap(),kind:NodeKind::Boss,retired:false,dlc:false,bar:if p[9]=="1" {index+1}else{0}})
+    let flag=p.get(10).copied().unwrap_or("");
+    assert!(matches!(flag,""|"solo"|"trial"),"Invalid boss pool flag");
+    (p[1].parse().unwrap(),Enemy{name:p[7],model:p[3].parse().unwrap(),npc:950000000+index as i32*2,think:p[5].parse().unwrap(),act:p[0].parse().unwrap(),kind:NodeKind::Boss,
+        retired:flag=="trial",dlc:false,solo:!flag.is_empty(),bar:if p[9]=="1" {index+1}else{0}})
 }).collect());
 static MAP_ENTITIES:LazyLock<Vec<(Enemy,Vec<u32>)>>=LazyLock::new(||{
     let mut variants=std::collections::BTreeMap::new();
-    for &spec in POOLS.iter().filter(|e|!e.dlc) {variants.insert((spec.act,spec.npc),(spec,4));}
-    for &(_,spec) in BOSSES.iter() {
+    for &spec in POOLS.iter().filter(|e|!e.dlc&&!e.solo) {variants.insert((spec.act,spec.npc),(spec,4));}
+    for &(_,spec) in BOSSES.iter().filter(|(_,e)|!e.solo) {
         variants.insert((spec.act,spec.npc),(spec,1));
         let elite=Enemy{npc:spec.npc+1,kind:NodeKind::Elite,bar:0,..spec};
         variants.insert((elite.act,elite.npc),(elite,1));
@@ -172,9 +183,12 @@ static BOSS_LEVELS:LazyLock<std::collections::HashMap<&'static str,u16>>=LazyLoc
         (name,level)
     }).collect());
 fn recommended_level(name:&str)->Option<u16> {BOSS_LEVELS.get(name).copied()}
-fn encounter_act(enemy:&Enemy)->u8 {if enemy.npc==950000196 {3}else{enemy.act}}
+/// 挪到后一幕、只作为精英出现的组合（单人）：英雄石像鬼双人组从第二幕移到第三幕。地图里没有第三幕的联机实体，联机时不抽这一组
+const RELOCATED_ELITES:[(i32,u8);2]=[(950000152,3),(950000154,3)];
+fn relocated(enemy:&Enemy)->Option<u8> {RELOCATED_ELITES.iter().find(|(npc,_)|*npc==enemy.npc).map(|(_,act)|*act)}
+fn encounter_act(enemy:&Enemy)->u8 {if enemy.npc==950000196 {3}else{relocated(enemy).unwrap_or(enemy.act)}}
 fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
-    if enemy.npc==950000196 {return kind==NodeKind::Elite;}
+    if enemy.npc==950000196||relocated(enemy).is_some() {return kind==NodeKind::Elite;}
     let minimum=match (kind,enemy.act) {
         (NodeKind::Boss,1)=>35,(NodeKind::Boss,2)=>70,(NodeKind::Boss,3)=>100,
         (NodeKind::Elite,1)=>35,(NodeKind::Elite,2)=>60,(NodeKind::Elite,3)=>90,
@@ -182,9 +196,10 @@ fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
     };
     recommended_level(enemy.name).is_some_and(|level|level>=minimum)
 }
-fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8)->Vec<Enemy> {
+/// 试验中的 Boss 不会被抽到；仅单人的 Boss 联机时抽不到
+fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enemy> {
     let mut encounters=Vec::new();
-    for (id,_) in BOSSES.iter().filter(|(id,e)|encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
+    for (id,_) in BOSSES.iter().filter(|(id,e)|!e.retired&&!(party&&(e.solo||relocated(e).is_some()))&&encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
     encounters.sort_by_key(|&id|mix(seed ^ (id as u64).wrapping_mul(0x9e3779b97f4a7c15)));
     let chosen=encounters[ordinal%encounters.len()];
     BOSSES.iter().filter(|(id,_)|*id==chosen).map(|(_,e)|{
@@ -354,6 +369,52 @@ mod tests {
             assert_eq!(ids.len(),group.len());
             assert_eq!(ids.iter().copied().collect::<std::collections::HashSet<_>>().len(),group.len());
         }}}
+    }
+    #[test]
+    fn gargoyles_are_act_three_elites_in_solo_and_absent_in_party() {
+        let mut seen=false;
+        for party in [false,true] {for act in 1..=3 {for kind in [NodeKind::Monster,NodeKind::Elite,NodeKind::Boss] {for seed in 0..1500 {
+            for e in roster_in(kind,seed,seed as usize%24,11,act,party) {
+                if e.name=="英雄石像鬼双人组" {assert!(!party);assert_eq!((act,kind,e.act),(3,NodeKind::Elite,3));seen=true;}
+            }
+        }}}}
+        assert!(seen);
+    }
+    #[test]
+    fn trivial_weak_enemies_leave_the_act_two_and_three_pools() {
+        for act in 2..=3 {for seed in 0..600 {
+            for e in roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,false) {
+                assert!(!e.retired);
+                if e.kind==NodeKind::Monster {assert!(!["辉石矿工","巨蚁","罪人","圣树士兵","腐败野狗","梅瑟莫士兵"].contains(&e.name),"{}",e.name);}
+            }
+        }}
+        assert_eq!(POOLS.iter().filter(|e|e.retired&&e.kind==NodeKind::Monster&&e.act>=2).count(),28);
+    }
+    #[test]
+    fn solo_weak_enemies_join_solo_rosters_only() {
+        let solo:Vec<_>=POOLS.iter().filter(|e|e.solo).collect();
+        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|e.kind==NodeKind::Monster&&e.act>=2&&!e.retired&&!e.dlc));
+        let mut seen=std::collections::HashSet::new();
+        for act in 2..=3 {for seed in 0..800 {
+            for e in roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,false) {if e.solo {seen.insert(e.model);}}
+            assert!(roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,true).iter().all(|e|!e.solo));
+        }}
+        assert_eq!(seen.len(),9);
+        // 仅单人的怪物排在预览名单最后
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-9..],&solo.iter().map(|e|e.name).collect::<Vec<_>>()[..]);
+    }
+    #[test]
+    fn trial_bosses_are_debug_only_and_solo_bosses_never_join_party_rosters() {
+        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.retired).collect();
+        assert_eq!(trial.len(),13);
+        assert!(trial.iter().all(|(_,e)|e.solo&&e.bar>0&&recommended_level(e.name).is_some()));
+        for act in 1..=3 {for seed in 0..400 {for kind in [NodeKind::Elite,NodeKind::Boss] {
+            assert!(roster_in(kind,seed,seed as usize%24,0,act,false).iter().all(|e|!e.retired));
+            assert!(roster_in(kind,seed,seed as usize%24,0,act,true).iter().all(|e|!e.solo));
+        }}}
+        assert_eq!(debug_encounters().iter().filter(|g|g[0].retired).count(),13);
+        // 仅单人的 Boss 排在预览名单里原有名字之后（再之后是仅单人的怪物），原有预览编号不变
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-22..names.len()-9],&trial.iter().map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
     }
     #[test]
     fn map_entity_manifest_for_scene_crosscheck() {

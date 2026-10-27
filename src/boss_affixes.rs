@@ -48,6 +48,11 @@ pub const BAR_NAME_STRIDE:i32=200;
 /// 新增词条后的组合接在最早的组合之后，血条名称从这里起每个组合 144 个编号（Boss 名称序号最大 139）
 pub const BAR_NAME_SECOND:i32=9722200;
 pub const BAR_NAME_SECOND_STRIDE:i32=144;
+/// 之后追加的 Boss（追忆、DLC）从这个名称序号开始；它们的带词条名称要等 text-update 写入第三个标记后才显示
+pub const LATE_BOSS_FIRST:i32=140;
+/// 新增词条后的组合里，名称序号 144 起的 Boss 放在第三段，每个组合 64 个编号（序号 144–207）
+pub const BAR_NAME_THIRD:i32=9740000;
+pub const BAR_NAME_THIRD_STRIDE:i32=64;
 fn allowed(affixes:&[Affix],group:fn(Affix)->u8)->bool {
     affixes.len()<=MAX_AFFIXES&&points(affixes)<=budget(3)&&affixes.iter().filter(|a|group(**a)!=0).all(|a|affixes.iter().filter(|b|group(**b)==group(*a)).count()==1)
 }
@@ -70,14 +75,17 @@ pub fn combos()->&'static [Vec<Affix>] {&COMBOS.0}
 /// 最早的组合数：之后的组合需要重新生成血条名称（text-update 写入第二个标记）后才显示带词条的名字
 pub fn legacy_combos()->usize {COMBOS.1}
 /// 所有带词条的血条名称编号
-pub fn bar_name_range()->std::ops::Range<i32> {BAR_NAME_FIRST..BAR_NAME_SECOND+(combos().len()-legacy_combos()) as i32*BAR_NAME_SECOND_STRIDE}
+pub fn bar_name_range()->std::ops::Range<i32> {BAR_NAME_FIRST..BAR_NAME_THIRD+(combos().len()-legacy_combos()) as i32*BAR_NAME_THIRD_STRIDE}
 pub fn combo_table()->String {combos().iter().enumerate().map(|(i,c)|format!("{i}|{}\n",title(c))).collect()}
-/// 血条名称：最早的组合 9700000 + 序号 × 200 + Boss 名称序号；之后的 9722200 + (序号 − 最早组合数) × 144 + Boss 名称序号
+/// 血条名称：最早的组合 9700000 + 序号 × 200 + Boss 名称序号；之后的组合 9722200 + (序号 − 最早组合数) × 144 + Boss 名称序号，
+/// 名称序号 144 起放在第三段 9740000 + (序号 − 最早组合数) × 64 + (Boss 名称序号 − 144)
 pub fn bar_name(affixes:&[Affix],boss_name:i32,first:i32)->Option<i32> {
     let index=combos().iter().position(|c|c==affixes)?;let offset=boss_name-first;
     let legacy=legacy_combos();
-    if index<legacy {(0..BAR_NAME_STRIDE).contains(&offset).then(||BAR_NAME_FIRST+index as i32*BAR_NAME_STRIDE+offset)}
-    else {(0..BAR_NAME_SECOND_STRIDE).contains(&offset).then(||BAR_NAME_SECOND+(index-legacy) as i32*BAR_NAME_SECOND_STRIDE+offset)}
+    if index<legacy {return (0..BAR_NAME_STRIDE).contains(&offset).then(||BAR_NAME_FIRST+index as i32*BAR_NAME_STRIDE+offset);}
+    let late=(index-legacy) as i32;
+    if (0..BAR_NAME_SECOND_STRIDE).contains(&offset) {return Some(BAR_NAME_SECOND+late*BAR_NAME_SECOND_STRIDE+offset);}
+    (BAR_NAME_SECOND_STRIDE..BAR_NAME_SECOND_STRIDE+BAR_NAME_THIRD_STRIDE).contains(&offset).then(||BAR_NAME_THIRD+late*BAR_NAME_THIRD_STRIDE+offset-BAR_NAME_SECOND_STRIDE)
 }
 pub fn budget(act:u8)->u8 {match act {1=>2,2=>4,_=>6}}
 /// 本场的词条预算；苦难律法可以提高 Boss 预算并让精英战也带词条
@@ -133,7 +141,8 @@ mod tests {
         assert_eq!(include_str!("../scene-assets/boss-affix-combos.txt").replace("\r\n","\n"),combo_table(),"regenerate scene-assets/boss-affix-combos.txt from boss_affixes::combo_table()");
         assert_eq!(legacy_combos(),111,"the earliest combos keep their indices");
         assert_eq!(BAR_NAME_FIRST+legacy_combos() as i32*BAR_NAME_STRIDE,BAR_NAME_SECOND);
-        assert!(BAR_NAME_SECOND+(combos().len()-legacy_combos()) as i32*BAR_NAME_SECOND_STRIDE<9800000);
+        assert!(BAR_NAME_SECOND+(combos().len()-legacy_combos()) as i32*BAR_NAME_SECOND_STRIDE<=BAR_NAME_THIRD);
+        assert!(BAR_NAME_THIRD+(combos().len()-legacy_combos()) as i32*BAR_NAME_THIRD_STRIDE<9799999,"stays below the colour tag test name");
         let mut names=std::collections::HashSet::new();
         for seed in 0..500 {for act in 1..=3 {for rules in [0,1] {
             let mut run=Run::new(seed,Class::Samurai);run.act=act;run.boss_affix_rules=rules;let affixes=roll(&run,boss(&run));
@@ -144,10 +153,12 @@ mod tests {
             assert_eq!((name-first)%stride,139);
         }}}
         assert_eq!(bar_name(&[],9600005,9600000),None);assert_eq!(bar_name(&[Affix::Rot],9600000+BAR_NAME_STRIDE,9600000),None);
-        assert_eq!(bar_name(&[Affix::Swift],9600000+BAR_NAME_SECOND_STRIDE,9600000),None);
-        // 所有组合的名称编号互不重叠
-        let all:std::collections::HashSet<_>=combos().iter().flat_map(|c|[bar_name(c,9600000,9600000).unwrap(),bar_name(c,9600139,9600000).unwrap()]).collect();
-        assert_eq!(all.len(),combos().len()*2);
+        assert_eq!(bar_name(&[Affix::Swift],9600000+BAR_NAME_SECOND_STRIDE+BAR_NAME_THIRD_STRIDE,9600000),None);
+        // 所有组合、所有 Boss（含之后追加的 140–152 号）的名称编号互不重叠
+        let late=include_str!("../scene-assets/boss-pool.txt").lines().count() as i32-1;
+        assert!(late>=152&&late<BAR_NAME_SECOND_STRIDE+BAR_NAME_THIRD_STRIDE);
+        let all:std::collections::HashSet<_>=combos().iter().flat_map(|c|[0,139,140,143,144,late].map(|o|bar_name(c,9600000+o,9600000).unwrap())).collect();
+        assert_eq!(all.len(),combos().len()*6);
         assert!(all.iter().all(|id|bar_name_range().contains(id)));
     }
     #[test]
