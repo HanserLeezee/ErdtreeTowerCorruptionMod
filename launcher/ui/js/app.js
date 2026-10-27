@@ -353,6 +353,17 @@
        官方 .hyp-info-button 里是【两张图叠着】（常态白底 / 悬停灰底），
        hover 时靠 :hover .hyp-image{translateY(-100%)} 整体上滚一格。
        所以这里必须渲染两张，只放一张的话悬停会把自己滚出去、底下空掉。 */
+    /* 右侧立绘：放在页面最底层，按钮、资讯都压在它上面，不接收点击 */
+    if (game.heroArt) {
+      var hero = el('img', 'hero-art');
+      hero.src = game.heroArt;
+      hero.alt = '';
+      hero.setAttribute('aria-hidden', 'true');
+      var heroSlide = (game.carousel || [])[game.heroSlide || 0];
+      if (heroSlide && heroSlide.detail) bindHero(hero, heroSlide);
+      page.appendChild(hero);
+    }
+
     var hotRow = el('div', 'hot-row');
     /* 没配 chip 就不显示（不再用占位图） */
     if (game.chip) {
@@ -400,7 +411,8 @@
         var sl = el('div', 'carousel-slide');
         sl.innerHTML = '<img src="' + esc(s.img) + '" alt="">';
         sl.addEventListener('click', function () {
-          if (s.href) bridge.openExternal(s.href);
+          if (s.detail) openClassDetail(s);
+          else if (s.href) bridge.openExternal(s.href);
         });
         track.appendChild(sl);
       });
@@ -413,12 +425,31 @@
         d.addEventListener('click', function (e) {
           e.stopPropagation();
           goSlide(i);
+          startCarousel(slides.length);   /* 手动切换后重新计时 */
         });
         dots.appendChild(d);
       });
       car.appendChild(dots);
+
+      /* 左右切换：鼠标移到轮播上才显示 */
+      if (slides.length > 1) {
+        [['prev', -1, 'M10 3 5 8l5 5'], ['next', 1, 'M6 3l5 5-5 5']].forEach(function (b) {
+          var nav = el('button', 'carousel-nav ' + b[0]);
+          nav.setAttribute('aria-label', b[1] < 0 ? '上一张' : '下一张');
+          nav.innerHTML = '<svg viewBox="0 0 16 16"><path d="' + b[2] + '" fill="none" stroke="currentColor" ' +
+            'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+          nav.addEventListener('click', function (e) {
+            e.stopPropagation();
+            goSlide(state.slide + b[1]);
+            startCarousel(slides.length);
+          });
+          car.appendChild(nav);
+        });
+      }
+      /* 鼠标停在轮播上时不自动切换 */
+      car.addEventListener('mouseenter', function () { state.carouselHover = true; });
+      car.addEventListener('mouseleave', function () { state.carouselHover = false; });
       panel.appendChild(car);
-      startCarousel(slides.length);
     }
 
     /* 资讯面板（官方 .hyp-notice-list：padding 16/16/12） */
@@ -532,6 +563,12 @@
     renderBgSwitcher(game);
 
     mount(page);
+    /* 轮播要在挂载之后才启动：mount() 会先停掉旧的计时器（原外壳先启动再挂载，轮播从来不会自动切换）。
+       宿主推送状态会重绘页面：轮播停在原来那张，不跳回第一张 */
+    if (slides.length) {
+      goSlide(state.slide);
+      startCarousel(slides.length);
+    }
     renderNews();
     /* 区服切换挂在 #view 里，必须等 mount 之后再插，否则会被 mount 清掉 */
     renderServerSwitcher(game);
@@ -582,7 +619,7 @@
     stopCarousel();
     if (total <= 1) return;
     carouselTimer = setInterval(function () {
-      if (state.playing) goSlide(state.slide + 1);
+      if (state.playing && !state.carouselHover) goSlide(state.slide + 1);
     }, 5000);
   }
 
@@ -742,6 +779,52 @@
     });
     m.querySelector('.modal-close').addEventListener('click', closeModal);
     document.getElementById('app').appendChild(mask);
+  }
+
+  /* 立绘点击：只认人物身上不透明的像素（图片四周的透明区域不算），点了弹出对应职业介绍 */
+  function bindHero(hero, slide) {
+    var canvas = null;
+    function solid(e) {
+      if (!hero.naturalWidth) return false;
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.width = hero.naturalWidth;
+        canvas.height = hero.naturalHeight;
+        canvas.getContext('2d').drawImage(hero, 0, 0);
+      }
+      var r = hero.getBoundingClientRect();
+      var x = Math.floor((e.clientX - r.left) / r.width * canvas.width);
+      var y = Math.floor((e.clientY - r.top) / r.height * canvas.height);
+      if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return false;
+      try { return canvas.getContext('2d').getImageData(x, y, 1, 1).data[3] > 60; }
+      catch (err) { return true; }   /* 读不了像素时退回整张图可点 */
+    }
+    hero.addEventListener('mousemove', function (e) { hero.classList.toggle('hot', solid(e)); });
+    hero.addEventListener('mouseleave', function () { hero.classList.remove('hot'); });
+    hero.addEventListener('click', function (e) {
+      if (solid(e)) { e.stopPropagation(); openClassDetail(slide); }
+    });
+  }
+
+  /* 轮播图的职业介绍：插画、定位、专属机制、起手装备与擅长的武器，底部可去项目主页 */
+  function openClassDetail(slide) {
+    var d = slide.detail;
+    var row = function (label, value) {
+      return '<div class="class-row"><span class="k">' + esc(label) + '</span><span class="v">' + esc(value) + '</span></div>';
+    };
+    openModal(d.name,
+      '<div class="class-detail" style="--class-accent:' + esc(d.accent || '') + '">' +
+      '<img class="class-banner" src="' + esc(slide.img) + '" alt="">' +
+      row('定位', d.role) +
+      '<div class="class-row mech"><span class="k">专属机制</span><span class="v"><b>' + esc(d.mechanic[0]) + '</b>　' +
+        esc(d.mechanic[1]) + '</span></div>' +
+      row('起手装备', d.kit) +
+      row('擅长', d.bias) +
+      '<p class="class-note">奖励里的武器约七成来自擅长的类型。</p>' +
+      (slide.href ? '<a class="class-link" data-href="' + esc(slide.href) + '">项目主页与更新说明 →</a>' : '') +
+      '</div>');
+    var link = document.querySelector('#modalMask .class-link');
+    if (link) link.addEventListener('click', function () { bridge.openExternal(link.getAttribute('data-href')); });
   }
 
   function closeModal() {
@@ -1815,17 +1898,15 @@
     if (logoLink) {
       logoLink.addEventListener('click', function (e) {
         e.preventDefault();
-        goHub();
+        /* 只有一个游戏：logo 回到主页（外壳原来是去 Hub 游戏选择页）。点空白处回 Hub 也去掉了 */
+        if (gameOf(CFG.app.primaryGame)) {
+          state.route = 'launcher';
+          renderLauncher(CFG.app.primaryGame);
+        } else {
+          goHub();
+        }
       });
     }
-
-    /* 点击空白处回 Hub：只有点在页面空白（不是控件）时才触发 */
-    document.getElementById('view').addEventListener('click', function (e) {
-      if (state.route !== 'launcher') return;
-      if (e.target.closest('button, a, .carousel, .tabs, .news, .cta')) return;
-      if (e.clientX < 560 && e.clientY > 280) return; /* 左侧内容区不误触 */
-      goHub();
-    });
 
     /* 首屏：支持 ?page=hub 或 ?game=<key> 覆盖配置，便于预览与验证 */
     var q = {};

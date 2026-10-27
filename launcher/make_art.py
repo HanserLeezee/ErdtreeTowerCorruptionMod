@@ -3,6 +3,8 @@
   ui/assets/img/tower-banner-<n>.webp  carousel banners, 768x356 (2x the 384x178 slot): one class each, the whole
                                        figure from scene-assets/class-art/classes.png on the right, name and role on the left
   ui/assets/img/tower-title.png        title logo overlay, 2560x1440 (2x the 1280x720 page, drawn above the carousel)
+  ui/assets/img/tower-knight.webp      knight portrait on the right of the start page (transparent), from launcher/art/tower-knight.png
+                                       (generated, prompt in launcher/knight-generation.txt), trimmed and scaled to 2x its 650 px slot
 
 Class names, roles, signature mechanics and accent colours follow ROLES in native/src/class_ui.rs.
 """
@@ -130,9 +132,17 @@ def title_overlay():
     return canvas
 
 
+def knight():
+    art = Image.open(ROOT / 'launcher/art/tower-knight.png').convert('RGBA')
+    art = art.crop(art.getchannel('A').point(lambda v: 255 if v > 8 else 0).getbbox())
+    height = 1300
+    return art.resize((round(art.width * height / art.height), height), Image.LANCZOS)
+
+
 if __name__ == '__main__':
     atlas = Image.open(ROOT / 'scene-assets/class-art/classes.png').convert('RGB')
     for i in range(len(ROLES)):
         banner(atlas, i).save(OUT / f'tower-banner-{i + 1}.webp', quality=90, method=6)
     title_overlay().save(OUT / 'tower-title.png', optimize=True)
+    knight().save(OUT / 'tower-knight.webp', quality=88, method=6)
     print('launcher art written to', OUT)

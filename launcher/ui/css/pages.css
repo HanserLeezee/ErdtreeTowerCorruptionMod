@@ -12,6 +12,52 @@
   pointer-events: auto;
 }
 
+/* ---- 右侧立绘 ----
+   贴着右侧社交栏、脚踩窗口底边；脚部渐隐进背景，金色光晕随呼吸明暗，整体缓慢浮动 */
+.page-launcher > .hero-art {
+  position: absolute;
+  right: 72px;
+  bottom: 0;
+  height: 650px;
+  width: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+  /* 脚部渐隐进背景；顶部也淡出，免得头顶的光束被图片边缘切平 */
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 16%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(to top, transparent 0, #000 16%, #000 86%, transparent 100%);
+  /* 呼吸光晕走自定义属性 --hero-glow，悬停提亮走 --hero-bright，两者能叠加（直接动画 filter 会盖掉悬停效果） */
+  --hero-bright: 1;
+  filter: drop-shadow(0 0 calc(14px + 12px * var(--hero-glow)) rgba(216, 168, 72, calc(0.16 + 0.18 * var(--hero-glow)))) brightness(var(--hero-bright));
+  animation: hero-in 900ms var(--ease) both, hero-float 7s ease-in-out 900ms infinite, hero-glow 5.5s ease-in-out 900ms infinite;
+}
+
+@property --hero-glow {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+
+/* 指针在人物身上（不透明像素）时可点，稍微提亮 */
+.page-launcher > .hero-art.hot {
+  cursor: pointer;
+  --hero-bright: 1.12;
+}
+
+@keyframes hero-in {
+  from { opacity: 0; transform: translateX(36px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes hero-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes hero-glow {
+  0%, 100% { --hero-glow: 0; }
+  50% { --hero-glow: 1; }
+}
+
 /* ---- 版本热点 chip + 播放控制 ----
    官方 .hyp-background-player__button [128,299 w x 40]，gap 20（--show 时）
    官方 .hyp-info-button { height:40px; overflow:hidden; display:flex; flex-direction:column }
@@ -157,6 +203,92 @@
   width: 14px;
   border-radius: 3px;
   background: #fff;
+}
+
+/* 左右切换按钮：平时隐藏，鼠标移到轮播上淡入 */
+.carousel-nav {
+  position: absolute;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(10, 8, 6, 0.55);
+  box-shadow: 0 0 0 1px rgba(216, 168, 72, 0.35);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease);
+  z-index: 3;
+}
+
+.carousel-nav.prev { left: 8px; }
+.carousel-nav.next { right: 8px; }
+
+.carousel-nav svg {
+  width: 14px;
+  height: 14px;
+}
+
+.carousel:hover .carousel-nav,
+.carousel-nav:focus-visible {
+  opacity: 1;
+}
+
+.carousel-nav:hover {
+  background: rgba(216, 168, 72, 0.85);
+  color: #1a1206;
+}
+
+/* 职业介绍弹窗 */
+.class-detail .class-banner {
+  display: block;
+  width: 100%;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  box-shadow: 0 0 0 1px rgba(216, 168, 72, 0.25);
+}
+
+.class-detail .class-row {
+  display: flex;
+  gap: 14px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.class-detail .class-row .k {
+  flex: 0 0 64px;
+  color: var(--c-text-faint, rgba(255, 255, 255, 0.45));
+}
+
+.class-detail .class-row .v {
+  flex: 1 1 auto;
+  color: var(--c-text, #e8e2d4);
+}
+
+.class-detail .class-row.mech b {
+  color: var(--class-accent, #d8a848);
+}
+
+.class-detail .class-note {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.class-detail .class-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: #d8a848;
+  cursor: pointer;
+}
+
+.class-detail .class-link:hover {
+  text-decoration: underline;
 }
 
 /* ---- 资讯面板 ----

@@ -1,0 +1,6 @@
+启动器右侧骑士立绘：launcher/art/tower-knight.png 由 OpenAI 兼容图像接口 gpt-image-2 按下方提示词生成（透明背景，1024x1536），
+launcher/make_art.py 再裁掉透明边、缩放并转成 launcher/ui/assets/img/tower-knight.webp。
+第一版（满身金饰、鲜红斗篷）不够法环风格，改为低饱和油画质感、破旧盔甲与黄金树光；同批还有一版“大剑褪色者”，选了这版残盾守誓骑士。
+
+prompt:
+Official-style key art in the visual language of Elden Ring concept art: a lone oath-bound knight, full figure from helm to mid-shin on a fully transparent background, no scenery, no frame, no text, no letters, no logos. Body turned three-quarters toward the LEFT, holding a large weathered heater shield whose painted tree crest has almost flaked away, a plain longsword lowered in the other hand. Worn steel armor with grime, scratches and old blood, a crested helm with a broken plume, a torn dark umber cape and cloth skirt in rags, a few old leather straps and a hanging tarnished talisman. A soft cone of golden Erdtree light falls from above behind the knight, golden motes of grace and a few ghostly golden runes rise around the shield, thin ash drifting in the air. Painterly oil-paint concept art, soft sfumato edges, atmospheric haze, muted desaturated sepia, umber and grey palette, only the golden light as accent, grim, melancholic and majestic, realistic proportions, the lowest tenth of the figure fading softly into transparency.
