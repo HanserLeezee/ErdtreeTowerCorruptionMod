@@ -1400,7 +1400,8 @@ impl Run {
         if self.claimed_items.len()>rewards::CATALOG.len()+affixes::CATALOG.len() {return fail();}
         if self.cursed.len()>self.claimed_items.len()||self.cursed.iter().any(|c|!self.claimed_items.contains(&c.item)||c.swaps.is_empty()
             ||c.swaps.len()>3||c.swaps.iter().any(|&(from,to)|!descent::effects(c.item).contains(&from)||(to!=descent::doubled(from)&&to!=descent::negated(from)&&to!=descent::negated2(from)))) {return fail();}
-        if self.fallen.is_some()!=(self.wander&&self.schema==6)||self.fallen.as_ref().is_some_and(|f|f.page>1) {return fail();}
+        // 旧版（r4 及以前）的堕落存档没有 fallen，照旧继续，只是这局没有红篝火与堕落首领
+        if (self.fallen.is_some()&&!(self.wander&&self.schema==6))||self.fallen.as_ref().is_some_and(|f|f.page>1) {return fail();}
         for (i,id) in self.claimed_items.iter().enumerate() {
             if !(rewards::lookup(*id).is_some_and(|item|item.kind.allowed(self.class)||elite::LEGENDARY.contains(&affixes::base(*id)))||rewards::RETIRED_SPELLS.contains(id))||self.claimed_items[..i].contains(id) {return fail();}
         }
