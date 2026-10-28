@@ -45,7 +45,7 @@ fn layered_tier(run:&Run,value:u64)->u8 {
     3
 }
 pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool)->Option<u32> {roll_min(run,id,entropy,repeat,0)}
-/// 规则 3 起品质只看前缀：不再按原版稀有度托底，改由来源决定保底（Boss 与试炼为传说、精英与上锁宝箱至少史诗）。
+/// 规则 3 起品质只看前缀，按来源决定保底；Boss 新规则仅第一张保底传说。
 /// 旧规则（affix_rules < 3）仍以原版稀有度为最低品质，忽略 min
 pub fn roll_min(run:&Run,id:u32,entropy:u64,repeat:bool,min:u8)->Option<u32> {
     if id>>28==2{return Some(crate::talismans::roll(run,id,entropy,repeat));}
@@ -75,8 +75,8 @@ pub fn rewards(run:&Run,node:usize,mut offers:Vec<Reward>)->Vec<Reward> {
     }
     let kind=run.nodes.get(node).map(|n|n.kind);
     let repeat=kind==Some(crate::NodeKind::Boss);
-    let min=match kind {Some(crate::NodeKind::Boss)=>3,Some(crate::NodeKind::Elite)=>2,_=>0};
     for (slot,reward) in offers.iter_mut().enumerate(){if let Reward::Item(id)=*reward {
+        let min=match kind {Some(crate::NodeKind::Boss) if run.boss_reward_rules==0||slot==0=>3,Some(crate::NodeKind::Elite)=>2,_=>0};
         *reward=roll_min(run,id,entropy^slot as u64,repeat,min).map_or(Reward::Gold(1500),Reward::Item);
     }}
     offers

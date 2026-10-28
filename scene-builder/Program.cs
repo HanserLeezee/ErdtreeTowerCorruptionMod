@@ -4,12 +4,16 @@ string[] modes=["advanced-affix-patch","advanced-affix-verify","affix-patch","af
 modes=modes.Append("party-dlc-patch").ToArray();
 modes=modes.Append("bout-patch").ToArray();
 modes=modes.Append("party-boss-model-sync").ToArray();
+modes=modes.Append("stormveil-no-runes-patch").ToArray();
+modes=modes.Append("stormveil-sidewall-patch").ToArray();
 if(args.Length<4||!modes.Contains(args[3])||args.Length!=4||args.Take(3).Any(modes.Contains)){Console.Error.WriteLine("Usage: SceneBuilder <game> <output> <cache> <mode>"+(args.Length>3?" (rejected: "+string.Join(" ",args.Skip(3))+")":"")+"\nModes: "+string.Join(" ",modes));Environment.Exit(2);}
 var game=args[0];var output=args[1];var cache=args[2];
 if(args.Contains("personal-events-test")){PersonalEvents.Test();return;}
 if(args.Contains("party-enemy-events-test")){PartyEnemyEvents.Test();return;}
 if(args.Contains("affix-text-test")){AffixTextFix.Test(cache);return;}
 Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(game,"oo2core_6_win64.dll"));
+if(args.Contains("stormveil-no-runes-patch")){StormveilRuneAssets.Patch(cache,output);return;}
+if(args.Contains("stormveil-sidewall-patch")){StormveilBarrierAssets.Patch(cache,output);return;}
 if(args.Contains("bgm-patch")){MusicAssets.Patch(cache,output);return;}
 if(args.Contains("party-dlc-patch")){PartyDlcAssets.Build(game,cache,output);return;}
 if(args.Contains("equipment-style-patch")){EquipmentStyleAssets.Patch(cache,output);return;}

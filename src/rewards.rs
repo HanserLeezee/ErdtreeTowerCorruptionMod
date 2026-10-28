@@ -160,6 +160,7 @@ fn crystal_offer_with_chance(run:&Run,visit:u64,salt:u64,chance:u64)->Option<u32
 }
 pub(crate) fn before_elites(run:&Run,node:usize)->Vec<Reward> {weighted(run,node,true)}
 pub(crate) fn before_base_talismans(run:&Run,node:usize)->Vec<Reward> {weighted(run,node,false)}
+pub(crate) fn boss_regular_offers(run:&Run,node:usize)->Vec<Reward> {weighted(run,node,true)}
 fn weighted(run:&Run,node:usize,base_only:bool)->Vec<Reward> {
     let mut offers=ranked_pool(run,node,true,&CATALOG,base_only);
     if run.law.lone_wolf()||!run.summoner()&&crate::mix(run.reward_seed() ^ node as u64 ^ 0xa549) % 4 != 0 {

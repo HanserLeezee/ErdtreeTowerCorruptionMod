@@ -293,6 +293,7 @@ struct Runtime {
     event_start: Option<Instant>,
     descent: Option<(Instant,i32,i32,bool)>,
     stormveil: Option<(Instant,i32,i32,bool)>,
+    stormveil_barrier:super::parkour_barrier::Barrier,
     chariot_clock:Option<ChariotClock>,
     chariot_chase:super::chariot::Chase,
 }
@@ -349,6 +350,7 @@ fn fresh_runtime()->Runtime {
         event_start: None,
         descent: None,
         stormveil: None,
+        stormveil_barrier:Default::default(),
         chariot_clock:None,
         chariot_chase:Default::default(),
     }
@@ -2817,6 +2819,7 @@ fn start_stormveil(state:&mut Runtime,world:&WorldChrMan,game:&mut GameMan,run:R
     super::native_talk::set_flag(route.flag,true)?;
     game.move_map_target=BlockId::from(route.block);game.initial_area_entity_id=route.entry;game.warp_requested=true;
     state.stormveil=Some((Instant::now(),player.chr_ins.modules.data.hp,player.chr_ins.modules.data.fp,false));
+    state.stormveil_barrier.reset();
     state.room=None;state.party_scene=None;state.pending=None;state.travel=None;state.command=None;
     let message=if run.regional_event.chariot{"泥头车生存：正在前往竞技场中心".into()}else{format!("{}：抵达 Boss 雾门前",route.name)};
     state.view.run=Some(run);state.view.room=Some(super::rooms::RoomView{message,loading:true,completed:false});
@@ -2911,10 +2914,12 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
     let (started,hp,fp,restored)=state.stormveil.as_mut().unwrap();
     let block=i32::from(player.current_block_id);
     if game.warp_requested||block!=route.block {
+        state.stormveil_barrier.reset();
         if started.elapsed()>Duration::from_secs(60)&&!*restored{return Err(format!("{}加载超时",route.name));}
         return Ok(());
     }
     let alive=player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag();
+    if alive {state.stormveil_barrier.apply(player);}else{state.stormveil_barrier.reset();}
     if !alive&&state.party.is_none() {
         if let Some(run)=state.view.run.as_mut(){run.end_on_death();record_checked(run)?;}
         return Ok(());

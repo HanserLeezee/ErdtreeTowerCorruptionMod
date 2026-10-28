@@ -4,9 +4,23 @@ pub const LEGENDARY:&[u32]=&[2140000,3090000,3150000,3170000,4080000,4100000,710
 pub const BUFFS:&[u32]=&[1000,1010,1020,1030,1040,1060,1070,1080,1090,1150,2060,2130,2180,2200,3000,3040];
 pub const TEAR:u32=10020;
 pub fn boss_offers(run:&Run,node:usize)->Vec<Reward> {
+    if run.boss_reward_rules==0 {return old_boss_offers(run,node);}
+    let guaranteed=old_boss_items(run,node).into_iter().find(|id|run.casting_tools.is_none_or(|tools|rewards::castable(*id,tools))).expect("Boss pool contains repeatable weapons");
+    let mut result=vec![Reward::Item(guaranteed)];
+    for reward in rewards::boss_regular_offers(run,node) {
+        if result.len()==3 {break;}
+        if !result.contains(&reward){result.push(reward);}
+    }
+    while result.len()<3 {result.push(Reward::Gold(1500));}
+    result
+}
+fn old_boss_items(run:&Run,node:usize)->Vec<u32> {
     let mut items:Vec<_>=LEGENDARY.iter().copied().filter(|id|crate::dlc::item_allowed(*id)).filter(|id|!run.claimed_items.contains(id)||rewards::lookup(*id).is_some_and(|i|i.kind==rewards::ItemKind::Weapon)).collect();
     items.sort_by_key(|id|(run.claimed_items.contains(id),crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^u64::from(*id)^0xb055)));
-    items.into_iter().take(3).map(Reward::Item).collect()
+    items
+}
+fn old_boss_offers(run:&Run,node:usize)->Vec<Reward> {
+    old_boss_items(run,node).into_iter().take(3).map(Reward::Item).collect()
 }
 pub fn offers(run:&Run,node:usize)->Vec<Reward> {
     let mut result=legendary_offers(run,node);

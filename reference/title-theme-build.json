@@ -1,0 +1,26 @@
+{
+  "gameVerified": false,
+  "preview": "Design preview; native menu labels are illustrative",
+  "files": [
+    {
+      "file": "menu/05_000_title.gfx",
+      "sha256": "3dfcf2e1fd9712023ede2d2956aa084c150c530eaad50150c50d417a32fc02a4",
+      "tagsVerified": 54
+    },
+    {
+      "file": "menu/05_001_title_logo.gfx",
+      "sha256": "52bd0cf8a8f42f0372d5509b7621492481a98d102a3237be341e5faa4c1dd7c9",
+      "tagsVerified": 233
+    },
+    {
+      "file": "menu/02_903_nowloading2.gfx",
+      "sha256": "ef0bbd920899fbf3ae563b09f52167d48af111f4c88a8e2d0bda3a8023d2f6c3",
+      "tagsVerified": 327
+    },
+    {
+      "file": "menu/02_904_nowloading3.gfx",
+      "sha256": "e738819453592a8aa80e436f73c5bab1bf16781830f6adcf4aeae9d3e207c80d",
+      "tagsVerified": 200
+    }
+  ]
+}

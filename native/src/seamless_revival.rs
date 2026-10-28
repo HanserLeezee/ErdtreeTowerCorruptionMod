@@ -4,9 +4,34 @@ use super::party_death::Position;
 
 type Request=unsafe extern "C" fn(*mut u8,bool,bool);
 static BASE:AtomicUsize=AtomicUsize::new(0);
+static PROFILE:AtomicUsize=AtomicUsize::new(0);
 static FINISHED:AtomicUsize=AtomicUsize::new(0);
 static PENDING:Mutex<Option<Pending>>=Mutex::new(None);
-const ROOT:usize=0x222030;
+struct Build {
+    version:&'static str,timestamp:u32,image_size:u32,root:usize,
+    object_delta:usize,component_delta:usize,service_delta:usize,forward_delta:usize,
+    request:usize,callbacks:[usize;3],signatures:&'static [(usize,usize,u64)],
+    root_locator:usize,root_bytes:[u8;14],
+}
+const BUILDS:[Build;2]=[
+    Build{version:"2.0.1",timestamp:0x6a98a913,image_size:0xd31000,root:0x222030,
+        object_delta:0xad0,component_delta:0x1848,service_delta:0xa88,forward_delta:0x480,
+        request:0xd7ec0,callbacks:[0xd7fd0,0xd8180,0xd81f0],
+        signatures:&[(0xd7bb0,0x303,0x3b87e0ebc95fb1c3),(0xd7ec0,0x108,0xe8e01219eedfa0cf),
+            (0xd7fd0,0x1aa,0xa72e59a70f316a03),(0xd8180,0x69,0xe759d135c29ca357),(0xd81f0,0x123,0x6772508514e31e45)],
+        root_locator:0x32c09,root_bytes:[0x48,0x8d,0x85,0xe0,0x2f,0,0,0x48,0x89,0x05,0x19,0xf4,0x1e,0]},
+    // Verified against ersc.dll SHA256 0a093d8490967bf19c62f895fdf1fda21840282d2b2b371b9b4fc24a0cfe146e.
+    Build{version:"2.0.2",timestamp:0x6ae0ad1a,image_size:0xd65000,root:0x224030,
+        object_delta:0xb20,component_delta:0x19c0,service_delta:0xd30,forward_delta:0x3c0,
+        request:0xda6d0,callbacks:[0xda7e0,0xda990,0xdaa00],
+        signatures:&[(0xda3c0,0x303,0xce66d6b08685636a),(0xda6d0,0x108,0xf93589627953ac40),
+            (0xda7e0,0x1aa,0xa72e59a70f316a03),(0xda990,0x69,0xe759d135c29ca357),(0xdaa00,0x123,0x65be19c77b1bafad),
+            (0x36185,0x74,0xb7e4c3391be820e8)],
+        root_locator:0x33049,root_bytes:[0x48,0x8d,0x85,0x90,0x36,0,0,0x48,0x89,0x05,0xd9,0x0f,0x1f,0]},
+];
+fn select_build(timestamp:u32,image_size:u32)->Option<&'static Build> {
+    BUILDS.iter().find(|b|b.timestamp==timestamp&&b.image_size==image_size)
+}
 #[link(name="kernel32")]
 unsafe extern "system" {
     fn GetModuleHandleW(name:*const u16)->*mut c_void;
@@ -29,16 +54,16 @@ impl Memory for Local {
 #[derive(Clone,Copy)]
 struct Spectator {root:usize,address:usize,target:usize,key:u32}
 fn valid_address(address:usize)->bool {(0x10000..=0x7fffffff0000).contains(&address)}
-fn locate(memory:&impl Memory,base:usize,world:usize)->Option<Spectator> {
-    let root=memory.pointer(base+ROOT)?;
+fn locate(memory:&impl Memory,base:usize,world:usize,build:&Build)->Option<Spectator> {
+    let root=memory.pointer(base+build.root)?;
     if !valid_address(root){return None;}
-    let address=root.checked_sub(0xad0)?;
+    let address=root.checked_sub(build.object_delta)?;
     if address<0x10000{return None;}
     // Verified against the pinned initializer and the live object; never scan or guess during recovery.
     let component=memory.pointer(address+8)?;
-    if component!=address.checked_sub(0x1848)?
-        ||memory.pointer(address+0x20)?!=address.checked_sub(0xa88)?
-        ||memory.pointer(address+0x30)?!=address+0x480
+    if component!=address.checked_sub(build.component_delta)?
+        ||memory.pointer(address+0x20)?!=address.checked_sub(build.service_delta)?
+        ||memory.pointer(address+0x30)?!=address+build.forward_delta
         ||memory.pointer(address+0x38)?!=address.checked_sub(0xe0)?
         ||memory.pointer(memory.pointer(component)?)?!=world {return None;}
     let key=memory.word(address+0xb0)?;
@@ -52,7 +77,7 @@ fn locate(memory:&impl Memory,base:usize,world:usize)->Option<Spectator> {
         if !valid_address(node)||visited.len()==3||visited.contains(&node)||memory.bytes::<1>(node+0x19)?[0]!=0{return None;}
         visited.push(node);
         let key=memory.word(node+0x20)?;
-        let callback=match key {0=>0xd7fd0,1=>0xd8180,2=>0xd81f0,_=>return None};
+        let callback=*build.callbacks.get(key as usize)?;
         if keys&(1<<key)!=0||memory.pointer(node+0x30)?!=base+callback{return None;}
         keys|=1<<key;
         todo.extend([memory.pointer(node)?,memory.pointer(node+0x10)?]);
@@ -95,10 +120,11 @@ pub fn tick(world:&mut WorldChrMan,game:&GameMan) {
             pending.player,owned_address(player),pending.owner,unsafe {player.player_game_data.as_ref()}.character_id,pending.origin.block,i32::from(player.current_block_id)));
         *queue=None;return;
     }
-    let Some(spectator)=locate(&Local,BASE.load(Ordering::Acquire),world_address) else{
+    let build=&BUILDS[PROFILE.load(Ordering::Acquire)];
+    let Some(spectator)=locate(&Local,BASE.load(Ordering::Acquire),world_address,build) else{
         if !pending.reported_lookup {
             pending.reported_lookup=true;
-            super::log(format!("PARTY_REVIVE waiting for validated object: root={:?} world={world_address:#x}",Local.pointer(BASE.load(Ordering::Acquire)+ROOT)));
+            super::log(format!("PARTY_REVIVE waiting for validated object: version={} root={:?} world={world_address:#x}",build.version,Local.pointer(BASE.load(Ordering::Acquire)+build.root)));
         }
         return;
     };
@@ -106,8 +132,8 @@ pub fn tick(world:&mut WorldChrMan,game:&GameMan) {
     if !pending.sent {
         if alive||spectator.target==usize::MAX{return;}
         let base=BASE.load(Ordering::Acquire);
-        if Local.pointer(base+ROOT)!=Some(spectator.root){return;}
-        let request:Request=unsafe {std::mem::transmute(base+0xd7ec0)};
+        if Local.pointer(base+build.root)!=Some(spectator.root){return;}
+        let request:Request=unsafe {std::mem::transmute(base+build.request)};
         // The native mutex and atomic transition handle recovery; false keeps the request local.
         unsafe {request(spectator.address as *mut u8,true,false)};
         pending.sent=true;
@@ -132,21 +158,59 @@ pub unsafe fn install()->Result<(),String> {
     let base=unsafe {GetModuleHandleW(name.as_ptr())} as usize;
     if base==0{return Err("Seamless not loaded".into());}
     let pe=Local.word(base+0x3c).filter(|p|*p<=0x1000).ok_or("Invalid Seamless PE header")? as usize;
-    if Local.word(base+pe+8)!=Some(0x6a98a913)||Local.word(base+pe+24+56)!=Some(0xd31000){return Err("Unsupported Seamless build".into());}
-    for (rva,len,expected) in [(0xd7bb0,0x303,0x3b87e0ebc95fb1c3u64),(0xd7ec0,0x108,0xe8e01219eedfa0cf),(0xd81f0,0x123,0x6772508514e31e45)] {
+    let build=select_build(Local.word(base+pe+8).ok_or("Missing Seamless timestamp")?,Local.word(base+pe+24+56).ok_or("Missing Seamless image size")?).ok_or("Unsupported Seamless build")?;
+    validate(&Local,base,build)?;
+    PROFILE.store(usize::from(build.version=="2.0.2"),Ordering::Release);
+    BASE.store(base,Ordering::Release);
+    super::log(format!("PARTY_REVIVE native request interface ready; Seamless {}; no spectator code hooks installed",build.version));
+    Ok(())
+}
+fn validate(memory:&impl Memory,base:usize,build:&Build)->Result<(),String> {
+    for &(rva,len,expected) in build.signatures {
         let mut hash=14695981039346656037u64;
-        for i in 0..len {let b=Local.bytes::<1>(base+rva+i).ok_or("Unreadable recovery function")?[0];hash=(hash^u64::from(b)).wrapping_mul(1099511628211);}
+        for i in 0..len {let b=memory.bytes::<1>(base+rva+i).ok_or("Unreadable recovery function")?[0];hash=(hash^u64::from(b)).wrapping_mul(1099511628211);}
         if hash!=expected{return Err(format!("Recovery signature mismatch at {rva:x}"));}
     }
-    if Local.bytes::<14>(base+0x32c09)!=Some([0x48,0x8d,0x85,0xe0,0x2f,0,0,0x48,0x89,0x05,0x19,0xf4,0x1e,0]){return Err("Recovery root locator mismatch".into());}
-    BASE.store(base,Ordering::Release);
-    super::log("PARTY_REVIVE native request interface ready; no spectator code hooks installed");
+    if memory.bytes::<14>(base+build.root_locator)!=Some(build.root_bytes){return Err("Recovery root locator mismatch".into());}
     Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    #[test]
+    fn build_selection_rejects_unknown_or_mixed_headers() {
+        assert_eq!(select_build(0x6a98a913,0xd31000).unwrap().version,"2.0.1");
+        assert_eq!(select_build(0x6ae0ad1a,0xd65000).unwrap().version,"2.0.2");
+        assert!(select_build(0x6ae0ad1a,0xd31000).is_none());
+        assert!(select_build(0,0xd65000).is_none());
+    }
+    #[test]
+    #[ignore = "requires locally installed Seamless DLL fixtures"]
+    fn real_dll_signatures_match_both_versions_and_reject_modified_code() {
+        struct Image {data:Vec<u8>,sections:Vec<(usize,usize,usize)>}
+        impl Memory for Image {
+            fn bytes<const N:usize>(&self,address:usize)->Option<[u8;N]> {
+                let rva=address.checked_sub(0x180000000)?;
+                let &(start,len,raw)=self.sections.iter().find(|(s,n,_)|rva>=*s&&rva.checked_add(N).is_some_and(|end|end<=s+n))?;
+                let _=len;
+                self.data.get(raw+rva-start..raw+rva-start+N)?.try_into().ok()
+            }
+        }
+        for (env,build) in [("ERDTREE_REVIVAL_DLL_201",&BUILDS[0]),("ERDTREE_REVIVAL_DLL_202",&BUILDS[1])] {
+            let data=std::fs::read(std::env::var(env).expect("set fixture path")).unwrap();
+            let u16at=|at|u16::from_le_bytes(data[at..at+2].try_into().unwrap()) as usize;
+            let u32at=|at|u32::from_le_bytes(data[at..at+4].try_into().unwrap()) as usize;
+            let pe=u32at(0x3c);let section=pe+24+u16at(pe+20);
+            assert_eq!(select_build(u32at(pe+8) as u32,u32at(pe+80) as u32).unwrap().version,build.version);
+            let sections=(0..u16at(pe+6)).map(|i|{let s=section+i*40;(u32at(s+12),u32at(s+16),u32at(s+20))}).collect();
+            let mut image=Image{data,sections};
+            assert!(validate(&image,0x180000000,build).is_ok());
+            let &(start,_,raw)=image.sections.iter().find(|(s,n,_)|build.request>=*s&&build.request<s+n).unwrap();
+            image.data[raw+build.request-start]^=1;
+            assert!(validate(&image,0x180000000,build).unwrap_err().contains("signature mismatch"));
+        }
+    }
     #[test]
     fn pending_identity_uses_owned_player_target_not_container_slot() {
         use std::{mem::ManuallyDrop,ptr::NonNull};
@@ -167,13 +231,13 @@ mod tests {
         fn put_pointer(&mut self,at:usize,value:usize){self.put(at,&value.to_le_bytes());}
         fn put_word(&mut self,at:usize,value:u32){self.put(at,&value.to_le_bytes());}
     }
-    fn fixture()->Fake {
+    fn fixture(build:&Build)->Fake {
         let mut m=Fake::default();let (base,object,head,world)=(0x180000000,0x30000,0x40000,0x50000);
-        m.put_pointer(base+ROOT,object+0xad0);m.put_pointer(object+8,object-0x1848);m.put_pointer(object-0x1848,0x60000);m.put_pointer(0x60000,world);
-        m.put_pointer(object+0x20,object-0xa88);m.put_pointer(object+0x30,object+0x480);m.put_pointer(object+0x38,object-0xe0);
+        m.put_pointer(base+build.root,object+build.object_delta);m.put_pointer(object+8,object-build.component_delta);m.put_pointer(object-build.component_delta,0x60000);m.put_pointer(0x60000,world);
+        m.put_pointer(object+0x20,object-build.service_delta);m.put_pointer(object+0x30,object+build.forward_delta);m.put_pointer(object+0x38,object-0xe0);
         m.put_word(object+0xb0,0);m.put_word(object+0xac,0);m.put_pointer(object+0x58,usize::MAX);m.put_pointer(object+0xc0,head);m.put_pointer(object+0xc8,3);
         m.put(head+0x19,&[1]);m.put_pointer(head+8,0x41000);
-        for (key,callback) in [0xd7fd0,0xd8180,0xd81f0].into_iter().enumerate() {
+        for (key,callback) in build.callbacks.into_iter().enumerate() {
             let node=0x41000+key*0x100;
             m.put(node+0x19,&[0]);m.put_word(node+0x20,key as u32);m.put_pointer(node+0x30,base+callback);
             m.put_pointer(node,head);m.put_pointer(node+0x10,if key==2 {head}else{node+0x100});
@@ -181,14 +245,21 @@ mod tests {
         m
     }
     #[test]fn locator_requires_matching_world_and_all_native_callbacks() {
-        let m=fixture();assert_eq!(locate(&m,0x180000000,0x50000).unwrap().address,0x30000);
-        assert!(locate(&m,0x180000000,0x50001).is_none());
-        let mut m=fixture();m.put_pointer(0x41100+0x30,0x1800d81f0);assert!(locate(&m,0x180000000,0x50000).is_none());
+        for build in &BUILDS {
+            let m=fixture(build);assert_eq!(locate(&m,0x180000000,0x50000,build).unwrap().address,0x30000);
+            assert!(locate(&m,0x180000000,0x50001,build).is_none());
+            let mut m=fixture(build);m.put_pointer(0x41100+0x30,0x180000000+build.callbacks[2]);assert!(locate(&m,0x180000000,0x50000,build).is_none());
+        }
     }
     #[test]fn corrupt_or_expired_locator_is_rejected_before_request() {
-        for (at,value) in [(0x180000000+ROOT,0),(0x180000000+ROOT,usize::MAX),(0x30000+8,0x29999),(0x30000+0xc8,4),(0x30000+0xc0,usize::MAX),(0x41100+0x10,0x41000)] {
-            let mut m=fixture();m.put_pointer(at,value);assert!(locate(&m,0x180000000,0x50000).is_none());
-        }
+        for build in &BUILDS {for (at,value) in [(0x180000000+build.root,0),(0x180000000+build.root,usize::MAX),(0x30000+8,0x29999),(0x30000+0xc8,4),(0x30000+0xc0,usize::MAX),(0x41100+0x10,0x41000)] {
+            let mut m=fixture(build);m.put_pointer(at,value);assert!(locate(&m,0x180000000,0x50000,build).is_none());
+        }}
+    }
+    #[test]fn old_layout_is_rejected_for_new_version_even_if_root_is_present() {
+        let mut m=fixture(&BUILDS[0]);
+        m.put_pointer(0x180000000+BUILDS[1].root,0x30000+BUILDS[1].object_delta);
+        assert!(locate(&m,0x180000000,0x50000,&BUILDS[1]).is_none());
     }
     #[test]fn positive_hp_alone_does_not_confirm_spectator_exit() {
         let p=Position{block:45,xyz:[1.0,2.0,3.0]};
