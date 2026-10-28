@@ -14,12 +14,14 @@ pub const WANDER_PROTOCOL_OFFSET:u32=1000;
 static WANDER:AtomicBool=AtomicBool::new(false);
 static MERCHANT:AtomicBool=AtomicBool::new(false);
 static STALE:std::sync::OnceLock<String>=std::sync::OnceLock::new();
-/// Size of scene-assets/regulation.bin of the official release this DLL was built against (v98).
+/// Size of scene-assets/regulation.bin of the official release this DLL was built against (v98 and v99 share it).
 /// A different size means the launcher updated the mod after this patch was applied: the patched
 /// DLL would no longer match the game data, so every HansFix feature stays off and a warning is shown.
-pub const BASE_RELEASE:&str="v98";
+pub const BASE_RELEASE:&str="v99";
+/// tower-install.json 里启动器记录的模组版本号；不一致说明启动器已经装了别的版本
+pub const BASE_INSTALL_VERSION:u64=99;
 pub const BASE_REGULATION_LEN:u64=3438688;
-/// 游龙补丁带的 regulation.bin（v98 + 向下强化与扭曲词条效果）
+/// 游龙补丁带的 regulation.bin（v98/v99 + 向下强化与扭曲词条效果）
 pub const HANSFIX_REGULATION_LEN:u64=3388928;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
@@ -41,8 +43,18 @@ pub fn set(wander_on:bool,merchant_on:bool) {
 
 /// Warning text when this patched DLL sits on top of a different official release.
 pub fn stale()->Option<&'static str> {STALE.get().map(String::as_str)}
-pub fn stale_in(dir:&Path)->Option<u64> {
-    std::fs::metadata(dir.join("scene-assets").join("regulation.bin")).ok().map(|m|m.len()).filter(|&len|len!=BASE_REGULATION_LEN&&len!=HANSFIX_REGULATION_LEN)
+pub fn stale_in(dir:&Path)->Option<String> {
+    if let Some(len)=std::fs::metadata(dir.join("scene-assets").join("regulation.bin")).ok().map(|m|m.len()).filter(|&len|len!=BASE_REGULATION_LEN&&len!=HANSFIX_REGULATION_LEN) {
+        return Some(format!("regulation_len={len}"));
+    }
+    let version=std::fs::read_to_string(dir.join("tower-install.json")).ok().and_then(|t|install_version(&t));
+    version.filter(|&v|v!=BASE_INSTALL_VERSION).map(|v|format!("install_version={v}"))
+}
+/// 只取顶层的 "version": 数字（文件很大，不必整份解析）
+fn install_version(text:&str)->Option<u64> {
+    let rest=&text[text.find("\"version\"")?+9..];
+    let digits:String=rest.trim_start_matches(|c:char|c==':'||c.is_whitespace()).chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 pub fn detect(dir:&Path)->(bool,bool) {(dir.join(WANDER_MARKER).is_file(),dir.join(MERCHANT_MARKER).is_file())}
 
@@ -50,8 +62,8 @@ pub fn detect(dir:&Path)->(bool,bool) {(dir.join(WANDER_MARKER).is_file(),dir.jo
 pub fn init(dll:Option<PathBuf>) {
     let dir=dll.as_deref().and_then(Path::parent).map(PathBuf::from);
     let (mut wander_on,mut merchant_on)=dir.as_deref().map(detect).unwrap_or_default();
-    if let Some(len)=dir.as_deref().and_then(stale_in) {
-        crate::log(format!("HANSFIX_STALE base={BASE_RELEASE} regulation_len={len} expected={BASE_REGULATION_LEN}"));
+    if let Some(reason)=dir.as_deref().and_then(stale_in) {
+        crate::log(format!("HANSFIX_STALE base={BASE_RELEASE} {reason}"));
         let _=STALE.set(format!("HansFix 补丁是为爬塔 {BASE_RELEASE} 制作的，与当前模组版本不匹配：请在启动器「设置 → 更新 → 校验并修复文件」恢复官方文件，再安装对应新版本的补丁。"));
         wander_on=false;merchant_on=false;
     }
@@ -155,7 +167,12 @@ mod tests {
         assert_eq!(super::stale_in(&dir),None,"no scene-assets: nothing to compare");
         std::fs::create_dir_all(dir.join("scene-assets")).unwrap();
         std::fs::write(dir.join("scene-assets/regulation.bin"),[0u8;16]).unwrap();
-        assert_eq!(super::stale_in(&dir),Some(16));
+        assert_eq!(super::stale_in(&dir).as_deref(),Some("regulation_len=16"));
+        std::fs::remove_file(dir.join("scene-assets/regulation.bin")).unwrap();
+        std::fs::write(dir.join("tower-install.json"),r#"{"version":99,"displayVersion":"1.1.1","files":[{"version":3}]}"#).unwrap();
+        assert_eq!(super::stale_in(&dir),None);
+        std::fs::write(dir.join("tower-install.json"),r#"{"version": 100,"files":[]}"#).unwrap();
+        assert_eq!(super::stale_in(&dir).as_deref(),Some("install_version=100"));
         let _=std::fs::remove_dir_all(&dir);
         assert_eq!(super::map_key_from("key.map = m\nkey.build=C"),Some("M"));
         assert_eq!(super::map_key_from("key.map=bogus"),None);
