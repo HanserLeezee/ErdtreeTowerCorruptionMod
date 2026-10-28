@@ -202,6 +202,8 @@ pub struct Run {
     pub affix_equipment: bool,
     #[serde(default)]
     pub affix_rules: u8,
+    #[serde(default)]
+    pub boss_reward_rules: u8,
     /// 职业规则：1 起为职业重做后的六个职业（奖励偏向、职业机制）；旧存档为 0，保持原来的职业被动
     #[serde(default)]
     pub class_rules: u8,
@@ -513,6 +515,7 @@ impl Run {
             schema: 6,
             affix_equipment: true,
             affix_rules: 4,
+            boss_reward_rules: 1,
             class_rules: 1,
             talisman_affixes: true,
             ruby_spells: false,
@@ -948,6 +951,10 @@ impl Run {
             run.flask_limit=run.full_flask_limit();
         }
         run.validate()?;
+        if run.boss_reward_rules==0 {
+            run.boss_reward_rules=1;
+            if let Phase::Reward{id,..}=run.phase {run.phase=Phase::Reward{id,offers:run.offers(id)};}
+        }
         if let Phase::Reward{id,ref offers}=run.phase {
             if *offers==rewards::before_tool_rate(&run,id)||*offers==rewards::before_whetblades(&run,id)||*offers==rewards::before_claimed_bases(&run,id)||*offers==rewards::before_spirit_levels(&run,id)||*offers==rewards::before_currency_1500(&run,id)||*offers==rewards::before_chest_boosts(&run,id)||*offers==rewards::before_bosses(&run,id)||*offers==rewards::before_elites(&run,id)||*offers==rewards::before_base_talismans(&run,id)||*offers==rewards::before_spirit_weight(&run,id)||*offers==rewards::previous_offers(&run,id)||*offers==run.legacy_offers(id)||*offers==rewards::before_spirits(&run,id)||*offers==rewards::before_expansion(&run,id) {
                 run.phase=Phase::Reward{id,offers:run.offers(id)};
@@ -962,7 +969,7 @@ impl Run {
 
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.class_rules>1||self.boss_affix_rules>1||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.boss_reward_rules>1||self.class_rules>1||self.boss_affix_rules>1||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
