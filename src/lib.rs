@@ -508,8 +508,11 @@ mod wander_mode {
             let back=path[path.len()-2];
             assert!(run.available().contains(&back),"red camp offers the visited neighbour");
             let kinds_layer0:Vec<_>=run.start_nodes().iter().map(|&i|run.nodes[i].kind).collect();
+            let back_kind=run.nodes[back].kind;
             run.enter(back).unwrap();
             assert!(run.fallen_active());assert_eq!(run.visited,vec![camp]);
+            assert_eq!(run.nodes[back].kind,back_kind,"seed {seed}: the chosen entry keeps its kind (a shop stays a shop)");
+            if back_kind==NodeKind::Shop {assert!(run.red_shop(back),"an entry shop is a fallen shop");}
             assert_eq!(run.start_nodes().iter().map(|&i|run.nodes[i].kind).collect::<Vec<_>>(),kinds_layer0);
             assert_eq!(run.descents(),before+1);
             assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
@@ -889,13 +892,13 @@ impl Run {
     /// 这一幕的地图（堕落模式下按当前状态加上篝火、堕落首领与洗牌）
     pub(crate) fn expected_nodes(&self)->Vec<Node> {
         let base=camp_graph(self.seed);
-        match &self.fallen {Some(f)=>descent::fallen_graph(base,self.seed,f.active),None=>base}
+        match &self.fallen {Some(f)=>descent::fallen_graph(base,self.seed,f.active,f.entry),None=>base}
     }
     /// 红篝火处选择了走过的相邻关卡：开启堕落挑战
-    fn begin_fallen(&mut self)->RuleResult<()> {
+    fn begin_fallen(&mut self,entry:usize)->RuleResult<()> {
         let camp=self.red_camp().ok_or("没有红篝火")?;
         self.descents_before+=self.descent_path().len() as u32;
-        if let Some(f)=self.fallen.as_mut() {f.active=true;f.page=0;}
+        if let Some(f)=self.fallen.as_mut() {f.active=true;f.page=0;f.entry=Some(entry);}
         self.nodes=self.expected_nodes();
         self.visited=vec![camp];
         Ok(())
@@ -943,7 +946,7 @@ impl Run {
         if !self.available().contains(&id) {
             return Err("节点不可达".into());
         }
-        if !self.fallen_active()&&self.visited.last().is_some_and(|&l|Some(l)==self.red_camp())&&self.visited.contains(&id) {self.begin_fallen()?;}
+        if !self.fallen_active()&&self.visited.last().is_some_and(|&l|Some(l)==self.red_camp())&&self.visited.contains(&id) {self.begin_fallen(id)?;}
         self.reached_layer=self.reached_layer.max(self.nodes[id].layer+1);
         self.shop_purchased = 0;self.shop_stock=None;
         if self.nodes[id].kind==NodeKind::Event {

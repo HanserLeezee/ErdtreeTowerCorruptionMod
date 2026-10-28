@@ -190,11 +190,17 @@ pub fn night_tick(run:Option<&erdtree_tower::Run>) {
     let hour=time.clock.date.hours();
     let dark=!(5..20).contains(&hour);
     let due=night.requested.is_none_or(|t|t.elapsed()>std::time::Duration::from_secs(20));
+    // r6：只写目标时间不会生效（r5 日志里时间一直停在 7:00），所以同时直接改写当前时钟
+    let set=|time:&mut WorldAreaTime,h:u8| {
+        let (y,m,day,utc)=(time.clock.year(),time.clock.month(),time.clock.day(),time.clock.is_utc());
+        let clock=||eldenring::dlut::DLDateTime::new(y,m,day,h,0,0,0,utc);
+        time.request_time(u32::from(h),0,0);time.clock=clock();time.previous_tick_clock=clock();
+    };
     if want {
-        if !dark&&due {time.request_time(22,0,0);night.requested=Some(std::time::Instant::now());crate::log(format!("HANSFIX_NIGHT request 22:00 (now {hour}:00)"));}
+        if !dark&&due {set(time,22);night.requested=Some(std::time::Instant::now());crate::log(format!("HANSFIX_NIGHT set 22:00 (was {hour}:00)"));}
         night.on=true;
     } else if night.on {
-        if dark {time.request_time(10,0,0);crate::log(format!("HANSFIX_NIGHT request 10:00 (now {hour}:00)"));}
+        if dark {set(time,10);crate::log(format!("HANSFIX_NIGHT set 10:00 (was {hour}:00)"));}
         night.on=false;night.requested=None;
     }
 }

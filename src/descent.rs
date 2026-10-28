@@ -171,12 +171,16 @@ pub struct Fallen {
     /// 本幕已经送过满额奖励的堕落商店
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub bonus:Vec<usize>,
+    /// 从红篝火选中、开启堕落挑战的那个关卡：它保持地图上原来的类型（选的是商店就进商店）
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub entry:Option<usize>,
 }
 fn is_zero(n:&u8)->bool {*n==0}
 /// 堕落模式的地图：首领下面一排全是篝火（其中一个是红篝火），起点那排下面多一个堕落首领（最后一个节点，层数记为首领层）。
 /// 开启堕落挑战后，除起点、篝火与首领外的关卡类型重新洗牌。
-pub fn fallen_graph(mut nodes:Vec<crate::Node>,seed:u64,active:bool)->Vec<crate::Node> {
+pub fn fallen_graph(mut nodes:Vec<crate::Node>,seed:u64,active:bool,keep:Option<usize>)->Vec<crate::Node> {
     use crate::NodeKind;
+    let seen=keep.filter(|_|active).and_then(|k|fallen_graph(nodes.clone(),seed,false,None).get(k).map(|n|(k,n.kind)));
     let Some(top)=nodes.iter().map(|n|n.layer).max() else{return nodes};
     if top<2 {return nodes;}
     for node in nodes.iter_mut().filter(|n|n.layer==top-1) {node.kind=NodeKind::Camp;}
@@ -186,8 +190,12 @@ pub fn fallen_graph(mut nodes:Vec<crate::Node>,seed:u64,active:bool)->Vec<crate:
         let mut state=crate::mix(seed^0xfa11_e5ed);
         for i in (1..kinds.len()).rev() {state=crate::mix(state);kinds.swap(i,(state%(i as u64+1)) as usize);}
         for (&i,kind) in ids.iter().zip(kinds) {nodes[i].kind=kind;}
+        // 选中的入口关卡保持原类型：和洗牌后拿到这个类型的另一个关卡互换
+        if let Some((k,kind))=seen&&ids.contains(&k)&&nodes[k].kind!=kind
+            &&let Some(&m)=ids.iter().find(|&&m|m!=k&&nodes[m].kind==kind) {nodes[m].kind=nodes[k].kind;nodes[k].kind=kind;}
     }
     let mut nodes=crate::space_rest_nodes(nodes);
+    if let Some((k,kind))=seen&&let Some(node)=nodes.get_mut(k) {node.kind=kind;}
     let starts:Vec<usize>=(0..nodes.len()).filter(|&i|nodes[i].layer==0).collect();
     nodes.push(crate::Node{kind:NodeKind::Boss,layer:top,lane:0,next:starts});
     nodes
@@ -276,5 +284,20 @@ mod tests {
             }
         }
         assert!(seen.0>0&&seen.1>0);
+    }
+}
+
+#[cfg(test)]
+mod fallen_entry {
+    #[test]
+    fn the_chosen_entry_keeps_the_kind_shown_on_the_map() {
+        for seed in 0..200u64 {
+            let base=crate::camp_graph(seed);
+            let seen=super::fallen_graph(base.clone(),seed,false,None);
+            for k in 0..base.len() {
+                let after=super::fallen_graph(base.clone(),seed,true,Some(k));
+                assert_eq!(after[k].kind,seen[k].kind,"seed {seed} node {k}");
+            }
+        }
     }
 }

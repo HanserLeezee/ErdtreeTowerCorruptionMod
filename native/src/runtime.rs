@@ -3063,10 +3063,11 @@ fn request_travel(
         id,
         state.travel.is_some() || state.pending.as_ref().is_some_and(|p| !p.completed),
     )?;
-    let kind = run.nodes[id].kind;
+    // [HansFix] 进入后的旅程（堕落挑战会在进入时重排地图），房间类型与商店货物都按它来
+    let entered={let mut next=run.clone();next.enter(id)?;next};
+    let kind = entered.nodes[id].kind;
     if !kind.combat() && super::rooms::destination(kind).is_none() {
-        let mut next = run.clone();
-        next.enter(id)?;
+        let next = entered.clone();
         state.view.run = Some(next);
         state.view.busy = false;
         report(state, "请选择节点行动。");
@@ -3083,7 +3084,7 @@ fn request_travel(
         clear_chariot()?;
         state.event_start=None;
         let shop_stock=if kind == erdtree_tower::NodeKind::Shop {
-            Some(super::native_shop::prepare(run,id,true,unsafe {&mut *player.player_game_data.as_ptr()})?)
+            Some(super::native_shop::prepare(&entered,id,true,unsafe {&mut *player.player_game_data.as_ptr()})?)
         }else{None};
         if kind == erdtree_tower::NodeKind::Chest {
             super::loot::prepare(run, id,unsafe {player.player_game_data.as_ref()})?;
@@ -3094,8 +3095,7 @@ fn request_travel(
             player.chr_ins.modules.data.hp,
             player.chr_ins.modules.data.fp,
         )?;
-        let mut next = run.clone();
-        next.enter(id)?;
+        let mut next = entered;
         if shop_stock.is_some(){next.shop_stock=shop_stock;record(&next);}
         if kind==erdtree_tower::NodeKind::Event {
             let eligible=state.party.as_ref().map_or_else(||loot::count(unsafe {player.player_game_data.as_ref()},0x40001f40)>0,|p|p.event.has_stonesword_key);
