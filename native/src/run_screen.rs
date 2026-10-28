@@ -78,7 +78,7 @@ pub fn draw(ui:&Ui,icon:&mut dyn FnMut(u32)->Option<TextureId>)->bool {
     let Some(current)=screen.front_mut() else{return false;};
     let mut next=None;
     let done=match current {
-        Screen::Law{screen:law,seed,record,class}=>match crate::law_ui::draw(ui,law,icon,record.as_ref().map(|(best,class)|(*best,class.as_str()))) {
+        Screen::Law{screen:law,seed,record,class}=>match crate::law_ui::draw(ui,law,record.as_ref().map(|(best,class)|(*best,class.as_str()))) {
             Some(crate::law_ui::LawAction::Start(law))=>{if let Ok(mut start)=LAW_START.lock(){*start=Some((*seed,law,*class));}true},
             // 返回：回到选择职业
             Some(crate::law_ui::LawAction::Back)=>{next=Some(Screen::Class{screen:crate::class_ui::ClassScreen::new(Class::PLAYABLE.iter().position(|c|c==class).unwrap_or(0)),seed:*seed,law:true});true},

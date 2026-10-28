@@ -72,10 +72,7 @@ fn reward_item(id:u32)->Result<(eldenring::cs::ItemId,&'static str),String> {
     if params.get_equip_param(item).is_none(){return Err("奖励物品参数不存在".into());}
     Ok((item,reward.name))
 }
-fn held(data:&eldenring::cs::PlayerGameData,item:eldenring::cs::ItemId)->u64 {
-    let bag=data.equipment.equip_inventory_data.items_data.items().filter(|e|same_reward_item(e.item_id,item)).map(|e|e.quantity as u64).sum::<u64>();
-    bag+data.storage.as_ref().map_or(0,|s|s.items_data.items().filter(|e|same_reward_item(e.item_id,item)).map(|e|e.quantity as u64).sum::<u64>())
-}
+fn held(data:&eldenring::cs::PlayerGameData,item:eldenring::cs::ItemId)->u64 {super::loot::held(data,|e|same_reward_item(e,item))}
 pub fn same_reward_item(a:eldenring::cs::ItemId,b:eldenring::cs::ItemId)->bool {
     a.category()==b.category()&&if a.category()==eldenring::cs::ItemCategory::Weapon {a.param_id()/100==b.param_id()/100}else{a==b}
 }
@@ -110,10 +107,7 @@ fn reward_confirmation_counts_weapon_levels_but_keeps_affixes_affinity_and_spiri
 }
 
 pub fn give_stack(data:&mut eldenring::cs::PlayerGameData,id:u32)->Result<(),String> {
-    let count=|data:&eldenring::cs::PlayerGameData| {
-        data.equipment.equip_inventory_data.items_data.items().filter(|e|e.item_id.category()==eldenring::cs::ItemCategory::Goods&&e.item_id.param_id()==id).map(|e|u64::from(e.quantity)).sum::<u64>()
-        +data.storage.as_ref().map_or(0,|s|s.items_data.items().filter(|e|e.item_id.category()==eldenring::cs::ItemCategory::Goods&&e.item_id.param_id()==id).map(|e|u64::from(e.quantity)).sum::<u64>())
-    };
+    let count=|data:&eldenring::cs::PlayerGameData|super::loot::held(data,|e|e.category()==eldenring::cs::ItemCategory::Goods&&e.param_id()==id);
     let before=count(data);give(&[((0x40000000|id) as i32,1,-1)])?;
     if count(data)<=before{return Err("材料未进入背包或仓库，请清理容量后重试".into());}Ok(())
 }

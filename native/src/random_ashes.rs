@@ -3,11 +3,14 @@ use eldenring::cs::{EquipParamCustomWeapon,EquipParamGem,SoloParamRepository};
 use fromsoftware_shared::FromStatic;
 
 pub const SHOP_FIRST:u32=9500000;
+/// 原版的“战灰：无技能”（战技 10，原版中文名是占位的“DLC dummy”）：装上后武器没有战技，不能当随机战灰发
+pub const NO_SKILL:i32=30900;
+fn rollable(gem:i32)->bool {gem!=NO_SKILL&&erdtree_tower::dlc::gem_allowed(gem as u32)}
 // 没有 DLC 时 DLC 战灰不进池（DLL 启动时已按启动参数设好 DLC 模式，池子第一次用到时才建）
-static POOL:LazyLock<Vec<i32>>=LazyLock::new(||include_str!("../../scene-assets/unrestricted-ashes.txt").lines().map(|s|s.parse().unwrap()).filter(|gem:&i32|erdtree_tower::dlc::gem_allowed(*gem as u32)).collect());
+static POOL:LazyLock<Vec<i32>>=LazyLock::new(||include_str!("../../scene-assets/unrestricted-ashes.txt").lines().map(|s|s.parse().unwrap()).filter(|gem:&i32|rollable(*gem)).collect());
 static WEAPONS:LazyLock<HashSet<u32>>=LazyLock::new(||include_str!("../../scene-assets/random-ash-weapon-rows.txt").lines().map(|s|s.parse().unwrap()).collect());
 static PROTECTED:LazyLock<std::collections::HashMap<u32,Vec<i32>>>=LazyLock::new(||include_str!("../../scene-assets/protected-ash-pools.tsv").lines().map(|line|{
-    let p:Vec<_>=line.split('\t').collect();(p[0].parse().unwrap(),p[2].split(',').filter(|s|!s.is_empty()).map(|s|s.parse().unwrap()).filter(|gem:&i32|erdtree_tower::dlc::gem_allowed(*gem as u32)).collect())
+    let p:Vec<_>=line.split('\t').collect();(p[0].parse().unwrap(),p[2].split(',').filter(|s|!s.is_empty()).map(|s|s.parse().unwrap()).filter(|gem:&i32|rollable(*gem)).collect())
 }).collect());
 pub fn eligible(id:u32)->bool {id>>28==0&&WEAPONS.contains(&(id/100*100))&&PROTECTED.get(&(id/100*100)).is_none_or(|pool|!pool.is_empty())}
 fn choose(entropy:u64)->i32 {POOL[(entropy%POOL.len() as u64) as usize]}
@@ -22,6 +25,7 @@ pub fn preview(run:&erdtree_tower::Run,node:usize,slot:usize,weapon:u32)->i32 {
 }
 pub fn description(gem:i32)->Option<(&'static str,&'static str)> {
     static TEXT:LazyLock<std::collections::HashMap<i32,(&str,&str)>>=LazyLock::new(||include_str!("../../scene-assets/random-ash-details.tsv").lines().map(|line|{let mut p=line.splitn(3,'\t');(p.next().unwrap().parse().unwrap(),(p.next().unwrap(),p.next().unwrap()))}).collect());
+    if gem==NO_SKILL {return Some(("无战技","没有战技。可在铁匠处安装战灰。"));}
     TEXT.get(&gem).copied()
 }
 #[link(name="bcrypt")]
@@ -61,6 +65,13 @@ pub fn shop_weapon(params:&mut SoloParamRepository,slot:u32,weapon:u32)->Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_no_skill_ash_is_never_rolled_or_shown_as_a_placeholder() {
+        assert!(!super::POOL.contains(&super::NO_SKILL));
+        assert!(super::PROTECTED.values().all(|pool|!pool.contains(&super::NO_SKILL)));
+        assert_eq!(super::description(super::NO_SKILL).unwrap().0,"无战技");
+        assert!(!include_str!("../../scene-assets/shop-catalog.txt").lines().any(|l|l.starts_with("4|30900|")));
+    }
     #[test]
     fn shield_and_bow_previews_never_leave_their_native_pool() {
         let run=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);

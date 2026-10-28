@@ -270,6 +270,8 @@ struct Runtime {
     ash_before:Vec<(u32,u32)>,
     ash_used:Option<u32>,
     larval_retry: Option<Instant>,
+    /// 本次游戏里已经为第几幕发过泪滴幼体：计数万一读不到，也只发一个，不会每 2 秒再发
+    larval_sent: Option<(u64,u8)>,
     deepen_retry: Option<Instant>,
     build_checked: Option<Instant>,
     boss_fight: super::boss_affixes::Fight,
@@ -327,6 +329,7 @@ fn fresh_runtime()->Runtime {
         ash_before:vec![],
         ash_used:None,
         larval_retry: None,
+        larval_sent: None,
         deepen_retry: None,
         build_checked: None,
         boss_fight: Default::default(),
@@ -881,7 +884,7 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     let data=unsafe {player.player_game_data.as_ref()};
     let owner=(data.character_id,game.save_slot);
     if game.save_slot<0{return Ok(false);}
-    if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,data.archetype)?);super::name_tags::load(owner);}
+    if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,data.archetype)?);super::name_tags::load(owner);super::auras::load(owner);}
     super::legacy::set_owner(owner);
     if let Some(run)=state.view.run.as_ref() {
         let run=ended_progress(run);
@@ -1132,8 +1135,9 @@ fn tick_locked() {
     // 称号：本机选用的称号随汇报发给房主；原版友方名牌按全队称号显示“称号·名字”（单人时恢复原名）
     if let Some(link)=state.party.as_mut() {link.title=super::name_tags::worn();}
     super::name_tags::sync(world,state.party.as_ref().map_or(&[][..],|l|&l.titles));
-    // 篝火营地的测伤假人（单人）：营地布置好后生成，离开营地撤下
-    let camp=state.party.is_none()&&!game.warp_requested&&state.room.as_ref().is_some_and(|r|r.kind==erdtree_tower::NodeKind::Camp&&!r.view.loading);
+    // 篝火营地的测伤假人：营地布置好后生成，离开营地撤下。联机时每人一个、只在本机生成（不同步），只统计自己的伤害；
+    // 营地的服务 NPC 用的是地图实体，不占用调试生成接口
+    let camp=!game.warp_requested&&state.room.as_ref().is_some_and(|r|r.kind==erdtree_tower::NodeKind::Camp&&!r.view.loading);
     if camp {
         let clock=super::weapon_glow::clock();
         let act=state.view.run.as_ref().map_or(1,|r|r.act);
@@ -1142,7 +1146,7 @@ fn tick_locked() {
         state.view.dummy=Some(dummy.view(clock));
     } else if let Some(dummy)=state.dummy.take() {dummy.retire(world);state.view.dummy=None;}
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
-    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());}
+    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());}
     if !game.warp_requested&&!state.view.travelling {
         if let Some(player)=world.main_player.as_mut(){super::star_stream::tick(&mut player.chr_ins,contract_run);}
     }
@@ -1241,7 +1245,7 @@ fn tick_locked() {
         match super::hub::Hub::new(identity,player_data.archetype) {
             Ok(hub)=>{
                 if let Ok(mut path)=SESSION_PATH.lock(){*path=Some(super::hub::path(identity,"json"));}
-                state.hub=Some(hub);state.hub_failed=None;super::name_tags::load(identity);
+                state.hub=Some(hub);state.hub_failed=None;super::name_tags::load(identity);super::auras::load(identity);
             },
             Err(error)=>{state.hub_failed=Some((identity,Instant::now()));report(&mut state,format!("旅程存档加载失败，未重置角色：{error}"));return;},
         }
@@ -1438,14 +1442,20 @@ fn tick_locked() {
     }
 
     let larval_due=state.larval_retry.is_none_or(|t|t.elapsed()>=Duration::from_secs(2));
+    let mut larval_sent=state.larval_sent;
     let larval=state.view.run.as_mut().filter(|run|larval_due&&run.larval_gift.pending(run.act)&&!matches!(run.phase,Phase::Dead|Phase::Won)).map(|run|{
         let before=run.larval_gift.clone();
         let target=run.larval_gift.begin(super::rebirth::count(player_data));
         if run.larval_gift!=before {record_checked(run)?;}
-        if super::rebirth::count(player_data)<target {super::items::give(&[(0x40000000|super::rebirth::TEAR,1,-1)])?;}
-        if !run.larval_gift.complete(run.act,super::rebirth::count(player_data)) {return Err("换幕泪滴幼体尚未进入背包，请清理容量后重试".to_string());}
+        let key=(run.initial_seed.unwrap_or(run.seed),run.act);
+        if super::rebirth::count(player_data)<target&&larval_sent!=Some(key) {
+            super::items::give(&[(0x40000000|super::rebirth::TEAR,1,-1)])?;larval_sent=Some(key);
+            super::log(format!("Act {} larval tear requested: held={} target={target}",run.act,super::rebirth::count(player_data)));
+        }
+        if !run.larval_gift.complete(run.act,super::rebirth::count(player_data)) {return Err("换幕泪滴幼体尚未到账：已发放过一次，若背包已满请清理后重启游戏，会再补发".to_string());}
         record(run);super::log(format!("Act {} larval tear delivered",run.act));Ok(())
     });
+    state.larval_sent=larval_sent;
     match larval {Some(Err(error))=>{state.larval_retry=Some(Instant::now());report(&mut state,error);},Some(Ok(()))=>state.larval_retry=None,None=>{}}
     let loading = state
         .travel

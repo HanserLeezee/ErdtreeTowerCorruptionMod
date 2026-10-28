@@ -1,0 +1,2 @@
+prompt:
+Square inventory icon for a dark fantasy roguelike, one single object centered and filling most of the frame, hand-painted in the style of Elden Ring item icons but an original design: muted desaturated colors, warm tarnished gold highlights, soft rim light, painterly brush texture, slight drop shadow, no text, no letters, no frame, no border, fully transparent background. Object: a tarnished spiked crown floating above a small glowing red rune sigil

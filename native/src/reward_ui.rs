@@ -43,6 +43,8 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
         (p[0].parse().unwrap(),Detail{icon:p[1].parse().unwrap(),name:p[2].into(),info:p[3].replace("\\n","\n"),caption:p[4].replace("\\n","\n"),stats:p[5].replace("\\n","\n"),skill:p[6].replace("\\n","\n")})
     }).collect();
     for (id,detail) in &mut result {
+        // 原版没有战技的盾牌，默认战灰是“无技能”，中文名是占位的“DLC dummy”
+        if detail.skill.starts_with("DLC dummy") {detail.skill="无\n这件装备原本没有战技，可在铁匠处安装战灰。".into();}
         if super::random_ashes::eligible(*id){detail.skill="获得时独立随机战灰\n包含本体与 DLC，已放开武器类型限制；获得后固定，可在铁匠处更换。".into();}
     }
     for item in erdtree_tower::rewards::CATALOG.iter().filter(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit) {
@@ -691,6 +693,10 @@ mod tests {
             assert_eq!(item_quality(item.id),erdtree_tower::talismans::tier(item.id).unwrap());
             assert_eq!(std::fs::metadata(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scene-assets/reward-icons").join(format!("{}.rgba",d.icon))).unwrap().len(),102400);
         }
+    }
+    #[test]
+    fn no_detail_shows_the_dlc_dummy_placeholder() {
+        assert!(DETAILS.values().all(|d|!d.skill.contains("DLC dummy")&&!d.info.contains("DLC dummy")));
     }
     #[test]
     fn fixed_skill_crossbows_keep_their_real_description() {

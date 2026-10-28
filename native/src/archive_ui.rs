@@ -18,7 +18,9 @@ pub struct Archive {records:Vec<Record>,codex:Codex,bosses:Vec<(u8,String)>,affi
     /// 职业传承：角色存档与读到的数据；class 是选中的职业，talent 是选中的开局护符，column 0 为职业列表、1 为护符列表
     legacy:Option<((u32,i32),Legacy)>,class:usize,talent:usize,column:usize,notice:Option<(String,f64)>,
     /// 称号页：已解锁的称号编号（按全部旅程档案算）、选中的行
-    titles:Vec<u8>,title_row:usize}
+    titles:Vec<u8>,title_row:usize,
+    /// 光环页：已解锁的光环编号、选中的行
+    auras:Vec<u8>,aura_row:usize}
 impl Archive {
     pub fn progression(records:Vec<Record>)->Self {
         let mut archive=Self::new(records);
@@ -29,6 +31,7 @@ impl Archive {
     pub fn new(records:Vec<Record>)->Self {
         let codex=journal::codex(&records);
         let titles=erdtree_tower::titles::TITLES.iter().map(|t|t.id).filter(|id|erdtree_tower::titles::unlocked(*id,&records)).collect();
+        let auras=erdtree_tower::auras::AURAS.iter().map(|a|a.id).filter(|id|erdtree_tower::auras::unlocked(*id,&records)).collect();
         let recent:Vec<Record>=records.into_iter().rev().take(LIMIT).collect();
         let mut bosses:Vec<(u8,String)>=Vec::new();
         for group in crate::enemies::debug_encounters() {
@@ -40,7 +43,7 @@ impl Archive {
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|t|t.as_secs());
         let legacy=crate::legacy::owner().map(|owner|(owner,crate::legacy::load(owner)));
         let class=recent_class(&recent).and_then(|c|Class::PLAYABLE.iter().position(|x|*x==c)).unwrap_or(0);
-        Self{records:recent,codex,bosses,affixes,tab:0,selected:0,focus:0,follow:true,opened:None,now,legacy,class,talent:0,column:1,notice:None,titles,title_row:0}
+        Self{records:recent,codex,bosses,affixes,tab:0,selected:0,focus:0,follow:true,opened:None,now,legacy,class,talent:0,column:1,notice:None,titles,title_row:0,auras,aura_row:0}
     }
     fn unlocked(&self,item:Item)->bool {
         match item {
@@ -111,6 +114,11 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
         if pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]) {archive.title_row=archive.title_row.saturating_sub(1);}
         if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {archive.title_row=(archive.title_row+1).min(count-1);}
         if pressed(&[Key::Enter,Key::GamepadFaceDown]) {wear(archive,archive.title_row,ui.time());}
+    } else if archive.tab==4 {
+        let count=erdtree_tower::auras::AURAS.len();
+        if pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]) {archive.aura_row=archive.aura_row.saturating_sub(1);}
+        if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {archive.aura_row=(archive.aura_row+1).min(count-1);}
+        if pressed(&[Key::Enter,Key::GamepadFaceDown]) {wear_aura(archive,archive.aura_row,ui.time());}
     } else {
         for (keys,dx,dy) in [(&[Key::LeftArrow,Key::A,Key::GamepadDpadLeft][..],-1.0,0.0),(&[Key::RightArrow,Key::D,Key::GamepadDpadRight][..],1.0,0.0),
             (&[Key::UpArrow,Key::W,Key::GamepadDpadUp][..],0.0,-1.0),(&[Key::DownArrow,Key::S,Key::GamepadDpadDown][..],0.0,1.0)] {
@@ -126,7 +134,7 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
         text(800.0,26.0,"旅 程 档 案",GOLD,1.9,0.5);
         // 分页标签
         for (i,label) in TABS.into_iter().enumerate() {
-            let x=560.0+i as f32*160.0;let active=archive.tab==i;
+            let x=800.0-(TABS.len()-1) as f32*80.0+i as f32*160.0;let active=archive.tab==i;
             ui.set_cursor_screen_pos(p(x-80.0,92.0));ui.set_window_font_scale(s);
             if ui.invisible_button(format!("tab-{i}"),[160.0*s,40.0*s])&&ready {archive.tab=i;archive.follow=true;}
             let hover=ui.is_item_hovered();
@@ -134,12 +142,13 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
             if active {ui.get_window_draw_list().add_rect(p(x-46.0,130.0),p(x+46.0,132.0),ImColor32::from_rgba(214,180,112,230)).filled(true).build();}
         }
         let draw=ui.get_window_draw_list();ornament(&draw,p(800.0,150.0),420.0*s,s);drop(draw);
-        match archive.tab {0=>history(ui,archive,icon,&mut action,moved,ready,s,ox,oy),1=>codex(ui,archive,&layout,icon,moved,s,ox,oy),2=>legacy(ui,archive,icon,moved,ready,s,ox,oy),_=>titles(ui,archive,moved,ready,s,ox,oy)}
+        match archive.tab {0=>history(ui,archive,icon,&mut action,moved,ready,s,ox,oy),1=>codex(ui,archive,&layout,icon,moved,s,ox,oy),2=>legacy(ui,archive,icon,moved,ready,s,ox,oy),3=>titles(ui,archive,moved,ready,s,ox,oy),_=>auras(ui,archive,moved,ready,s,ox,oy)}
         archive.follow=false;
         // 底部：操作提示与返回
         let hint=match archive.tab {0=>"上下键选择 · Enter / A 查看结算 · Q / E 或 LB / RB 切换分页",1=>"方向键选择 · 鼠标悬停查看 · Q / E 或 LB / RB 切换分页",
             2=>"上下键选择 · 右键进入护符列表 · Enter / A 或点击选用 · 每个职业单独计算，从下一局开始生效",
-            _=>"上下键选择 · Enter / A 或点击佩戴，再选一次摘下 · 联机时队友头顶的名牌会显示你的称号"};
+            3=>"上下键选择 · Enter / A 或点击佩戴，再选一次摘下 · 联机时队友头顶的名牌会显示你的称号",
+            _=>"上下键选择 · Enter / A 或点击换上，再选一次摘下 · 只有光效、不加数值，联机时队友也看得到"};
         text(60.0,846.0,hint,DIM,0.8,0.0);
         let pos=p(1220.0,822.0);let extent=[320.0*s,60.0*s];
         ui.set_cursor_screen_pos(pos);ui.set_window_font_scale(s);
@@ -342,7 +351,45 @@ fn codex(ui:&Ui,archive:&mut Archive,layout:&Layout,icon:&mut dyn FnMut(u32)->Op
     text(p(1130.0,764.0),"只统计非调试旅程，整局结束后计入",DIM,0.76,0.0);
 }
 
-const TABS:[&str;4]=["往期旅程","图鉴","传承","称号"];
+const TABS:[&str;5]=["往期旅程","图鉴","传承","称号","光环"];
+/// 换上第 row 个光环；已经挂着时摘下
+fn wear_aura(archive:&mut Archive,row:usize,now:f64) {
+    let aura=&erdtree_tower::auras::AURAS[row];
+    let Some((owner,_))=archive.legacy else{archive.notice=Some(("载入角色后才能更换光环".into(),now));return;};
+    if !archive.auras.contains(&aura.id) {archive.notice=Some((format!("尚未解锁：{}",aura.unlock),now));return;}
+    let id=if crate::auras::worn()==aura.id {0}else{aura.id};
+    archive.notice=Some((match crate::auras::choose(owner,id) {Ok(())=>if id==0 {"已摘下光环".into()}else{format!("已换上「{}」",aura.name)},Err(error)=>error},now));
+}
+#[allow(clippy::too_many_arguments)]
+fn auras(ui:&Ui,archive:&mut Archive,moved:bool,ready:bool,s:f32,ox:f32,oy:f32) {
+    let p=|x:f32,y:f32|[ox+x*s,oy+y*s];
+    let text=|x:f32,y:f32,value:&str,color:[f32;4],scale:f32,align:f32| {
+        ui.set_window_font_scale(scale*s);ui.set_cursor_screen_pos([ox+x*s-ui.calc_text_size(value)[0]*align,oy+y*s]);ui.text_colored(color,value);
+    };
+    let worn=crate::auras::worn();
+    text(800.0,176.0,&format!("已解锁 {} / {}",archive.auras.len(),erdtree_tower::auras::AURAS.len()),MUTED,0.9,0.5);
+    for (row,aura) in erdtree_tower::auras::AURAS.iter().enumerate() {
+        let (x,y)=(400.0,214.0+row as f32*64.0);let lit=archive.auras.contains(&aura.id);
+        ui.set_cursor_screen_pos(p(x,y));ui.set_window_font_scale(s);
+        if ui.invisible_button(format!("aura-{row}"),[800.0*s,56.0*s])&&ready {archive.aura_row=row;wear_aura(archive,row,ui.time());}
+        if ui.is_item_hovered()&&moved {archive.aura_row=row;}
+        let focus=archive.aura_row==row;let on=worn==aura.id;
+        let draw=ui.get_window_draw_list();
+        draw.add_rect(p(x,y),p(x+800.0,y+56.0),ImColor32::from_rgba(24,20,16,if focus{220}else{150})).filled(true).rounding(6.0*s).build();
+        if focus||on {draw.add_rect(p(x,y),p(x+800.0,y+56.0),ImColor32::from_rgba(214,180,112,if on{240}else{140})).rounding(6.0*s).thickness(if on{2.5}else{1.5}*s).build();}
+        let c=aura.color;let (r,g,b)=((c>>16) as u8,(c>>8) as u8,c as u8);
+        let pulse=if lit {0.6+0.4*(ui.time() as f32*2.2+row as f32).sin().abs()}else{0.25};
+        draw.add_circle(p(x+34.0,y+28.0),15.0*s,ImColor32::from_rgba(r,g,b,(70.0*pulse) as u8)).filled(true).build();
+        draw.add_circle(p(x+34.0,y+28.0),8.0*s,ImColor32::from_rgba(r,g,b,(255.0*pulse) as u8)).filled(true).build();
+        drop(draw);
+        let color=if lit{[f32::from(r)/255.0,f32::from(g)/255.0,f32::from(b)/255.0,1.0]}else{DIM};
+        text(x+64.0,y+8.0,if lit{aura.name}else{"？？？"},color,1.05,0.0);
+        text(x+64.0,y+32.0,&format!("原版光效：{}",aura.source),MUTED,0.72,0.0);
+        text(x+330.0,y+18.0,aura.unlock,if lit{MUTED}else{DIM},0.8,0.0);
+        if on {text(x+770.0,y+16.0,"已换上",GOLD,0.95,1.0);}
+    }
+    if let Some((notice,at))=&archive.notice {if ui.time()-at<3.0 {text(800.0,800.0,notice,GOLD,0.9,0.5);}}
+}
 /// 称号在自绘界面里的样子（与原版名牌上的 HUD 特效同色）
 pub fn title_style(style:erdtree_tower::titles::Style)->crate::fancy_text::Style {
     use crate::fancy_text::Effect;use erdtree_tower::titles::Style as T;

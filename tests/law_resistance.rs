@@ -9,7 +9,7 @@ fn resistance_paths_are_independent_and_preserve_old_codes() {
     assert_eq!(status.selected(),vec![29,30]);
     assert_eq!(elements.toggle(27),Law::default());
     assert_eq!(status.toggle(29),Law::default());
-    assert_eq!(Law::default().toggle(30),Law::default());
+    assert_eq!(Law::default().toggle(30),status,"choosing II also chooses I");
     for mask in [0,(1<<27)-1,elements.0,status.0,(1<<31)-1,u32::MAX] {
         let law=Law(mask);assert!(law.valid());
         assert_eq!(Law::parse(&law.code()),Some(law));
@@ -17,7 +17,7 @@ fn resistance_paths_are_independent_and_preserve_old_codes() {
     assert_eq!(Law((1<<27)-1).code().len(),7);
     assert_eq!(status.code().len(),8);
     // 第 32 个节点「词条强化」接在精英词条之后，占用最高位，旧律法码不变
-    assert_eq!(Law::default().toggle(31),Law::default());
+    assert_eq!(Law::default().toggle(31),Law::default().toggle(3).toggle(4).toggle(5).toggle(31),"choosing 词条强化 also chooses its route");
     let empowered=Law::default().toggle(3).toggle(4).toggle(5).toggle(31);
     assert!(empowered.empowered_affixes()&&empowered.valid());
     assert_eq!(Law::parse(&empowered.code()),Some(empowered));

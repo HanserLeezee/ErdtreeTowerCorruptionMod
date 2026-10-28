@@ -1,4 +1,4 @@
-use hudhook::imgui::{Condition,DrawListMut,ImColor32,Key,TextureId,Ui,WindowFlags};
+use hudhook::imgui::{Condition,DrawListMut,ImColor32,Key,Ui,WindowFlags};
 use erdtree_tower::law::{BRANCHES,GRADES,Law,NODES};
 
 pub enum LawAction {Start(Law),Back,Archive}
@@ -55,7 +55,7 @@ pub(crate) fn ornament(draw:&DrawListMut<'_>,center:[f32;2],half:f32,s:f32) {
     draw.add_polyline(vec![[x,y-5.0*s],[x+5.0*s,y],[x,y+5.0*s],[x-5.0*s,y]],ImColor32::from_rgba(214,180,112,240)).filled(true).build();
 }
 /// 苦难律法选择界面：左侧路线图，右侧已选列表，底部分数与开始按钮
-pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<TextureId>,record:Option<(u32,&str)>)->Option<LawAction> {
+pub fn draw(ui:&Ui,screen:&mut LawScreen,record:Option<(u32,&str)>)->Option<LawAction> {
     let size=ui.io().display_size;let s=(size[0]/1600.0).min(size[1]/900.0);
     let (ox,oy)=((size[0]-1600.0*s)*0.5,(size[1]-900.0*s)*0.5);let p=|x:f32,y:f32|[ox+x*s,oy+y*s];
     let background=ui.get_background_draw_list();crate::oath_art::background(&background,size);
@@ -139,10 +139,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
                 draw.add_rect_filled_multicolor(min,max,ImColor32::from_rgba(34,29,22,a),ImColor32::from_rgba(20,17,13,a),ImColor32::from_rgba(14,12,9,a),ImColor32::from_rgba(26,22,17,a));
             }
             draw.add_rect(p(x+5.0,y+5.0),p(x+49.0,y+49.0),ImColor32::from_rgba(0,0,0,150)).filled(true).rounding(3.0*s).build();
-            if let Some(texture)=icon(node.icon) {
-                let light=if chosen{255}else if open{200}else{70};
-                draw.add_image(texture,p(x+6.0,y+6.0),p(x+48.0,y+48.0)).col(ImColor32::from_rgba(light,light,light,255)).build();
-            }
+            crate::law_art::draw(&draw,node.art,p(x+6.0,y+6.0),p(x+48.0,y+48.0),if chosen{255}else if open{200}else{70});
             let border=if chosen{lit}else if focus{ImColor32::from_rgba(236,220,176,230)}else if open{ImColor32::from_rgba(150,126,84,200)}else{ImColor32::from_rgba(80,70,54,170)};
             draw.add_rect(min,max,border).rounding(4.0*s).thickness(if chosen||focus{2.2}else{1.0}*s).build();
             let tri=if chosen{ImColor32::from_rgba(255,236,200,255)}else if open{lit}else{gray};
@@ -186,7 +183,10 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,icon:&mut dyn FnMut(u32)->Option<Textur
         });
         if let Some(id)=hovered {
             let node=&NODES[id];let [x,y]=node_pos(id);
-            let lines=[node.name.to_string(),node.effect.to_string(),if screen.law.has(id){"已选择 · 再次点击取消（其后的节点一并取消）".into()}else if screen.law.available(id){format!("点击接受 · +{} 分",node.points)}else{format!("需要先选择「{}」",NODES[node.parent.unwrap()].name)}];
+            let lines=[node.name.to_string(),node.effect.to_string(),if screen.law.has(id){"已选择 · 再次点击取消（其后的节点一并取消）".into()}else if screen.law.available(id){format!("点击接受 · +{} 分",node.points)}else{
+                let missing=screen.law.missing_prerequisites(id);let points:u32=missing.iter().map(|&i|NODES[i].points).sum::<u32>()+node.points;
+                format!("点击连同前置「{}」一起接受 · +{points} 分",missing.iter().rev().map(|&i|NODES[i].name).collect::<Vec<_>>().join("、"))
+            }];
             ui.set_window_font_scale(0.85*s);let w=lines.iter().map(|l|ui.calc_text_size(l)[0]).fold(0.0,f32::max)/s+28.0;
             let (tx,ty)=((x+12.0).min(1040.0-w),if y+CARD[1]+90.0>776.0 {y-86.0}else{y+CARD[1]+8.0});
             let draw=ui.get_window_draw_list();panel(&draw,p(tx,ty),p(tx+w,ty+80.0),s);drop(draw);

@@ -1,12 +1,14 @@
 using SoulsFormats;
 static class BossAffixAssets {
     public const int First=9620000;
-    const int Resident=7030,Neutral=90400,PlayerStatus=4051;
+    const int Resident=7030,Neutral=90400,PlayerStatus=4051,VanillaRot=21001;
     static readonly string[] Cuts=["slashDamageCutRate","blowDamageCutRate","thrustDamageCutRate","neutralDamageCutRate","magicDamageCutRate","fireDamageCutRate","thunderDamageCutRate","darkDamageCutRate"];
     static readonly string[] Attacks=["physicsAttackPowerRate","magicAttackPowerRate","fireAttackPowerRate","thunderAttackPowerRate","darkAttackPowerRate"];
     static readonly string[] Kept=["spCategory","categoryPriority","effectTargetOpposeTarget","effectTargetFriendlyTarget","effectTargetSelfTarget","effectTargetSelf","effectTargetFriend","effectTargetEnemy","effectTargetPlayer","effectTargetAI","effectTargetLive","effectTargetGhost"];
     static (string,object)[] All(string[] fields,float value)=>fields.Select(f=>(f,(object)value)).ToArray();
-    // kind：0 挂在 Boss 身上（清空为中性的 7030），1 给玩家的一次性积累（4051），2 给玩家的短时效果（复制苦难律法玩家侧用过的 321300）
+    // kind：0 挂在 Boss 身上（清空为中性的 7030），1 给玩家的一次性积累（4051），2 给玩家的短时效果（复制苦难律法玩家侧用过的 321300），
+    // 3 原版“NPC：猩红腐败”（21001）原样复制：同一行里既有积累值、也有积满后 180 秒的持续扣血
+    // 21001 原本只能作用于“别人”（effectTargetSelf / SelfTarget 为 0），由原生 DLL 直接挂到玩家身上时会被忽略，所以打开这两项
     static (int id,string name,int kind,(string,object)[] fields)[] Rows=>[
         (First,"Tower boss affix stalwart",0,[("toughnessDamageCutRate",0.5f),("vfxId",8570)]),
         (First+10,"Tower boss affix bulwark",0,[..All(Cuts,0.75f),("vfxId",8510)]),
@@ -18,7 +20,7 @@ static class BossAffixAssets {
         (First+21,"Tower boss affix frenzied empowered",0,[..All(Attacks,1.35f),..All(Cuts,1.1f),("vfxId",1605000)]),
         (First+31,"Tower boss affix regenerating empowered",0,[("motionInterval",1f),("changeHpRate",-0.45f),("vfxId",1643000)]),
         (First+40,"Tower boss affix rot aura",0,[("vfxId",5)]),
-        (First+41,"Tower boss affix rot buildup",1,[("diseaseAttackPower",20)]),
+        (First+42,"Tower boss affix rot buildup (vanilla scarlet rot, self)",3,[("effectTargetSelf",1),("effectTargetSelfTarget",1)]),
         // 迅猛、荆棘整场挂着；吸血在每次回血时闪一下。每个词条叠 2～3 个原版的全身光效，颜色互相区分：
         // 迅猛（风之结晶露滴 + 刺客的手法 + 野兽的活力）、荆棘（荆棘斗篷 + 鲜血君王的欢愉 + 荆棘龟裂露滴）、吸血（血税 + 吸血龟裂露滴）
         (First+50,"Tower boss affix swift",0,[("vfxId",5846),("vfxId1",1651000),("vfxId2",1685000)]),
@@ -36,7 +38,9 @@ static class BossAffixAssets {
     ];
     static PARAM.Row Create(PARAM effects,(int id,string name,int kind,(string,object)[] fields) spec) {
         PARAM.Row row;
-        if(spec.kind==2) {
+        if(spec.kind==3) {
+            row=new PARAM.Row(effects.Rows.Single(r=>r.ID==VanillaRot)){ID=spec.id,Name=spec.name};
+        } else if(spec.kind==2) {
             row=new PARAM.Row(effects.Rows.Single(r=>r.ID==321300)){ID=spec.id,Name=spec.name};
             foreach(var (key,value) in new (string,object)[]{("iconId",-1),("spCategory",0),("categoryPriority",0),("saveCategory",-1),("dontDeleteOnDead",0),("magicSubCategoryChange1",0)})row[key].Value=Convert.ChangeType(value,row[key].Value.GetType());
             foreach(var element in new[]{"physics","magic","fire","thunder","dark"})row[element+"AttackRate"].Value=1f;
@@ -57,7 +61,7 @@ static class BossAffixAssets {
         foreach(var spec in Rows) {
             var row=effects.Rows.Single(r=>r.ID==spec.id);var expected=Create(effects,spec);
             foreach(var cell in expected.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,row[cell.Def.InternalName].Value))throw new Exception($"Boss affix effect mismatch: {spec.id} {cell.Def.InternalName}");
-            if(spec.kind!=1&&Convert.ToInt32(row["spCategory"].Value)!=0)throw new Exception($"Boss affix effect must not share a stacking category: {spec.id}");
+            if(spec.kind!=1&&spec.kind!=3&&Convert.ToInt32(row["spCategory"].Value)!=0)throw new Exception($"Boss affix effect must not share a stacking category: {spec.id}");
         }
     }
     public static void Patch(string input,string output) {

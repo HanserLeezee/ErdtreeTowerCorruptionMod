@@ -23,9 +23,17 @@ pub fn count(data:&eldenring::cs::PlayerGameData,id:u32)->u64 {
     use eldenring::cs::{ItemCategory,ItemId};
     let category=match id>>28 {0=>ItemCategory::Weapon,1=>ItemCategory::Protector,2=>ItemCategory::Accessory,4=>ItemCategory::Goods,_=>return 0};
     let Ok(target)=ItemId::new(category,id&0x0fffffff) else{return 0;};
-    let owns=|item|super::items::same_reward_item(item,target);
-    data.equipment.equip_inventory_data.items_data.items().filter(|e|owns(e.item_id)).map(|e|u64::from(e.quantity)).sum::<u64>()
-        +data.storage.as_ref().map_or(0,|s|s.items_data.items().filter(|e|owns(e.item_id)).map(|e|u64::from(e.quantity)).sum::<u64>())
+    held(data,|item|super::items::same_reward_item(item,target))
+}
+/// 持有数量（背包 + 仓库）。不用 items()：它只读“当前”重要物品列表，联机时（无缝联机下即使只有自己一人）
+/// 这个列表切换成联机用的重要物品列表，里面只有圣杯瓶类与露滴的复制品，泪滴幼体、石剑钥匙这类重要物品读不到。
+/// 这里普通物品照常累加，重要物品取单机列表与联机列表中较多的那份（复制品两边数量相同，不会重复计数）
+pub fn held(data:&eldenring::cs::PlayerGameData,owns:impl Fn(eldenring::cs::ItemId)->bool)->u64 {
+    use fromsoftware_shared::NonEmptyIteratorExt;
+    let sum=|list:&[fromsoftware_shared::MaybeEmpty<eldenring::cs::EquipInventoryDataListEntry>]|list.iter().non_empty().filter(|e|owns(e.item_id)).map(|e|u64::from(e.quantity)).sum::<u64>();
+    let bag=&data.equipment.equip_inventory_data.items_data;
+    let stored=data.storage.as_ref().map_or(0,|s|sum(s.items_data.normal_entries())+sum(s.items_data.key_entries()).max(sum(s.items_data.multiplay_key_entries())));
+    sum(bag.normal_entries())+sum(bag.key_entries()).max(sum(bag.multiplay_key_entries()))+stored
 }
 fn locked_choice(roll:u64,weapons:&[u32],crystals:&[u32])->Result<u32,String> {
     let pool=match roll%3 {2=>return Ok(0x40002724),1 if !crystals.is_empty()=>crystals,_=>weapons};

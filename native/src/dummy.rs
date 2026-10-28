@@ -1,6 +1,7 @@
 // 营地侧边的测伤假人：落地后固定姿态，保留伤害结算；停手时隐藏统计面板。
 // 按它每帧掉的生命统计伤害（出血、中毒等状态伤害也算）：从第一击开始一轮，停手 4 秒后结算；万一一击打空血条，按满血计并在 1 秒后重新生成。
 // 出血、中毒、腐败、冻伤按最大生命的百分比扣血，所以假人的生命取本幕 Boss 的典型生命（health），每帧补满，DPS 与实战一致。
+// 联机时也生成：调试生成的角色只存在于本机，队友看不到、打不到，所以每人各有一个、各算各的。
 use eldenring::cs::{ChrDebugSpawnRequest,ChrIns,ChrLoadStatus,FieldInsHandle,NpcParam,NpcThinkParam,SoloParamRepository,WorldChrMan};
 use fromsoftware_shared::{F32Vector4,FromStatic};
 use std::time::{Duration,Instant};

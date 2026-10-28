@@ -1,6 +1,7 @@
 use eldenring::cs::{ItemCategory,PlayerGameData};
 pub const TEAR:i32=8185;
+/// 泪滴幼体的持有数量（背包 + 仓库）。它是重要物品，必须用 loot::held 读：items() 在无缝联机下读不到它，
+/// 换幕发放时会以为没发到、每 2 秒再发一个
 pub fn count(data:&PlayerGameData)->u64 {
-    data.equipment.equip_inventory_data.items_data.items().filter(|e|e.item_id.category()==ItemCategory::Goods&&e.item_id.param_id()==TEAR as u32).map(|e|u64::from(e.quantity)).sum::<u64>()
-        +data.storage.as_ref().map_or(0,|s|s.items_data.items().filter(|e|e.item_id.category()==ItemCategory::Goods&&e.item_id.param_id()==TEAR as u32).map(|e|u64::from(e.quantity)).sum::<u64>())
+    super::loot::held(data,|item|item.category()==ItemCategory::Goods&&item.param_id()==TEAR as u32)
 }

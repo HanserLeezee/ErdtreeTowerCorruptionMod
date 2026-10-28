@@ -91,6 +91,8 @@ mod seamless_revival;
 mod weapon_glow;
 mod dummy;
 mod name_tags;
+mod auras;
+mod law_art;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -250,6 +252,7 @@ impl ImguiRenderLoop for TowerPreview {
         map_art::initialize(renderer);
         log("UI_INIT stage=oath_art");
         oath_art::initialize(renderer);
+        law_art::initialize(renderer);
         log("DX12 renderer initialized");
         // 正文与标题字体都只加载界面字表里的字（缺字表时退回原来的范围），字体贴图不会因为多一套字体而翻倍
         let ranges=|fallback:FontGlyphRanges|fancy_text::ui_glyph_ranges().map_or(fallback,FontGlyphRanges::from_slice);

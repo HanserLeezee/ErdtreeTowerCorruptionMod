@@ -28,6 +28,7 @@ pub mod debug;
 pub mod journal;
 pub mod legacy;
 pub mod titles;
+pub mod auras;
 
 pub mod music;
 pub mod options;

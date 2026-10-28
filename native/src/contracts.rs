@@ -118,10 +118,7 @@ pub fn give_with_ash(data:&mut PlayerGameData,id:u32,qty:u32,gem:i32)->Result<()
     if qty==0{return Ok(());}
     let category=if id>>28==4{ItemCategory::Goods}else{ItemCategory::Weapon};
     let item=ItemId::new(category,id&0x0fffffff).map_err(|e|e.to_string())?;
-    let count=|data:&PlayerGameData| {
-        data.equipment.equip_inventory_data.items_data.items().filter(|i|i.item_id==item).map(|i|u64::from(i.quantity)).sum::<u64>()
-            +data.storage.as_ref().map_or(0,|s|s.items_data.items().filter(|i|i.item_id==item).map(|i|u64::from(i.quantity)).sum::<u64>())
-    };
+    let count=|data:&PlayerGameData|super::loot::held(data,|i|i==item);
     let before=count(data);
     if category==ItemCategory::Goods&&before>0{return Ok(());}
     super::random_ashes::give(&[(id as i32,qty as i32,gem)])?;
