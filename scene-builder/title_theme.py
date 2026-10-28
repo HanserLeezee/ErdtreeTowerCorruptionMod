@@ -1,4 +1,9 @@
-"""Original vector title/loading skin. Rebuilds selected GFx scripts, preserving native timelines."""
+"""Title/loading skin. Rebuilds selected GFx scripts, preserving native timelines.
+
+Without --art the skin is the original vector drawing below. With --art <dir> (title.png, loading1.png … loading3.png, painted
+illustrations) the pictures are embedded as JPEG bitmaps placed on the native timelines (scene-builder/gfx_bitmap.py) and the script
+only adds translucent panels and text on top; each loading screen shows one of the act pictures at random.
+--rebase: --original holds menus already patched by this script (scene-assets/menu); the previous theme code is replaced."""
 import argparse
 import hashlib
 import json
@@ -10,6 +15,12 @@ import tempfile
 
 from PIL import Image, ImageDraw, ImageFont
 from native_name_glow import verify_tags
+import gfx_bitmap
+import re
+
+LOADING_ART = ['loading1', 'loading2', 'loading3']
+# 主菜单的时间轴以屏幕中心为原点
+ART_TIMELINE = {'title': ('_05_000_Title_fla.Timeline_1', (-960, -540)), 'loading': (None, (0, 0))}
 
 TARGETS = [
     ('05_000_title', '_05_000_Title_fla/Timeline_1.as', 'title'),
@@ -141,6 +152,116 @@ def methods(config,mode):
     '''
 
 
+def art_methods(config, mode):
+    """插画模式：背景是嵌入的位图（时间轴上的 TowerThemeArt* 实例），脚本只把它们压到最底层，再叠半透明面板与文字。"""
+    if mode == 'logo':
+        return methods(config, mode)
+    names = ['TowerThemeArt'] if mode == 'title' else ['TowerThemeArt' + str(i) for i in range(len(LOADING_ART))]
+    p = config['palette']
+    if mode == 'title':
+        panel = f'''
+          g.beginFill(0x0b0f0e,0.62);g.drawRoundRect(96,120,620,880,18,18);g.endFill();
+          g.lineStyle(2,0x{p['gold']},0.7);g.moveTo(130,348);g.lineTo(620,348);g.lineStyle();
+          towerThemeText(128,170,{json.dumps(config['subtitle'],ensure_ascii=False)},28,0x{p['gold']});
+          towerThemeText(122,225,{json.dumps(config['title'],ensure_ascii=False)},82,0x{p['paper']});
+          towerThemeText(130,375,{json.dumps(config['tagline'],ensure_ascii=False)},24,0xb9c2ae);
+          towerThemeText(130,930,"每一次攀登，都是新的选择",20,0xb9c2ae);'''
+        tick = '''
+        if(this["CommandList"]!=null){this["CommandList"].x=-550;this["CommandList"].y=90;}
+        if(this["PressStart"]!=null){this["PressStart"].x=-550;this["PressStart"].y=160;}'''
+    else:
+        panel = f'''
+          g.beginFill(0x070908,0.78);g.drawRect(0,760,1920,320);g.endFill();
+          g.lineStyle(2,0x{p['gold']},0.75);g.moveTo(120,762);g.lineTo(1800,762);g.lineStyle();
+          towerThemeText(130,782,{json.dumps(config['subtitle']+'  ·  '+config['loading_title'],ensure_ascii=False)},24,0x{p['gold']});
+          towerThemeTipTitle=towerThemeText(155,840,"",34,0x{p['paper']});
+          towerThemeTipBody=towerThemeText(155,898,"",25,0xc9cdbd);'''
+        tick = '''
+        if(this["BackImage"]!=null)this["BackImage"].visible=false;
+        if(this["Main"]!=null && this["Main"]["Knowledge"]!=null)this["Main"]["Knowledge"].visible=false;
+        var n:int=int(towerThemeFrames/240)%towerThemeTips.length;
+        towerThemeTipTitle.text=towerThemeTips[n][0];towerThemeTipBody.text=towerThemeTips[n][1];'''
+    return '''
+      private var towerTheme:flash.display.Sprite;
+      private var towerThemeFrames:int=0;
+      private var towerThemePick:int=-1;
+      private var towerThemeTipTitle:flash.text.TextField;
+      private var towerThemeTipBody:flash.text.TextField;
+      private var towerThemeArtNames:Array='''+json.dumps(names)+''';
+      private var towerThemeTips:Array='''+json.dumps(config['tips'],ensure_ascii=False)+''';
+      private function towerThemeText(x:Number,y:Number,value:String,size:int,color:uint):flash.text.TextField {
+        var t:flash.text.TextField=new flash.text.TextField();t.x=x;t.y=y;t.width=1100;t.height=140;
+        t.defaultTextFormat=new flash.text.TextFormat("MenuFont_01",size,color);t.embedFonts=true;
+        t.selectable=false;t.mouseEnabled=false;t.multiline=true;t.wordWrap=true;t.text=value;towerTheme.addChild(t);return t;
+      }
+      private function towerThemeTick(e:flash.events.Event):void {
+        towerThemeFrames++;
+        if(towerThemePick<0)towerThemePick=int(Math.random()*towerThemeArtNames.length)%towerThemeArtNames.length;
+        var bottom:int=0;
+        for(var i:int=0;i<towerThemeArtNames.length;i++){
+          var art:flash.display.DisplayObject=getChildByName(towerThemeArtNames[i]);
+          if(art==null)continue;
+          art.visible=(i==towerThemePick);
+          if(art.visible){if(getChildIndex(art)!=0)setChildIndex(art,0);bottom=1;}
+        }
+        if(towerTheme==null){
+          towerTheme=new flash.display.Sprite();towerTheme.mouseEnabled=false;towerTheme.mouseChildren=false;
+          '''+('towerTheme.x=-960; towerTheme.y=-540;' if mode=='title' else '')+'''
+          var g:flash.display.Graphics=towerTheme.graphics;
+          '''+panel+'''
+          addChildAt(towerTheme,Math.min(bottom,numChildren));
+        }
+        '''+tick+'''
+      }
+    '''
+
+
+def art_file(folder, name):
+    for suffix in ('.png', '.jpg'):
+        if (folder / (name + suffix)).exists():
+            return folder / (name + suffix)
+    raise FileNotFoundError(f'{name}.png / {name}.jpg missing in {folder}')
+
+
+def strip_theme(source, cls):
+    """--rebase：去掉上一次构建加入的成员与方法（构造函数里的 ENTER_FRAME 监听保留）。"""
+    constructor = '      public function ' + cls + '('
+    start = source.find('      private var towerTheme')
+    if start >= 0:
+        if source.find(constructor) < start:
+            raise ValueError('Rebase expects a menu patched by this script')
+        source = source[:start] + source[source.find(constructor):]
+    begin = source.find('      private function towerTheme')
+    if begin < 0:
+        raise ValueError('Rebase expects a menu patched by this script')
+    after = re.search(r'\n      (internal|public|private|protected) function (?!towerTheme)', source[begin:])
+    end = begin + after.start() + 1 if after else source.rindex('   }\n}')
+    return source[:begin] + source[end:]
+
+
+def render_art_preview(config, mode, art, path):
+    font = str(Path(__file__).resolve().parents[1] / 'scene-assets/fonts/TowerSerif-Regular.otf')
+    image = Image.open(art).convert('RGB').resize((1920, 1080), Image.LANCZOS).convert('RGBA')
+    layer = Image.new('RGBA', image.size); d = ImageDraw.Draw(layer); p = config['palette']; hexc = lambda c: '#' + c
+    if mode == 'title':
+        d.rounded_rectangle((96, 120, 716, 1000), 9, fill=(11, 15, 14, 158))
+        d.line([(130, 348), (620, 348)], fill=hexc(p['gold']), width=2)
+        d.text((128, 170), config['subtitle'], font=ImageFont.truetype(font, 28), fill=hexc(p['gold']))
+        d.text((122, 225), config['title'], font=ImageFont.truetype(font, 82), fill=hexc(p['paper']))
+        d.text((130, 375), config['tagline'], font=ImageFont.truetype(font, 24), fill='#b9c2ae')
+        d.text((130, 930), '每一次攀登，都是新的选择', font=ImageFont.truetype(font, 20), fill='#b9c2ae')
+        for i, label in enumerate(['继续旅程', '载入游戏', '开始新旅程', '系统设置', '结束游戏']):
+            d.text((220, 555 + i * 63), label, font=ImageFont.truetype(font, 32), fill=hexc(p['paper']))
+        d.polygon([(182, 563), (198, 577), (182, 590)], fill=hexc(p['gold']))
+    else:
+        d.rectangle((0, 760, 1920, 1080), fill=(7, 9, 8, 199))
+        d.line([(120, 762), (1800, 762)], fill=hexc(p['gold']), width=2)
+        d.text((130, 782), config['subtitle'] + '  ·  ' + config['loading_title'], font=ImageFont.truetype(font, 24), fill=hexc(p['gold']))
+        d.text((155, 840), config['tips'][0][0], font=ImageFont.truetype(font, 34), fill=hexc(p['paper']))
+        d.text((155, 898), config['tips'][0][1], font=ImageFont.truetype(font, 25), fill='#c9cdbd')
+    Image.alpha_composite(image, layer).convert('RGB').save(path)
+
+
 def build(args):
     config=json.loads(args.config.read_text(encoding='utf-8'))
     args.output.mkdir(parents=True,exist_ok=False);(args.output/'menu').mkdir()
@@ -155,9 +276,12 @@ def build(args):
             tmp=Path(tmp);run('-export','script',tmp/'before',src)
             before=tmp/'before/scripts'/relative;source=before.read_text(encoding='utf-8-sig')
             marker='      public function '+Path(relative).stem+'('
-            assert marker in source and 'towerTheme' not in source
-            source=source.replace(marker,methods(config,mode)+'\n'+marker,1)
-            source=source.replace('super();','super();\n         addEventListener(flash.events.Event.ENTER_FRAME,towerThemeTick);',1)
+            assert marker in source
+            if args.rebase: source=strip_theme(source,Path(relative).stem)
+            else:
+                assert 'towerTheme' not in source
+                source=source.replace('super();','super();\n         addEventListener(flash.events.Event.ENTER_FRAME,towerThemeTick);',1)
+            source=source.replace(marker,(art_methods(config,mode) if args.art else methods(config,mode))+'\n'+marker,1)
             changed=tmp/'changed'/relative;changed.parent.mkdir(parents=True);changed.write_text(source,encoding='utf-8')
             run('-importScript',src,dst,tmp/'changed');count=verify_tags(src.read_bytes(),dst.read_bytes())
             run('-export','script',tmp/'after',dst)
@@ -165,9 +289,21 @@ def build(args):
                 rel=original.relative_to(tmp/'before/scripts');after=tmp/'after/scripts'/rel
                 if str(rel).replace('\\','/')!=relative and original.read_bytes()!=after.read_bytes():raise ValueError('Unrelated script changed: '+str(rel))
             actual=(tmp/'after/scripts'/relative).read_text(encoding='utf-8-sig')
-            assert 'towerThemeTick' in actual
-        manifest.append(dict(file='menu/'+src.name,sha256=hashlib.sha256(dst.read_bytes()).hexdigest(),tagsVerified=count))
-    for mode in ['title','loading']:render_preview(artwork(config,mode),config,mode,args.output/(mode+'-design-preview.png'))
+            assert 'towerThemeTick' in actual and actual.count('addEventListener(Event.ENTER_FRAME,towerThemeTick)')+actual.count('addEventListener(flash.events.Event.ENTER_FRAME,towerThemeTick)')==1
+        art_count=0
+        if args.art and mode!='logo':
+            names=['TowerThemeArt'] if mode=='title' else ['TowerThemeArt'+str(i) for i in range(len(LOADING_ART))]
+            files=['title'] if mode=='title' else LOADING_ART
+            pictures=[(n,gfx_bitmap.jpeg(art_file(args.art,f))) for n,f in zip(names,files)]
+            timeline,offset=ART_TIMELINE[mode]
+            scripted=dst.read_bytes();final=gfx_bitmap.embed(scripted,pictures,timeline,offset)
+            gfx_bitmap.verify(scripted,final,[p for _,p in pictures],timeline);dst.write_bytes(final);art_count=len(pictures)
+        manifest.append(dict(file='menu/'+src.name,sha256=hashlib.sha256(dst.read_bytes()).hexdigest(),tagsVerified=count,artwork=art_count,rebasedFromPatched=args.rebase))
+    if args.art:
+        render_art_preview(config,'title',art_file(args.art,'title'),args.output/'title-design-preview.png')
+        for f in LOADING_ART: render_art_preview(config,'loading',art_file(args.art,f),args.output/(f+'-design-preview.png'))
+    else:
+        for mode in ['title','loading']:render_preview(artwork(config,mode),config,mode,args.output/(mode+'-design-preview.png'))
     (args.output/'manifest.json').write_text(json.dumps(dict(gameVerified=False,preview='Design preview; native menu labels are illustrative',files=manifest),indent=2),encoding='utf-8')
     print('Built four GFx resources; native timelines and unrelated scripts preserved')
 
@@ -177,4 +313,6 @@ if __name__=='__main__':
     parser.add_argument('--config',type=Path,default=Path(__file__).with_name('title_theme.json'))
     parser.add_argument('--original',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--ffdec',type=Path,required=True);parser.add_argument('--java',default='java')
+    parser.add_argument('--art',type=Path,help='folder with title and loading1-3 painted illustrations (.png or .jpg)')
+    parser.add_argument('--rebase',action='store_true',help='--original holds menus already patched by this script')
     build(parser.parse_args())

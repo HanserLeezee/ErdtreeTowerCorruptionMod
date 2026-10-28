@@ -4,23 +4,31 @@
   "files": [
     {
       "file": "menu/05_000_title.gfx",
-      "sha256": "3dfcf2e1fd9712023ede2d2956aa084c150c530eaad50150c50d417a32fc02a4",
-      "tagsVerified": 54
+      "sha256": "77e7db25475d01f0cce491f40efe945638de92b54f812580b6506f0555418cae",
+      "tagsVerified": 54,
+      "artwork": 1,
+      "rebasedFromPatched": true
     },
     {
       "file": "menu/05_001_title_logo.gfx",
-      "sha256": "52bd0cf8a8f42f0372d5509b7621492481a98d102a3237be341e5faa4c1dd7c9",
-      "tagsVerified": 233
+      "sha256": "57b81d422dc47f0d1117b01815683ec25645887c41d4c068ca7894994901f847",
+      "tagsVerified": 233,
+      "artwork": 0,
+      "rebasedFromPatched": true
     },
     {
       "file": "menu/02_903_nowloading2.gfx",
-      "sha256": "ef0bbd920899fbf3ae563b09f52167d48af111f4c88a8e2d0bda3a8023d2f6c3",
-      "tagsVerified": 327
+      "sha256": "d79e7eac8267e9f61adde4ef7a44c2d7bb74c1c1f9b391d26b99346e061378da",
+      "tagsVerified": 327,
+      "artwork": 3,
+      "rebasedFromPatched": true
     },
     {
       "file": "menu/02_904_nowloading3.gfx",
-      "sha256": "e738819453592a8aa80e436f73c5bab1bf16781830f6adcf4aeae9d3e207c80d",
-      "tagsVerified": 200
+      "sha256": "c85d194e734072054107c368511e00f41e3a6823efbcfe8b5c1d8300d5381fdd",
+      "tagsVerified": 200,
+      "artwork": 3,
+      "rebasedFromPatched": true
     }
   ]
 }
