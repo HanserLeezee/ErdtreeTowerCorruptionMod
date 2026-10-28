@@ -279,6 +279,7 @@ impl NativeTalk {
                 } else if self.service == 2 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                     super::native_shop::refresh_weapon_levels(unsafe {player.player_game_data.as_ref()})?;
+                    super::native_shop::log_view();
                     self.event(22, &[super::native_shop::GOODS as i32, (super::native_shop::GOODS+super::native_shop::STOCK_COUNT-1) as i32])?;
                     self.state = 3;
                 } else if self.service == 0 {

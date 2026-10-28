@@ -234,6 +234,20 @@ impl StockGuard {
         }
     }
 }
+/// [HansFix] 打开商店时记录每个槽位：已购标记、售卖上限与参数里的库存标记；只列出可能显示为 0 的槽位
+pub fn log_view() {
+    let (Ok(params),Ok(flags))=(unsafe {SoloParamRepository::instance()},unsafe {CSEventFlagMan::instance_mut()}) else{return};
+    let bought=read_slots(flags);
+    let mut odd=Vec::new();
+    for i in 0..STOCK_COUNT {
+        let Some(row)=params.get::<ShopLineupParam>(GOODS+i) else{odd.push(format!("{i}:missing"));continue};
+        let flag=row.event_flag_for_stock();
+        if bought[i as usize]!=0||row.sell_quantity()<=0||flag!=stock_flag(i) {
+            odd.push(format!("{i}:item={} sell={} bought={} flag={} expected={}",row.equip_id(),row.sell_quantity(),bought[i as usize],flag,stock_flag(i)));
+        }
+    }
+    super::log(format!("SHOP_VIEW slots_with_stock_issue={}",if odd.is_empty() {"none".to_owned()} else {odd.join("; ")}));
+}
 fn stock_flag(index:u32)->u32 {if index<21 {STOCK_FLAGS+index*8}else if index<26 {45020700+(index-21)*8}else{45020600+(index-26)*8}}
 #[test]
 fn random_shop_only_sells_base_talismans() {

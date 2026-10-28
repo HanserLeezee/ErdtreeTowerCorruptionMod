@@ -344,13 +344,17 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let key=format!("UI visible={} snapshot={} capture={} settlement={} view={:?}",self.visible,snapshot.is_some(),input::CAPTURE.load(Ordering::Relaxed),run_screen,view.as_ref().map(|v|(v.ready,v.busy,v.travelling,v.room.is_some(),v.shared_event,v.prompt)));
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
-        if run_screen {map_ui::set_peek(false);return;}
+        if run_screen {map_ui::set_peek_because(false,"run-screen");return;}
         // [HansFix7] N opens/closes a read-only route map anywhere in a journey (not over the normal map).
         let journey=view.as_ref().and_then(|v|v.run.as_ref()).filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won));
-        if !hansfix::merchant()||journey.is_none()||map_open {map_ui::set_peek(false);}
-        else if ui.is_key_pressed_no_repeat(hansfix::map_key())&&!ui.io().want_text_input {map_ui::set_peek(!map_ui::peek());}
+        if !hansfix::merchant() {map_ui::set_peek_because(false,"disabled");}
+        else if journey.is_none() {map_ui::set_peek_because(false,"no-journey");}
+        else if map_open {map_ui::set_peek_because(false,"route-map");}
+        else if ui.is_key_pressed_no_repeat(hansfix::map_key())&&!ui.io().want_text_input&&map_ui::peek_settled(ui.time()) {
+            map_ui::peek_toggled(ui.time());map_ui::set_peek(!map_ui::peek());
+        }
         if map_ui::peek()&&let (Some(run),Some(view))=(journey,view.as_ref()) {
-            if map_ui::draw_peek(ui,run,view) {map_ui::set_peek(false);}
+            if map_ui::draw_peek(ui,run,view) {map_ui::set_peek_because(false,"esc-or-b");}
             return;
         }
         if let Some(view) = &view {

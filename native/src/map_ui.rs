@@ -86,7 +86,7 @@ mod tests {
         let mut run=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);
         let first=run.available()[0];run.enter(first).unwrap();
         let mut view=crate::runtime::view().unwrap();view.ready=true;view.busy=false;
-        super::TEST_ENTERED.with(|e|e.set(usize::MAX));super::set_peek(false);super::set_peek(true);
+        super::TEST_ENTERED.with(|e|e.set(usize::MAX));super::set_peek(false);super::set_peek(true);super::peek_toggled(-10.0);
         for _ in 0..3 {assert!(!super::draw_peek(context.frame(),&run,&view));assert!(context.render().total_vtx_count>0);}
         context.io_mut().add_key_event(hudhook::imgui::Key::GamepadFaceDown,true);
         super::draw_peek(context.frame(),&run,&view);let data=context.render();
@@ -257,11 +257,16 @@ pub fn class_name(class: Class) -> &'static str {
 static PEEK:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub fn peek()->bool {PEEK.load(Ordering::Relaxed)}
 static PEEK_FOCUS:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
-pub fn set_peek(open:bool) {if PEEK.swap(open,Ordering::Relaxed)!=open {PEEK_FOCUS.store(open,Ordering::Relaxed);crate::log(format!("MAP_PEEK open={open}"));}}
+pub fn set_peek(open:bool) {set_peek_because(open,"key");}
+pub fn set_peek_because(open:bool,reason:&str) {if PEEK.swap(open,Ordering::Relaxed)!=open {PEEK_FOCUS.store(open,Ordering::Relaxed);crate::log(format!("MAP_PEEK open={open} reason={reason}"));}}
+/// [HansFix] 同一次按键在捕获输入切换时会被游戏再报一次“按下”：开关后 0.4 秒内的再次切换与关闭一律忽略
+static PEEK_AT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+pub fn peek_settled(now:f64)->bool {now-f64::from_bits(PEEK_AT.load(Ordering::Relaxed))>=0.4}
+pub fn peek_toggled(now:f64) {PEEK_AT.store(now.to_bits(),Ordering::Relaxed);}
 /// Read-only map: shows the route, drawings and the current position; nothing can be entered or drawn.
 /// Returns true when the player asks to close it (B on a controller).
 pub fn draw_peek(ui: &Ui, run: &Run, view: &View)->bool {
-    if ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadFaceRight)||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::Escape) {return true;}
+    if peek_settled(ui.time())&&(ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadFaceRight)||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::Escape)) {return true;}
     let size=ui.io().display_size;
     let scale=(size[0]/1600.0).min(size[1]/900.0).clamp(0.65,1.6);
     let margin=18.0*scale;

@@ -263,6 +263,7 @@ struct Runtime {
     boss_fight: super::boss_affixes::Fight,
     growth: super::scaling::Growth,
     hansfix_descent: super::hansfix::Descent,
+    storm_revive_wait: Option<Instant>,
     law_fight: super::law::Fight,
     ember_fight: super::embers::Fight,
     bout: super::debug_menu::Bout,
@@ -321,6 +322,7 @@ fn fresh_runtime()->Runtime {
         boss_fight: Default::default(),
         growth: Default::default(),
         hansfix_descent: Default::default(),
+        storm_revive_wait: None,
         law_fight: Default::default(),
         ember_fight: Default::default(),
         bout: Default::default(),
@@ -781,7 +783,8 @@ fn tick_revival(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     if state.party_death_wave!=wave {
         state.party_death_wave=wave;state.party_death=Default::default();super::seamless_revival::cancel();
     }
-    let victory=link.is_some_and(|p|p.victory||p.event.victory());
+    // [HansFix] 跑城（史东薇尔突围）与战车挑战：有队友完成即算胜利，倒下的队员也在原地复活
+    let victory=link.is_some_and(|p|p.victory||p.event.victory()||p.event.storm_decision==Some(erdtree_tower::stormveil::Decision::Complete));
     if epoch.is_some()&&victory {super::seamless_revival::tick(world,game);}
     let player=world.main_player.as_ref().map(|p|{
         let pos=&p.chr_ins.modules.physics.position;
@@ -2932,7 +2935,14 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
         link.event.storm_finish=reached;
         link.event.storm_decision==Some(Decision::Complete)
     }else{reached};
-    if !complete{return Ok(());}
+    if !complete{state.storm_revive_wait=None;return Ok(());}
+    // [HansFix] 队友先到终点时，倒下的队员先在原地复活再一起结束挑战（最多等 20 秒，复活不可用时照常结束）
+    if !alive&&state.party.is_some()&&super::seamless_revival::available() {
+        let since=*state.storm_revive_wait.get_or_insert_with(Instant::now);
+        if since.elapsed()<Duration::from_secs(20) {return Ok(());}
+        super::log("PARTY_REVIVE stormveil: revival did not finish in 20 s; completing while dead");
+    }
+    state.storm_revive_wait=None;
     let mut next=state.view.run.clone().ok_or("旅程未加载")?;
     if next.regional_event.stormveil!=Some(Progress::Running){return Err("跑城进度不匹配".into());}
     super::elite::validate()?;
