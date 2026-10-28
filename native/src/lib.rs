@@ -387,7 +387,7 @@ impl ImguiRenderLoop for TowerPreview {
                     if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
                     else if run.contract_pending()||matches!(run.phase,Phase::Reward{..}) {self.rewards.draw(ui,run,view);}
                     else {
-                        if map_ui::draw(ui, run, view, &vitals) {self.visible=false;}
+                        map_ui::draw(ui, run, view, &vitals);
                         if build_panel::open() {let rewards=&mut self.rewards;build_panel::draw(ui,run,view,&mut |icon|rewards.icon(icon));}
                     }
                 }

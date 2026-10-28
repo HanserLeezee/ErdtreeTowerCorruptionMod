@@ -96,9 +96,10 @@ mod tests {
         crate::run_screen::test_frames(&mut context);
         context.io_mut().config_flags.insert(hudhook::imgui::ConfigFlags::NAV_ENABLE_GAMEPAD);
         context.io_mut().backend_flags.insert(hudhook::imgui::BackendFlags::HAS_GAMEPAD);
+        // Esc 与 B 都不关路线图（draw 不再返回“关闭”）
         for key in [hudhook::imgui::Key::Escape,hudhook::imgui::Key::GamepadFaceRight] {
             context.io_mut().add_key_event(key,true);
-            assert_eq!(super::draw(context.frame(),&run,&view,""),key==hudhook::imgui::Key::GamepadFaceRight,"Only B may close the map");
+            super::draw(context.frame(),&run,&view,"");
             context.render();
             context.io_mut().add_key_event(key,false);
             super::draw(context.frame(),&run,&view,"");context.render();
@@ -197,8 +198,8 @@ pub fn class_name(class: Class) -> &'static str {
 }
 
 
-pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str)->bool {
-    if ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadFaceRight) {return true;}
+/// 选路阶段的路线图常驻：没有关闭键（手柄 B 原来能关，关掉后手柄没有办法再打开，键盘也一直关不掉）
+pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
     let size=ui.io().display_size;
     let scale=(size[0]/1600.0).min(size[1]/900.0).clamp(0.65,1.6);
     let left=0.0;let right=165.0*scale;let margin=18.0*scale;
@@ -254,7 +255,6 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str)->bool {
             });
             drop(_popup);drop(_ink);drop(_paper);
         });
-    false
 }
 pub(crate) fn reward_description(run: &Run, reward: &Reward) -> String {
     match reward {
