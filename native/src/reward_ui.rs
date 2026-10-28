@@ -59,6 +59,15 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
 /// 构筑面板里的一件词条装备：图标、品质、名字与带数值的词条
 #[derive(Clone,Debug,Default,PartialEq)]
 pub struct Gear {pub icon:u32,pub quality:u8,pub name:String,pub lines:Vec<String>}
+/// [HansFix] 构筑面板：本局扭曲过的装备显示改动后的词条
+pub fn affix_summary_in(run:Option<&Run>,id:u32)->Option<Gear> {
+    let mut gear=affix_summary(id)?;
+    if let Some(cursed)=run.and_then(|r|r.cursed_item(id)) {
+        gear.name=format!("扭曲·{}",gear.name);
+        for line in &mut gear.lines {*line=erdtree_tower::descent::rewrite(line,cursed);}
+    }
+    Some(gear)
+}
 pub fn affix_summary(id:u32)->Option<Gear> {
     let quality=erdtree_tower::affixes::tier(id)?;
     let detail=DETAILS.get(&id)?;
@@ -130,10 +139,17 @@ fn card_summary(detail:&Detail)->String {
     }
     detail.caption.split("\n\n").next().unwrap_or("").replace('\n',"")
 }
+fn curse_detail(detail:&mut Detail,cursed:&erdtree_tower::descent::Cursed) {
+    detail.name=format!("扭曲·{}",detail.name);
+    detail.info=format!("{}\n红色关卡奖励：一个词条 ×2、一个词条 ×-1（只有一个词条时二选一）",erdtree_tower::descent::rewrite(&detail.info,cursed));
+    detail.caption=erdtree_tower::descent::rewrite(&detail.caption,cursed);
+}
 fn offer_detail(run:&Run,node:usize,slot:usize,reward:&Reward)->Option<Detail> {
     let id=item_id(run,reward)?;let mut detail=DETAILS.get(&id)?.clone();
     let gem=super::random_ashes::preview(run,node,slot,id);
     if let Some((name,text))=super::random_ashes::description(gem){detail.skill=format!("{name}\n{}",text.replace("\\n","\n"));}
+    // [HansFix] 游龙·红色关卡：词条被扭曲的装备显示改动后的数值
+    if let Some(cursed)=run.curse(node,reward) {curse_detail(&mut detail,&cursed);}
     Some(detail)
 }
 #[derive(Default)]
@@ -693,6 +709,24 @@ mod tests {
             assert_eq!(item_quality(item.id),erdtree_tower::talismans::tier(item.id).unwrap());
             assert_eq!(std::fs::metadata(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scene-assets/reward-icons").join(format!("{}.rgba",d.icon))).unwrap().len(),102400);
         }
+    }
+    #[test]
+    fn cursed_gear_shows_the_doubled_and_negated_values() {
+        let mut checked=0;
+        for id in [160020000u32,160030000,288437456,288438456] {
+            let Some(cursed)=erdtree_tower::descent::plan(9,4,id) else{continue};
+            let mut detail=DETAILS[&id].clone();let before=detail.info.clone();
+            super::curse_detail(&mut detail,&cursed);
+            assert!(detail.name.starts_with("扭曲·"));assert_ne!(detail.info,before);
+            assert!(detail.info.contains("（×2）")||detail.info.contains("（×-1）"),"{}",detail.info);
+            let run=Run::new(9,erdtree_tower::Class::Samurai);
+            let mut owned=run.clone();owned.claimed_items.push(id);owned.cursed.push(cursed.clone());
+            let gear=super::affix_summary_in(Some(&owned),id).unwrap();
+            assert!(gear.name.starts_with("扭曲·")&&gear.lines.iter().any(|l|l.contains('×')),"{gear:?}");
+            assert_eq!(super::affix_summary_in(Some(&run),id),super::affix_summary(id));
+            checked+=1;
+        }
+        assert!(checked>=2);
     }
     #[test]
     fn fixed_skill_crossbows_keep_their_real_description() {

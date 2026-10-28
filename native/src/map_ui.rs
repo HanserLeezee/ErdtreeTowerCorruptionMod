@@ -125,6 +125,26 @@ mod tests {
         if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {
             crate::reward_ui::write_peek_frame(&std::path::PathBuf::from(path).join("map-wander-1920.draw"),data,1920,1080);
         }
+        // [HansFix] 游龙·向下：红色的可选关卡与向下次数
+        let mut red=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);red.set_wander(true).unwrap();
+        for _ in 0..6 {
+            if red.available().iter().any(|&id|red.descent_choice(id))&&red.descents()>0 {break;}
+            let options=red.available();
+            let pick=options.iter().copied().find(|&id|red.descent_choice(id)&&red.descents()==0).unwrap_or(options[0]);
+            red.enter(pick).unwrap();
+            match red.nodes[pick].kind {
+                erdtree_tower::NodeKind::Monster|erdtree_tower::NodeKind::Elite=>{red.win_combat().unwrap();red.decline_reward().unwrap();},
+                erdtree_tower::NodeKind::Camp=>red.leave_camp().unwrap(),erdtree_tower::NodeKind::Shop=>red.leave_shop().unwrap(),
+                erdtree_tower::NodeKind::Chest=>red.finish_chest().unwrap(),erdtree_tower::NodeKind::Event=>red.resolve_event(false).unwrap(),_=>break,
+            }
+        }
+        assert!(red.available().iter().any(|&id|red.descent_choice(id)),"a downward choice is on the map");
+        super::draw(context.frame(), &red, &view, "HP 455/455");context.render();
+        super::draw(context.frame(), &red, &view, "HP 455/455");
+        let data=context.render();
+        if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {
+            crate::reward_ui::write_peek_frame(&std::path::PathBuf::from(path).join("map-descent-1920.draw"),data,1920,1080);
+        }
         crate::hansfix::set(false,false);
         crate::reward_ui::test_frames(&mut context);
         crate::run_screen::test_frames(&mut context);
@@ -294,6 +314,13 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
             } else if run.wander {
                 ui.text("游龙模式");
             }
+            // [HansFix] 游龙：整局向下次数，记录在开关下方
+            if run.wander {
+                ui.set_cursor_pos([size[0]-right+margin,742.0*scale]);
+                let n=run.descents();
+                let color=if n>0 {[0.78,0.20,0.15,1.0]} else {[0.80,0.74,0.60,1.0]};
+                ui.text_colored(color,format!("向下次数：{n}"));
+            }
             ui.set_cursor_pos([size[0]-right+margin,size[1]-126.0*scale]);
             if ui.button_with_size(format!("档案  [{}]",crate::options::label(erdtree_tower::options::Hotkey::Archive)),[right-2.0*margin,44.0*scale])||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadBack) {
                 crate::run_screen::archive_entry();
@@ -459,7 +486,9 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
             } else if taken {
                 ImColor32::from_rgb(60, 94, 67)
             } else if run.visited.last()==Some(&id)&&available.contains(&next)||run.visited.last()==Some(&next)&&available.contains(&id) {
-                ImColor32::from_rgb(179,126,32)
+                // [HansFix] 游龙：通向向下关卡的连线用红色
+                let target=if available.contains(&next){next}else{id};
+                if run.descent_choice(target) {ImColor32::from_rgb(178,52,40)} else {ImColor32::from_rgb(179,126,32)}
             } else {
                 ImColor32::from_rgba(78, 64, 39, 165)
             };
@@ -479,6 +508,7 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
             }
         }
     }
+    let descents=run.descent_path();
     for (id, node) in run.nodes.iter().enumerate() {
         if !reachable[id] { continue; }
         let pos = point(id);
@@ -486,27 +516,35 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
         let focus=emphasis[id];
         let zoom=1.0+0.18*focus-if pressed==Some(id){0.09}else{0.0};
         let visited = run.visited.contains(&id);
-        let color = if visited {
+        // [HansFix] 游龙：向下的关卡（可选的与已走过的）标红，提示难度更高
+        let descent=enabled&&run.descent_choice(id);
+        let red_visited=visited&&descents.contains(&id);
+        let color = if red_visited {
+            ImColor32::from_rgb(150, 42, 34)
+        } else if visited {
             ImColor32::from_rgb(50, 95, 61)
         } else if enabled {
             ink
         } else {
             ImColor32::from_rgb(139, 122, 88)
         };
-        let paper = if enabled {
+        let paper = if descent {
+            ImColor32::from_rgb(238, 150, 132)
+        } else if enabled {
             ImColor32::from_rgb(232, 202, 127)
         } else {
             ImColor32::from_rgb(215, 202, 169)
         };
         if enabled {
             for ring in 0..4 {
-                draw.add_circle(pos,radius+5.0+ring as f32*4.0,ImColor32::from_rgba(233,163,43,(focus*(50.0-ring as f32*10.0)) as u8)).thickness(5.0).build();
+                let (r,g,b)=if descent {(226,58,40)} else {(233,163,43)};
+                draw.add_circle(pos,radius+5.0+ring as f32*4.0,ImColor32::from_rgba(r,g,b,(focus*(50.0-ring as f32*10.0)) as u8)).thickness(5.0).build();
             }
             let pulse = (ui.time() as f32 * 2.0).sin() * 2.0;
             draw.add_circle(
                 pos,
                 radius + 9.0 + pulse,
-                ImColor32::from_rgba(149, 102, 26, 115),
+                if descent {ImColor32::from_rgba(170, 38, 28, 150)} else {ImColor32::from_rgba(149, 102, 26, 115)},
             )
             .thickness(1.5)
             .build();

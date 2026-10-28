@@ -19,6 +19,8 @@ static STALE:std::sync::OnceLock<String>=std::sync::OnceLock::new();
 /// DLL would no longer match the game data, so every HansFix feature stays off and a warning is shown.
 pub const BASE_RELEASE:&str="v98";
 pub const BASE_REGULATION_LEN:u64=3438688;
+/// 游龙补丁带的 regulation.bin（v98 + 向下强化与扭曲词条效果）
+pub const HANSFIX_REGULATION_LEN:u64=3388928;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}
@@ -40,7 +42,7 @@ pub fn set(wander_on:bool,merchant_on:bool) {
 /// Warning text when this patched DLL sits on top of a different official release.
 pub fn stale()->Option<&'static str> {STALE.get().map(String::as_str)}
 pub fn stale_in(dir:&Path)->Option<u64> {
-    std::fs::metadata(dir.join("scene-assets").join("regulation.bin")).ok().map(|m|m.len()).filter(|&len|len!=BASE_REGULATION_LEN)
+    std::fs::metadata(dir.join("scene-assets").join("regulation.bin")).ok().map(|m|m.len()).filter(|&len|len!=BASE_REGULATION_LEN&&len!=HANSFIX_REGULATION_LEN)
 }
 pub fn detect(dir:&Path)->(bool,bool) {(dir.join(WANDER_MARKER).is_file(),dir.join(MERCHANT_MARKER).is_file())}
 
@@ -57,6 +59,82 @@ pub fn init(dll:Option<PathBuf>) {
     if let Some(key)=dir.as_deref().and_then(|d|std::fs::read_to_string(d.join(erdtree_tower::options::FILE)).ok()).and_then(|t|map_key_from(&t)) {let _=MAP_KEY.set(key);}
     crate::log(format!("HANSFIX wander={wander_on} better_map_merchant={merchant_on} map_key={} protocol={} link={}",map_label(),
         erdtree_tower::party_handshake::protocol(),erdtree_tower::party_link::wire_version()));
+}
+
+/// [HansFix] 游龙·向下：红色战斗关卡里给每个刷出的敌人施加一次强化（血量 / 攻击倍率）；联机时只由房主施加
+#[derive(Default)]
+pub struct Descent {key:Option<(u64,u8,usize)>,applied:Vec<eldenring::cs::FieldInsHandle>,missing:bool}
+impl Descent {
+    pub fn tick(&mut self,world:&mut eldenring::cs::WorldChrMan,key:(u64,u8,usize),level:Option<u32>,handles:&[eldenring::cs::FieldInsHandle],authority:bool) {
+        use eldenring::cs::{ChrInsExt,SoloParamRepository,SpEffectParam};
+        use fromsoftware_shared::FromStatic;
+        if self.key!=Some(key){*self=Self{key:Some(key),..Default::default()};}
+        let Some(level)=level.filter(|_|authority&&wander()) else{return};
+        let effect=erdtree_tower::descent::enemy_effect(level);
+        if !unsafe {SoloParamRepository::instance()}.is_ok_and(|p|p.get::<SpEffectParam>(effect).is_some()) {
+            if !self.missing{crate::log(format!("HANSFIX_DESCENT missing effect {effect}; reinstall the wander patch regulation.bin"));self.missing=true;}
+            return;
+        }
+        for handle in handles {
+            if self.applied.contains(handle){continue;}
+            let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
+            if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
+            chr.apply_speffect(effect as i32,false);self.applied.push(*handle);
+            if self.applied.len()==1 {crate::log(format!("HANSFIX_DESCENT level={level} effect={effect} hp_x={:.3} attack_x={:.3}",erdtree_tower::descent::hp_rate(level),erdtree_tower::descent::attack_rate(level)));}
+        }
+    }
+}
+
+/// [HansFix] 扭曲装备：把这件装备（武器含各质变行）常驻效果里被扭曲的词条换成 ×2 / ×-1 的版本。
+/// 参数只在本机内存里改；旅程变化时先全部还原再按当前旅程重新套用，回到大赐福或换局即恢复原样。
+#[derive(Default)]
+struct Curses {signature:Option<u64>,original:std::collections::HashMap<(bool,u32),[i32;3]>,missing:bool}
+static CURSES:std::sync::Mutex<Option<Curses>>=std::sync::Mutex::new(None);
+fn signature(run:Option<&erdtree_tower::Run>)->u64 {
+    use std::hash::{Hash,Hasher};
+    let mut h=std::collections::hash_map::DefaultHasher::new();
+    run.map(|r|(r.seed,&r.cursed)).filter(|_|wander()).map(|(seed,c)|(seed,c.iter().map(|c|(c.item,c.swaps.clone())).collect::<Vec<_>>())).hash(&mut h);h.finish()
+}
+pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
+    use eldenring::cs::{EquipParamProtector,EquipParamWeapon,SoloParamRepository,SpEffectParam};
+    use fromsoftware_shared::FromStatic;
+    let Ok(mut guard)=CURSES.try_lock() else{return};
+    let state=guard.get_or_insert_with(Curses::default);
+    let sig=signature(run);
+    if state.signature==Some(sig) {return;}
+    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return};
+    // 还原
+    for (&(weapon,row),values) in &state.original {
+        if weapon {if let Some(p)=params.get_mut::<EquipParamWeapon>(row){p.set_resident_sp_effect_id(values[0]);p.set_resident_sp_effect_id1(values[1]);p.set_resident_sp_effect_id2(values[2]);}}
+        else if let Some(p)=params.get_mut::<EquipParamProtector>(row){p.set_resident_sp_effect_id(values[0]);p.set_resident_sp_effect_id2(values[1]);p.set_resident_sp_effect_id3(values[2]);}
+    }
+    state.original.clear();state.signature=Some(sig);
+    let Some(run)=run.filter(|_|wander()) else{return};
+    let mut count=0;
+    for cursed in &run.cursed {
+        if cursed.swaps.iter().any(|&(_,to)|params.get::<SpEffectParam>(to).is_none()) {
+            if !state.missing {crate::log(format!("HANSFIX_CURSE missing effects for {}; reinstall the wander patch regulation.bin",cursed.item));state.missing=true;}
+            continue;
+        }
+        let swap=|value:i32|cursed.swaps.iter().find(|&&(from,_)|from as i32==value).map_or(value,|&(_,to)|to as i32);
+        let weapon=cursed.item>>28==0;let first=cursed.item&0x0fff_ffff;
+        // 武器：同一件词条武器的各质变行都在 id..id+9999；防具只有一行
+        for row in if weapon {first..first+10000} else {first..first+1} {
+            if weapon {
+                let Some(p)=params.get_mut::<EquipParamWeapon>(row) else{continue};
+                let values=[p.resident_sp_effect_id(),p.resident_sp_effect_id1(),p.resident_sp_effect_id2()];
+                state.original.insert((true,row),values);
+                p.set_resident_sp_effect_id(swap(values[0]));p.set_resident_sp_effect_id1(swap(values[1]));p.set_resident_sp_effect_id2(swap(values[2]));
+            } else {
+                let Some(p)=params.get_mut::<EquipParamProtector>(row) else{continue};
+                let values=[p.resident_sp_effect_id(),p.resident_sp_effect_id2(),p.resident_sp_effect_id3()];
+                state.original.insert((false,row),values);
+                p.set_resident_sp_effect_id(swap(values[0]));p.set_resident_sp_effect_id2(swap(values[1]));p.set_resident_sp_effect_id3(swap(values[2]));
+            }
+            count+=1;
+        }
+    }
+    crate::log(format!("HANSFIX_CURSE items={} rows={count}",run.cursed.len()));
 }
 
 #[cfg(test)]

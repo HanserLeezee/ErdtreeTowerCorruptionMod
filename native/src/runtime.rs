@@ -262,6 +262,7 @@ struct Runtime {
     build_checked: Option<Instant>,
     boss_fight: super::boss_affixes::Fight,
     growth: super::scaling::Growth,
+    hansfix_descent: super::hansfix::Descent,
     law_fight: super::law::Fight,
     ember_fight: super::embers::Fight,
     bout: super::debug_menu::Bout,
@@ -319,6 +320,7 @@ fn fresh_runtime()->Runtime {
         build_checked: None,
         boss_fight: Default::default(),
         growth: Default::default(),
+        hansfix_descent: Default::default(),
         law_fight: Default::default(),
         ember_fight: Default::default(),
         bout: Default::default(),
@@ -933,6 +935,7 @@ fn tick_locked() {
     };
     if state.departure.as_mut().is_some_and(|departure|departure.tick()){state.departure=None;}
     let lobby=state.view.run.is_none();
+    super::hansfix::curses_tick(state.view.run.as_ref());
     if state.party.as_mut().is_some_and(|link|link.poll_force_end(lobby)) {
         super::log("HOME_SYNC received host force end before room processing");
         QUICK_END.store(true,std::sync::atomic::Ordering::Relaxed);
@@ -1178,7 +1181,7 @@ fn tick_locked() {
     let player_data = unsafe { &mut *player.player_game_data.as_ptr() };
     state.view.runes = player_data.rune_count;
     if state.build_checked.is_none_or(|t|t.elapsed()>=Duration::from_secs(1)) {
-        state.build_checked=Some(Instant::now());state.view.build=equipped_build(player_data);
+        state.build_checked=Some(Instant::now());state.view.build=equipped_build(player_data,state.view.run.as_ref());
         state.view.stats=super::stats::collect(&player.chr_ins);
     }
     if let Some(run)=state.view.run.as_mut(){run.gold=player_data.rune_count;}
@@ -1739,6 +1742,7 @@ fn tick_locked() {
             let flasks=runtime.flasks.as_ref().map(|f|f.total());
             runtime.boss_fight.tick(world,&handles,authority,flasks);
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
+            runtime.hansfix_descent.tick(world,(run.seed,run.act,id),run.descent_level(id),&handles,authority);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             if runtime.party.as_ref().is_none_or(|p|p.fighting) {
                 let team=runtime.party.as_ref().map(|p|p.gate.flask_uses());
@@ -1887,12 +1891,12 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
 }
 
 /// 当前握在手里的武器与身上防具中的词条装备
-fn equipped_build(data:&eldenring::cs::PlayerGameData)->Vec<super::reward_ui::Gear> {
+fn equipped_build(data:&eldenring::cs::PlayerGameData,run:Option<&erdtree_tower::Run>)->Vec<super::reward_ui::Gear> {
     let equipment=&data.equipment.chr_asm;
     let weapons=[equipment.equipment.active_right_weapon_slot() as usize,equipment.equipment.active_left_weapon_slot() as usize];
     weapons.into_iter().filter_map(|slot|equipment.equipment_param_ids.get(slot).copied().filter(|id|*id>0).map(|id|id as u32/100*100))
         .chain((12..=15).filter_map(|slot|equipment.equipment_param_ids.get(slot).copied().filter(|id|*id>0).map(|id|0x10000000|id as u32)))
-        .filter_map(super::reward_ui::affix_summary).collect()
+        .filter_map(|id|super::reward_ui::affix_summary_in(run,id)).collect()
 }
 
 /// 精英战胜利免费送一个圣杯滴露（与奖励三选一无关）；发放失败只记日志，不影响领奖
