@@ -1,4 +1,4 @@
-//! [HansFix] 游龙模式·向下：沿连线向上以外的方向进入关卡（原版不允许的方向）记为一次“向下”。
+//! [HansFix] 堕落模式·向下：沿连线向上以外的方向进入关卡（原版不允许的方向）记为一次“向下”。
 //! - 向下进入的关卡在地图上标红，整局累计向下次数；
 //! - 第 k 次向下的战斗关卡：敌人血量 ×2×1.1^(k-1)，攻击伤害 ×(1+0.05k)（第一次 2 倍血 / 1.05 倍伤害，第 20 次伤害翻倍）；
 //! - 打完红色战斗关卡进入与精英相同的结算界面；其中带随机词条的武器与防具会被“扭曲”：
@@ -18,6 +18,8 @@ pub const MAX_LEVEL:u32=60;
 pub const AFFIX_FIRST:u32=9850000;
 pub const DOUBLE_FIRST:u32=9851000;
 pub const NEGATE_FIRST:u32=9852000;
+/// ×(-2) 的词条效果（堕落首领与堕落商店的特殊奖励）
+pub const NEGATE2_FIRST:u32=9853000;
 pub const AFFIX_KINDS:u32=21;
 pub const FIXED_KIND:u32=18;
 
@@ -46,6 +48,9 @@ pub fn affix(effect:u32)->Option<(u32,u32)> {
 }
 pub fn doubled(effect:u32)->u32 {effect-AFFIX_FIRST+DOUBLE_FIRST}
 pub fn negated(effect:u32)->u32 {effect-AFFIX_FIRST+NEGATE_FIRST}
+pub fn negated2(effect:u32)->u32 {effect-AFFIX_FIRST+NEGATE2_FIRST}
+/// 换上去的效果对应的倍数
+pub fn factor(to:u32)->i32 {if to>=NEGATE2_FIRST {-2} else if to>=NEGATE_FIRST {-1} else {2}}
 
 /// 红色关卡奖励里的一件词条装备会怎样被扭曲（同一局、同一关卡、同一件装备结果固定）
 pub fn plan(seed:u64,node:usize,item:u32)->Option<Cursed> {
@@ -107,12 +112,92 @@ pub fn rewrite(text:&str,cursed:&Cursed)->String {
     let mut text=text.to_owned();
     for &(from,to) in &cursed.swaps {
         let Some((kind,tier))=affix(from) else{continue};
-        let factor=if to>=NEGATE_FIRST {-1} else {2};
+        let factor=factor(to);
         let original=describe(kind,tier,1);
-        let replaced=format!("{}（{}）",describe(kind,tier,factor),if factor==2 {"×2"} else {"×-1"});
+        let replaced=format!("{}（×{factor}）",describe(kind,tier,factor));
         text=text.replace(&original,&replaced);
     }
     text
+}
+
+/// 堕落首领与堕落商店的特殊奖励：三个词条中两个 ×2、一个 ×(-2)
+pub fn super_plan(seed:u64,node:usize,item:u32)->Option<Cursed> {
+    let effects=effects(item);
+    if effects.len()!=3 {return None;}
+    let down=(crate::mix(seed^(node as u64).wrapping_mul(7919)^u64::from(item)^0x5ca7_7e2d)%3) as usize;
+    Some(Cursed{item,swaps:effects.iter().enumerate().map(|(i,&e)|(e,if i==down {negated2(e)} else {doubled(e)})).collect()})
+}
+/// 三个词条的传说品质武器与防具（本职业可用、没拿过）
+fn super_pool(run:&crate::Run)->Vec<u32> {
+    crate::affixes::CATALOG.iter().filter(|i|crate::affixes::tier(i.id)==Some(3)&&effects(i.id).len()==3
+        &&i.kind.allowed(run.class)&&crate::dlc::item_allowed(crate::affixes::base(i.id))&&!run.claimed_items.contains(&i.id))
+        .map(|i|i.id).collect()
+}
+fn super_pick(run:&crate::Run,salt:u64,count:usize,avoid:&[u32])->Vec<u32> {
+    let pool=super_pool(run);
+    let mut picked:Vec<u32>=Vec::new();
+    for n in 0..pool.len().min(400) {
+        if picked.len()==count {break;}
+        let id=pool[(crate::mix(run.reward_seed()^salt^(n as u64).wrapping_mul(0x9e37_79b9)) as usize)%pool.len()];
+        let base=crate::affixes::base(id);
+        if !avoid.contains(&id)&&!picked.iter().any(|p|crate::affixes::base(*p)==base) {picked.push(id);}
+    }
+    picked
+}
+/// 堕落首领的奖励页（共两页，每页三件）
+pub fn fallen_offers(run:&crate::Run,node:usize,page:u8)->Vec<crate::Reward> {
+    let mut items=super_pick(run,(node as u64)<<8^u64::from(page)^0xfa11_b055,3,&[]);
+    while items.len()<3 {items.push(0);}
+    items.into_iter().map(|id|if id==0 {crate::Reward::Gold(5000)} else {crate::Reward::Item(id)}).collect()
+}
+/// 堕落商店消费满额送的装备
+pub fn shop_bonus(run:&crate::Run,node:usize)->Option<(u32,Cursed)> {
+    let id=*super_pick(run,(node as u64)<<8^0x5b0b_0a5e,1,&[]).first()?;
+    Some((id,super_plan(run.reward_seed(),node,id)?))
+}
+/// 堕落商店：消费满这么多卢恩送一件特殊装备；价格上涨 25%
+pub const SHOP_BONUS_RUNES:u32=30000;
+pub fn shop_price(price:i32)->i32 {(price as i64*5/4) as i32}
+
+/// 堕落模式的状态（只在开启堕落模式的旅程里存在）
+#[derive(Clone,Debug,Default,PartialEq,Eq,Serialize,Deserialize)]
+pub struct Fallen {
+    /// 已在红篝火开启堕落挑战：地图重新随机，只能向下，终点是堕落首领
+    #[serde(default,skip_serializing_if="std::ops::Not::not")]
+    pub active:bool,
+    /// 堕落首领奖励已领到第几页（共两页）
+    #[serde(default,skip_serializing_if="is_zero")]
+    pub page:u8,
+    /// 本幕已经送过满额奖励的堕落商店
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub bonus:Vec<usize>,
+}
+fn is_zero(n:&u8)->bool {*n==0}
+/// 堕落模式的地图：首领下面一排全是篝火（其中一个是红篝火），起点那排下面多一个堕落首领（最后一个节点，层数记为首领层）。
+/// 开启堕落挑战后，除起点、篝火与首领外的关卡类型重新洗牌。
+pub fn fallen_graph(mut nodes:Vec<crate::Node>,seed:u64,active:bool)->Vec<crate::Node> {
+    use crate::NodeKind;
+    let Some(top)=nodes.iter().map(|n|n.layer).max() else{return nodes};
+    if top<2 {return nodes;}
+    for node in nodes.iter_mut().filter(|n|n.layer==top-1) {node.kind=NodeKind::Camp;}
+    if active {
+        let ids:Vec<usize>=(0..nodes.len()).filter(|&i|(1..top-1).contains(&nodes[i].layer)).collect();
+        let mut kinds:Vec<NodeKind>=ids.iter().map(|&i|nodes[i].kind).collect();
+        let mut state=crate::mix(seed^0xfa11_e5ed);
+        for i in (1..kinds.len()).rev() {state=crate::mix(state);kinds.swap(i,(state%(i as u64+1)) as usize);}
+        for (&i,kind) in ids.iter().zip(kinds) {nodes[i].kind=kind;}
+    }
+    let mut nodes=crate::space_rest_nodes(nodes);
+    let starts:Vec<usize>=(0..nodes.len()).filter(|&i|nodes[i].layer==0).collect();
+    nodes.push(crate::Node{kind:NodeKind::Boss,layer:top,lane:0,next:starts});
+    nodes
+}
+/// 红篝火：首领下面那排篝火里的一个（不含末尾的堕落首领）
+pub fn red_camp(nodes:&[crate::Node],seed:u64)->Option<usize> {
+    let body=&nodes[..nodes.len().saturating_sub(1)];
+    let top=body.iter().map(|n|n.layer).max()?;
+    let camps:Vec<usize>=(0..body.len()).filter(|&i|body[i].layer+1==top&&body[i].kind==crate::NodeKind::Camp).collect();
+    (!camps.is_empty()).then(||camps[(crate::mix(seed^0x7edc_a3f1) as usize)%camps.len()])
 }
 
 /// 堕落装备的名字前缀（游戏内与爬塔界面相同）

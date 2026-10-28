@@ -1,7 +1,7 @@
 //! [HansFix] Optional community patches, switched on by marker files next to this DLL.
 //! Every HansFix patch ships the same DLL plus only its own marker, so patches never depend on
 //! each other and can be combined. Without any marker the DLL behaves exactly like the official build.
-//!   hansfix-wander.enabled               游龙模式（改变联机协议：队伍里所有人都要装同一补丁）
+//!   hansfix-wander.enabled               堕落模式（改变联机协议：队伍里所有人都要装同一补丁）
 //!   hansfix-better-map-merchant.enabled  N 键只读地图、联机画线不随换层清空、每人独立商店（与官方版联机兼容）
 //! The map key can be rebound with `key.map=<键>` in tower-options.ini.
 use std::{path::{Path,PathBuf},sync::atomic::{AtomicBool,Ordering}};
@@ -21,8 +21,8 @@ pub const BASE_RELEASE:&str="v99";
 /// tower-install.json 里启动器记录的模组版本号；不一致说明启动器已经装了别的版本
 pub const BASE_INSTALL_VERSION:u64=99;
 pub const BASE_REGULATION_LEN:u64=3438688;
-/// 游龙补丁带的 regulation.bin（v98/v99 + 向下强化与扭曲词条效果）
-pub const HANSFIX_REGULATION_LEN:u64=3388896;
+/// 堕落补丁带的 regulation.bin（v98/v99 + 向下强化与扭曲词条效果）
+pub const HANSFIX_REGULATION_LEN:u64=3374128;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}
@@ -73,7 +73,7 @@ pub fn init(dll:Option<PathBuf>) {
         erdtree_tower::party_handshake::protocol(),erdtree_tower::party_link::wire_version()));
 }
 
-/// [HansFix] 游龙·向下：红色战斗关卡里给每个刷出的敌人施加一次强化（血量 / 攻击倍率）；联机时只由房主施加
+/// [HansFix] 堕落·向下：红色战斗关卡里给每个刷出的敌人施加一次强化（血量 / 攻击倍率）；联机时只由房主施加
 #[derive(Default)]
 pub struct Descent {key:Option<(u64,u8,usize)>,applied:Vec<eldenring::cs::FieldInsHandle>,missing:bool}
 impl Descent {
@@ -102,10 +102,22 @@ impl Descent {
 #[derive(Default)]
 struct Curses {signature:Option<u64>,original:std::collections::HashMap<(bool,u32),[i32;3]>,missing:bool}
 static CURSES:std::sync::Mutex<Option<Curses>>=std::sync::Mutex::new(None);
+/// 本局要生效的堕落装备：已领取的，加上正在逛的堕落商店里的所有词条装备（让商店里看到的就是堕落后的样子）
+fn active_curses(run:&erdtree_tower::Run)->Vec<erdtree_tower::descent::Cursed> {
+    let mut list=run.cursed.clone();
+    if let erdtree_tower::Phase::Node{id}=run.phase && let Some(stock)=run.shop_stock.as_ref().filter(|s|s.node==id) {
+        for [kind,item,..] in &stock.items {
+            let tagged=match kind {0=>*item as u32,1=>0x1000_0000|*item as u32,_=>continue};
+            if list.iter().any(|c|c.item==tagged) {continue;}
+            if let Some(c)=run.shop_curse(id,tagged) {list.push(c);}
+        }
+    }
+    list
+}
 fn signature(run:Option<&erdtree_tower::Run>)->u64 {
     use std::hash::{Hash,Hasher};
     let mut h=std::collections::hash_map::DefaultHasher::new();
-    run.map(|r|(r.seed,&r.cursed)).filter(|_|wander()).map(|(seed,c)|(seed,c.iter().map(|c|(c.item,c.swaps.clone())).collect::<Vec<_>>())).hash(&mut h);h.finish()
+    run.filter(|_|wander()).map(|r|(r.seed,active_curses(r).iter().map(|c|(c.item,c.swaps.clone())).collect::<Vec<_>>())).hash(&mut h);h.finish()
 }
 pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
     use eldenring::cs::{EquipParamProtector,EquipParamWeapon,SoloParamRepository,SpEffectParam};
@@ -124,7 +136,8 @@ pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
     crate::hansfix_text::restore();
     let Some(run)=run.filter(|_|wander()) else{return};
     let (mut count,mut texts)=(0,0);
-    for cursed in &run.cursed {
+    let curses=active_curses(run);
+    for cursed in &curses {
         if cursed.swaps.iter().any(|&(_,to)|params.get::<SpEffectParam>(to).is_none()) {
             if !state.missing {crate::log(format!("HANSFIX_CURSE missing effects for {}; reinstall the wander patch regulation.bin",cursed.item));state.missing=true;}
             continue;
@@ -148,7 +161,51 @@ pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
         }
         texts+=crate::hansfix_text::apply(cursed);
     }
-    crate::log(format!("HANSFIX_CURSE items={} rows={count} texts={texts}",run.cursed.len()));
+    crate::log(format!("HANSFIX_CURSE items={} shop={} rows={count} texts={texts}",run.cursed.len(),curses.len()-run.cursed.len()));
+}
+
+/// [HansFix] 红篝火与堕落挑战中把游戏时间推到夜晚（与赐福点“消磨时间到晚上”同一个接口）；离开后推回白天
+#[derive(Default)]
+struct Night {on:bool,requested:Option<std::time::Instant>}
+static NIGHT:std::sync::Mutex<Option<Night>>=std::sync::Mutex::new(None);
+pub fn night_tick(run:Option<&erdtree_tower::Run>) {
+    use eldenring::cs::WorldAreaTime;
+    use fromsoftware_shared::FromStatic;
+    let want=wander()&&run.is_some_and(|r|r.fallen_active()||matches!(r.phase,erdtree_tower::Phase::Node{id} if Some(id)==r.red_camp()));
+    let Ok(mut guard)=NIGHT.try_lock() else{return};
+    let night=guard.get_or_insert_with(Night::default);
+    let Ok(time)=(unsafe {WorldAreaTime::instance_mut()}) else{return};
+    let hour=time.clock.date.hours();
+    let dark=!(5..20).contains(&hour);
+    let due=night.requested.is_none_or(|t|t.elapsed()>std::time::Duration::from_secs(20));
+    if want {
+        if !dark&&due {time.request_time(22,0,0);night.requested=Some(std::time::Instant::now());crate::log(format!("HANSFIX_NIGHT request 22:00 (now {hour}:00)"));}
+        night.on=true;
+    } else if night.on {
+        if dark {time.request_time(10,0,0);crate::log(format!("HANSFIX_NIGHT request 10:00 (now {hour}:00)"));}
+        night.on=false;night.requested=None;
+    }
+}
+/// [HansFix] 堕落商店：这家店里累计花了多少卢恩
+#[derive(Default)]
+pub struct FallenSpend {key:Option<(u64,usize)>,last:u32,spent:u32}
+impl FallenSpend {
+    pub fn update(&mut self,key:(u64,usize),runes:u32)->u32 {
+        if self.key!=Some(key) {*self=Self{key:Some(key),last:runes,spent:0};}
+        if runes<self.last {self.spent=self.spent.saturating_add(self.last-runes);}
+        self.last=runes;self.spent
+    }
+}
+/// 离开堕落商店时，把背包里买到的堕落装备记入本局
+pub fn keep_fallen_purchases(run:&mut erdtree_tower::Run,data:&eldenring::cs::PlayerGameData)->Result<(),String> {
+    let erdtree_tower::Phase::Node{id}=run.phase else{return Ok(())};
+    if !wander()||!run.red_shop(id) {return Ok(());}
+    let items:Vec<u32>=run.shop_stock.as_ref().filter(|s|s.node==id).map(|s|s.items.iter().filter_map(|[kind,item,..]|match kind {0=>Some(*item as u32),1=>Some(0x1000_0000|*item as u32),_=>None}).collect()).unwrap_or_default();
+    for item in items {
+        if run.claimed_items.contains(&item)||run.shop_curse(id,item).is_none()||crate::loot::count(data,item)==0 {continue;}
+        run.keep_shop_gear(id,item)?;crate::log(format!("HANSFIX_SHOP kept fallen gear {item}"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

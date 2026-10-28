@@ -125,7 +125,7 @@ mod tests {
         if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {
             crate::reward_ui::write_peek_frame(&std::path::PathBuf::from(path).join("map-wander-1920.draw"),data,1920,1080);
         }
-        // [HansFix] 游龙·向下：红色的可选关卡与向下次数
+        // [HansFix] 堕落·向下：红色的可选关卡与向下次数
         let mut red=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);red.set_wander(true).unwrap();
         for _ in 0..6 {
             if red.available().iter().any(|&id|red.descent_choice(id))&&red.descents()>0 {break;}
@@ -145,6 +145,35 @@ mod tests {
         if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {
             crate::reward_ui::write_peek_frame(&std::path::PathBuf::from(path).join("map-descent-1920.draw"),data,1920,1080);
         }
+        // [HansFix] 堕落挑战开启后：黑夜、只能向下、堕落首领点亮
+        let mut fall=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);fall.set_wander(true).unwrap();
+        let camp=fall.red_camp().unwrap();
+        let mut prev=vec![usize::MAX;fall.nodes.len()];let mut queue:std::collections::VecDeque<usize>=fall.start_nodes().into();
+        for &s in &fall.start_nodes() {prev[s]=s;}
+        while let Some(n)=queue.pop_front() {for &m in &fall.nodes[n].next {if prev[m]==usize::MAX {prev[m]=n;queue.push_back(m);}}}
+        let mut path=vec![camp];while prev[*path.last().unwrap()]!=*path.last().unwrap() {path.push(prev[*path.last().unwrap()]);}
+        path.reverse();
+        let clear=|r:&mut erdtree_tower::Run,id:usize| match r.nodes[id].kind {
+            erdtree_tower::NodeKind::Monster|erdtree_tower::NodeKind::Elite=>{r.win_combat().unwrap();r.decline_reward().unwrap();},
+            erdtree_tower::NodeKind::Camp=>r.leave_camp().unwrap(),erdtree_tower::NodeKind::Shop=>r.leave_shop().unwrap(),
+            erdtree_tower::NodeKind::Chest=>r.finish_chest().unwrap(),erdtree_tower::NodeKind::Event=>r.resolve_event(false).unwrap(),_=>{},
+        };
+        for &id in &path {fall.enter(id).unwrap();clear(&mut fall,id);}
+        let mut gray=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);gray.set_wander(true).unwrap();
+        let first=gray.available()[0];gray.enter(first).unwrap();clear(&mut gray,first);
+        let back=path[path.len()-2];fall.enter(back).unwrap();clear(&mut fall,back);
+        assert!(fall.fallen_active());
+        // 一路向下走到起点那排：下一步就是堕落首领
+        while !fall.available().contains(&fall.fallen_id().unwrap()) {let next=fall.available()[0];fall.enter(next).unwrap();clear(&mut fall,next);}
+        // 整张地图一屏画完，便于看到下缘之外的堕落首领
+        crate::map_art::preview();
+        context.io_mut().display_size=[1920.0,2500.0];
+        for (name,run) in [("map-fallen-camp-1920.draw",&gray),("map-fallen-active-1920.draw",&fall)] {
+            for _ in 0..3 {super::draw(context.frame(), run, &view, "HP 455/455");context.render();}
+            super::draw(context.frame(), run, &view, "HP 455/455");let data=context.render();
+            if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {crate::reward_ui::write_peek_frame(&std::path::PathBuf::from(path).join(name),data,1920,2500);}
+        }
+        context.io_mut().display_size=[1920.0,1080.0];
         crate::hansfix::set(false,false);
         crate::reward_ui::test_frames(&mut context);
         crate::run_screen::test_frames(&mut context);
@@ -278,7 +307,7 @@ pub fn draw_peek(ui: &Ui, run: &Run, view: &View)->bool {
             crate::oath_art::background(&ui.get_window_draw_list(),size);
             ui.set_window_font_scale(scale);
             ui.set_cursor_pos([margin,margin*0.4]);
-            ui.text(format!("只读地图 · 第 {} 幕{} · 按 {} 关闭",run.act,if run.wander {" · 游龙模式"} else {""},crate::hansfix::map_label()));
+            ui.text(format!("只读地图 · 第 {} 幕{} · 按 {} 关闭",run.act,if run.wander {" · 堕落模式"} else {""},crate::hansfix::map_label()));
             ui.set_cursor_pos([margin,margin+18.0*scale]);
             let _paper=ui.push_style_color(StyleColor::ChildBg,[0.84,0.79,0.66,1.0]);
             let _ink=ui.push_style_color(StyleColor::Text,[0.20,0.17,0.11,1.0]);
@@ -315,11 +344,11 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
             if crate::hansfix::wander()&&run.phase==Phase::Map&&run.act==1&&run.visited.is_empty() {
                 let _disabled=ui.begin_disabled(!view.ready||view.busy);
                 let _on=run.wander.then(||ui.push_style_color(StyleColor::Button,[0.53,0.40,0.16,1.0]));
-                if ui.button_with_size(if run.wander {"游龙：开"} else {"游龙：关"},[108.0*scale,32.0*scale]) {runtime::submit(Action::ToggleWander);}
+                if ui.button_with_size(if run.wander {"堕落：开"} else {"堕落：关"},[108.0*scale,32.0*scale]) {runtime::submit(Action::ToggleWander);}
             } else if run.wander {
-                ui.text("游龙模式");
+                ui.text("堕落模式");
             }
-            // [HansFix] 游龙：整局向下次数，记录在开关下方
+            // [HansFix] 堕落：整局向下次数，记录在开关下方
             if run.wander {
                 ui.set_cursor_pos([size[0]-right+margin,742.0*scale]);
                 let n=run.descents();
@@ -407,7 +436,9 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
         (blocked,next)
     });
     let last=run.floors()-1;
-    let height = viewport.max(170.0+last as f32*120.0);
+    // [HansFix] 堕落首领在地图下缘之外：高屏幕上也要能一屏看到它
+    let reserve=if run.fallen_id().is_some() {230.0} else {0.0};
+    let height = (viewport-reserve).max(170.0+last as f32*120.0);
     let row = (height - 170.0) / last as f32;
     let radius = 24.0;
     let span=content[0].min(1060.0);
@@ -416,7 +447,11 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
     for id in 0..run.nodes.len() {if reachable[id] {for &next in &run.nodes[id].next {reachable[next]=true;}}}
     let mut peers=vec![0usize;run.nodes.iter().map(|n|n.layer+1).max().unwrap_or(0)];let mut ranks=vec![0usize;run.nodes.len()];
     for (i,n) in run.nodes.iter().enumerate() {if reachable[i] {ranks[i]=peers[n.layer];peers[n.layer]+=1;}}
-    let points:Vec<[f32;2]>=(0..run.nodes.len()).map(|id| {
+    // [HansFix] 堕落首领：画在起点那排下方、地图下缘之外
+    let fallen=run.fallen_id();let red_camp=run.red_camp();
+    let below=if fallen.is_some() {230.0} else {0.0};
+    if let Some(f)=fallen {reachable[f]=true;}
+    let mut points:Vec<[f32;2]>=(0..run.nodes.len()).map(|id| {
         let layer=run.nodes[id].layer;let count=peers[layer];let rank=ranks[id];
         let center=if count<=1 {0.5}else{0.13+rank as f32*0.74/(count-1) as f32};
         let jitter = ((run.seed.wrapping_add(id as u64 * 7919) % 101) as f32 / 100.0 - 0.5) * 0.065;
@@ -426,6 +461,7 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
             origin[1] + 70.0 + (last - layer) as f32 * row,
         ]
     }).collect();
+    if let Some(f)=fallen {points[f]=[origin[0]+content[0]*0.5,origin[1]+70.0+last as f32*row+190.0];}
     let point=|id:usize|points[id];
     let draw = ui.get_window_draw_list();
     let ink = ImColor32::from_rgb(64, 54, 38);
@@ -459,6 +495,10 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
     #[cfg(test)]
     if let Some(id)=available.first().and_then(|&id|run.nodes[id].next.first()).copied(){*TEST_FUTURE.lock().unwrap()=(point(id),hovered==Some(id));}
     crate::map_art::paper(&draw,[origin[0]-8.0,origin[1]-8.0],[origin[0]+content[0]+8.0,origin[1]+height+8.0]);
+    // [HansFix] 地图下缘之外留黑（堕落首领所在处）
+    if below>0.0 {draw.add_rect([origin[0]-8.0,origin[1]+height+8.0],[origin[0]+content[0]+8.0,origin[1]+height+below+40.0],ImColor32::from_rgb(10,9,8)).filled(true).build();}
+    // [HansFix] 堕落挑战中地图变暗（黑夜）
+    if run.fallen_active() {draw.add_rect([origin[0]-8.0,origin[1]-8.0],[origin[0]+content[0]+8.0,origin[1]+height+8.0],ImColor32::from_rgba(12,18,46,105)).filled(true).build();}
     for n in 0..500 {
         let x=origin[0]+(n*71%997) as f32/997.0*content[0];let y=origin[1]+(n*137%1451) as f32/1451.0*height;
         draw.add_line([x,y],[x+3.0,y+1.0],ImColor32::from_rgba(109,87,48,25)).build();
@@ -486,12 +526,14 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
                     a[1] + (b[1] - a[1]) * t,
                 ]
             };
-            let color = if preview {
+            let color = if Some(id)==fallen {
+                if run.fallen_active() {ImColor32::from_rgb(196,52,40)} else {ImColor32::from_rgba(150,150,150,170)}
+            } else if preview {
                 ImColor32::from_rgb(191,117,15)
             } else if taken {
                 ImColor32::from_rgb(60, 94, 67)
             } else if run.visited.last()==Some(&id)&&available.contains(&next)||run.visited.last()==Some(&next)&&available.contains(&id) {
-                // [HansFix] 游龙：通向向下关卡的连线用红色
+                // [HansFix] 堕落：通向向下关卡的连线用红色
                 let target=if available.contains(&next){next}else{id};
                 if run.descent_choice(target) {ImColor32::from_rgb(178,52,40)} else {ImColor32::from_rgb(179,126,32)}
             } else {
@@ -518,10 +560,25 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
         if !reachable[id] { continue; }
         let pos = point(id);
         let enabled = ready && available.contains(&id);
+        if Some(id)==fallen {
+            // 堕落首领：未开启时灰白、不可点；堕落挑战中点亮为暗红
+            let lit=run.fallen_active();
+            if lit {for (r,a) in [(radius+26.0,45),(radius+19.0,90),(radius+13.0,150)] {draw.add_circle(pos,r,ImColor32::from_rgba(200,40,30,a)).thickness(4.0).build();}}
+            if enabled {let pulse=(ui.time() as f32*2.0).sin()*2.5;draw.add_circle(pos,radius+30.0+pulse,ImColor32::from_rgba(226,58,40,160)).thickness(2.0).build();}
+            // 图标是深色线稿：灰白底配灰色图标（未开启），红底配暗红图标（开启）
+            draw.add_circle(pos,radius+16.0,if lit {ImColor32::from_rgb(238,150,132)} else {ImColor32::from_rgb(208,208,206)}).filled(true).build();
+            draw.add_circle(pos,radius+16.0,if lit {ImColor32::from_rgb(170,30,24)} else {ImColor32::from_rgb(140,140,140)}).thickness(3.0).build();
+            let tint=if lit {ImColor32::from_rgb(150,22,16)} else {ImColor32::from_rgb(105,105,105)};
+            if !crate::map_art::boss_flipped(&draw,pos,0.82,tint) {glyph(&draw,pos,NodeKind::Boss,tint);}
+            draw.add_text([pos[0]+radius+46.0,pos[1]-20.0],if lit {ImColor32::from_rgb(235,95,75)} else {ImColor32::from_rgb(190,190,190)},"堕落的首领");
+            draw.add_text([pos[0]+radius+46.0,pos[1]+4.0],if lit {ImColor32::from_rgb(200,150,140)} else {ImColor32::from_rgb(140,140,140)},
+                if lit {"只能向下 · 打到底部通关本幕"} else {"在红篝火选择走过的相邻关卡开启"});
+            continue;
+        }
         let focus=emphasis[id];
         let zoom=1.0+0.18*focus-if pressed==Some(id){0.09}else{0.0};
         let visited = run.visited.contains(&id);
-        // [HansFix] 游龙：向下的关卡（可选的与已走过的）标红，提示难度更高
+        // [HansFix] 堕落：向下的关卡（可选的与已走过的）标红，提示难度更高
         let descent=enabled&&run.descent_choice(id);
         let red_visited=visited&&descents.contains(&id);
         let color = if red_visited {
@@ -558,7 +615,11 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
         if enabled || run.visited.last()==Some(&id) {
             draw.add_circle(pos, radius*zoom, color).thickness(2.0+focus).build();
         }
-        if !crate::map_art::icon_scaled(&draw,pos,node.kind,if enabled||visited{1.0}else{0.8},zoom){glyph(&draw, pos, node.kind, color);}
+        // [HansFix] 红篝火：红色图标加红圈
+        if Some(id)==red_camp {
+            for (r,a) in [(radius+6.0,120),(radius+12.0,60)] {draw.add_circle(pos,r,ImColor32::from_rgba(200,40,30,a)).thickness(3.0).build();}
+            if !crate::map_art::icon_tinted(&draw,pos,node.kind,zoom,ImColor32::from_rgb(255,70,50)){glyph(&draw,pos,node.kind,ImColor32::from_rgb(190,40,30));}
+        } else if !crate::map_art::icon_scaled(&draw,pos,node.kind,if enabled||visited{1.0}else{0.8},zoom){glyph(&draw, pos, node.kind, color);}
         if run.visited.last()==Some(&id) {draw.add_text([pos[0]-38.0,pos[1]+32.0],color,"当前位置");}
         if node.kind==NodeKind::Boss {draw.add_text([pos[0]-38.0,pos[1]+32.0],color,"最终试炼");}
         if visited {
@@ -595,9 +656,10 @@ fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vot
         }
     }
     drop(draw);
-    crate::map_ink::overlay(ui,erdtree_tower::map_drawing::Scope::of(run),[origin[0]+(content[0]-span)*0.5,origin[1]+70.0],[span,height-170.0],ready);
+    // [HansFix] 画线区域覆盖整张路线图（含下缘外的堕落首领），比地图本身再宽一圈
+    crate::map_ink::overlay(ui,erdtree_tower::map_drawing::Scope::of(run),[origin[0]-8.0,origin[1]-8.0],[content[0]+16.0,height+16.0+below],ready);
     ui.set_cursor_screen_pos(origin);
-    ui.dummy([content[0], height]);
+    ui.dummy([content[0], height+below]);
     ui.set_scroll_y(scroll);
     static LAST_ROUTE: AtomicU64 = AtomicU64::new(u64::MAX);
     let signature=run.seed.rotate_left(8)^run.visited.len() as u64

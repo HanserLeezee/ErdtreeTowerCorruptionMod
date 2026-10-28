@@ -377,6 +377,8 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
             if let Some(rarity)=rarity {item.price=weapon_price(rarity);}
         }
         for item in &mut stock {item.price=super::law::shop_price(run.law,super::passives::shop_price(run.class,item.price));}
+        // [HansFix] 堕落商店：整体价格上涨 25%
+        if crate::hansfix::wander()&&run.red_shop(node) {for item in &mut stock {item.price=erdtree_tower::descent::shop_price(item.price);}}
         stock
     };
     withdraw_goods(&mut stock);

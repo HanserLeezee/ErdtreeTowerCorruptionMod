@@ -233,15 +233,18 @@ pub struct Run {
     /// 2：问号房的每个事件按权重单独抽取，加入骰子赌徒、盲盒商人与词条重铸台三个房间事件（0、1 为旧分配）
     #[serde(default)]
     pub event_rules: u8,
-    /// 游龙模式：可沿地图连线向上或向下进入当前关卡相邻、尚未去过的关卡
+    /// 堕落模式：可沿地图连线向上或向下进入当前关卡相邻、尚未去过的关卡
     #[serde(default,skip_serializing_if="std::ops::Not::not")]
     pub wander: bool,
-    /// [HansFix] 游龙：前几幕累计的向下次数（本幕的从路线推算，见 descent_path）
+    /// [HansFix] 堕落：前几幕累计的向下次数（本幕的从路线推算，见 descent_path）
     #[serde(default,skip_serializing_if="is_zero")]
     pub descents_before: u32,
     /// [HansFix] 在红色关卡领取、词条被扭曲的装备
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub cursed: Vec<descent::Cursed>,
+    /// [HansFix] 堕落模式：红篝火、堕落挑战与堕落首领（开启堕落模式的旅程才有）
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub fallen: Option<descent::Fallen>,
     #[serde(default="first_act")]
     pub act:u8,
     pub seed: u64,
@@ -301,7 +304,7 @@ fn first_act()->u8 {1}
 fn no_law(law:&law::Law)->bool {law.is_empty()}
 fn is_zero(n:&u32)->bool {*n==0}
 fn no_start_talisman(id:&u32)->bool {*id==0}
-fn mix(mut value: u64) -> u64 {
+pub fn mix(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9e3779b97f4a7c15);
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d049bb133111eb);
@@ -361,7 +364,7 @@ mod wander_mode {
         }
     }
     fn neighbours(run:&Run,id:usize)->Vec<usize> {
-        let mut v:Vec<usize>=run.nodes[id].next.iter().copied().chain((0..run.nodes.len()).filter(|&o|run.nodes[o].next.contains(&id))).collect();
+        let mut v:Vec<usize>=run.nodes[id].next.iter().copied().chain((0..run.nodes.len()).filter(|&o|run.nodes[o].next.contains(&id))).filter(|&o|Some(o)!=run.fallen_id()).collect();
         v.sort_unstable();v.dedup();v
     }
     #[test]
@@ -381,6 +384,7 @@ mod wander_mode {
             while run.act==1&&run.phase==Phase::Map {
                 let current=*run.visited.last().unwrap_or(&usize::MAX);
                 let options=run.available();assert!(!options.is_empty());
+                if Some(current)==run.red_camp() {break;}
                 for &o in &options {assert!(!run.visited.contains(&o));}
                 if current!=usize::MAX {
                     let near:Vec<usize>=neighbours(&run,current).into_iter().filter(|o|!run.visited.contains(o)).collect();
@@ -462,6 +466,95 @@ mod wander_mode {
             }
         }
         assert!(spells>0,"spells and incantations are in the red pool");
+    }
+    fn clear_node(run:&mut Run,id:usize) {
+        match run.nodes[id].kind {
+            NodeKind::Monster|NodeKind::Elite|NodeKind::Boss=>{run.win_combat().unwrap();run.decline_reward().unwrap();},
+            NodeKind::Camp=>run.leave_camp().unwrap(),NodeKind::Shop=>run.leave_shop().unwrap(),
+            NodeKind::Chest=>run.finish_chest().unwrap(),NodeKind::Event=>run.resolve_event(false).unwrap(),
+        }
+    }
+    #[test]
+    fn fallen_mode_map_has_camps_a_red_camp_and_a_locked_fallen_boss() {
+        for seed in 0..60u64 {
+            let mut run=Run::new(seed,Class::Samurai);let plain=run.nodes.clone();
+            run.set_wander(true).unwrap();
+            let fallen=run.fallen_id().unwrap();assert_eq!(fallen,plain.len());
+            let top=run.nodes.iter().map(|n|n.layer).max().unwrap();
+            assert!(run.nodes[..fallen].iter().filter(|n|n.layer+1==top).all(|n|n.kind==NodeKind::Camp));
+            assert_eq!(run.nodes[fallen].kind,NodeKind::Boss);assert_eq!(run.nodes[fallen].next,run.start_nodes());
+            assert!(run.red_camp().is_some_and(|c|run.nodes[c].layer+1==top));
+            assert_eq!(run.floors(),top+1);
+            assert!(!run.available().contains(&fallen));
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+            run.set_wander(false).unwrap();assert_eq!(run.nodes,plain);assert!(run.fallen.is_none());
+        }
+    }
+    #[test]
+    fn red_camp_starts_the_fallen_challenge_down_to_the_fallen_boss_with_two_reward_pages() {
+        let mut done=0;let mut shops=0;
+        for seed in 0..40u64 {
+            let mut run=Run::new(seed,Class::Samurai);run.set_wander(true).unwrap();
+            let camp=run.red_camp().unwrap();let fallen=run.fallen_id().unwrap();
+            // 沿连线一路向上走到红篝火（BFS 找一条路）
+            let mut prev=vec![usize::MAX;run.nodes.len()];let mut queue:std::collections::VecDeque<usize>=run.start_nodes().into();
+            for &s in &run.start_nodes() {prev[s]=s;}
+            while let Some(n)=queue.pop_front() {for &m in &run.nodes[n].next {if prev[m]==usize::MAX {prev[m]=n;queue.push_back(m);}}}
+            if prev[camp]==usize::MAX {continue;}
+            let mut path=vec![camp];while prev[*path.last().unwrap()]!=*path.last().unwrap() {path.push(prev[*path.last().unwrap()]);}
+            path.reverse();
+            for &id in &path {assert!(run.available().contains(&id),"seed {seed}");run.enter(id).unwrap();clear_node(&mut run,id);}
+            let before=run.descents();
+            let back=path[path.len()-2];
+            assert!(run.available().contains(&back),"red camp offers the visited neighbour");
+            let kinds_layer0:Vec<_>=run.start_nodes().iter().map(|&i|run.nodes[i].kind).collect();
+            run.enter(back).unwrap();
+            assert!(run.fallen_active());assert_eq!(run.visited,vec![camp]);
+            assert_eq!(run.start_nodes().iter().map(|&i|run.nodes[i].kind).collect::<Vec<_>>(),kinds_layer0);
+            assert_eq!(run.descents(),before+1);
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+            clear_node(&mut run,back);
+            let mut guard=0;
+            while run.act==1 {
+                guard+=1;assert!(guard<40);
+                let options=run.available();assert!(!options.is_empty());
+                let cur=*run.visited.last().unwrap();
+                for &o in &options {assert!(o==fallen||run.nodes[o].next.contains(&cur),"only downward");}
+                let pick=options[0];run.enter(pick).unwrap();
+                if pick==fallen {
+                    let level=run.descent_level(fallen).unwrap();assert!(level>before+1);
+                    run.win_combat().unwrap();
+                    for page in 0..2 {
+                        let Phase::Reward{ref offers,..}=run.phase else{panic!()};let offers=offers.clone();
+                        assert_eq!(offers.len(),3);
+                        for r in &offers {let c=run.curse(fallen,r).unwrap();
+                            assert_eq!(c.swaps.iter().map(|s|descent::factor(s.1)).filter(|f|*f==2).count(),2);
+                            assert_eq!(c.swaps.iter().filter(|s|descent::factor(s.1)==-2).count(),1);}
+                        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+                        run.claim_reward(0).unwrap();
+                        if page==0 {assert!(matches!(run.phase,Phase::Reward{..}));assert_eq!(run.fallen.as_ref().unwrap().page,1);}
+                    }
+                    assert_eq!(run.act,2,"the fallen boss clears the act");assert!(run.cursed.len()>=2);
+                    assert!(run.fallen.as_ref().is_some_and(|f|!f.active&&f.page==0));
+                    assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+                    done+=1;
+                } else {
+                    if run.nodes[pick].kind==NodeKind::Shop {
+                        assert!(run.red_shop(pick));
+                        if run.claimed_items.contains(&160030000) {} else {
+                            run.keep_shop_gear(pick,160030000).unwrap();assert!(run.cursed_item(160030000).is_some());
+                        }
+                        let bonus=run.grant_shop_bonus(pick).unwrap();
+                        assert_eq!(run.cursed_item(bonus).unwrap().swaps.iter().filter(|s|descent::factor(s.1)==-2).count(),1);
+                        assert!(run.grant_shop_bonus(pick).is_err(),"once per shop");
+                        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+                        shops+=1;
+                    }
+                    clear_node(&mut run,pick);assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+                }
+            }
+        }
+        assert!(done>10,"{done}");assert!(shops>0,"fallen shops were visited");
     }
     #[test]
     fn upward_only_runs_never_descend_and_tampered_curses_are_rejected() {
@@ -638,7 +731,7 @@ fn spaced_graph(seed:u64)->Vec<Node> {
     space_rest_nodes(expedition_graph(seed))
 }
 
-fn camp_graph(seed:u64)->Vec<Node> {
+pub(crate) fn camp_graph(seed:u64)->Vec<Node> {
     let mut nodes=expedition_graph(seed);
     for (id,node) in nodes.iter_mut().enumerate() {
         if (1..14).contains(&node.layer)&&mix(seed^id as u64)%10==0 {node.kind=NodeKind::Camp;}
@@ -646,7 +739,7 @@ fn camp_graph(seed:u64)->Vec<Node> {
     space_rest_nodes(nodes)
 }
 
-fn space_rest_nodes(mut nodes:Vec<Node>)->Vec<Node> {
+pub(crate) fn space_rest_nodes(mut nodes:Vec<Node>)->Vec<Node> {
     let rest=|kind|matches!(kind,NodeKind::Chest|NodeKind::Camp);
     for id in (0..nodes.len()).rev() {
         if rest(nodes[id].kind)&&nodes[id].next.iter().any(|&next|rest(nodes[next].kind)) {
@@ -678,6 +771,7 @@ impl Run {
             wander: false,
             descents_before: 0,
             cursed: Vec::new(),
+            fallen: None,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -755,27 +849,61 @@ impl Run {
 
     fn next_route(&self) -> Vec<usize> {
         match self.visited.last() {
-            Some(&id) if self.wander => self.wander_route(&self.visited,id),
+            Some(&id) if self.fallen_active() => self.fallen_route(&self.visited,id),
+            Some(&id) if self.wander => {
+                let mut route=self.wander_route(&self.visited,id);
+                // 红篝火：选择相邻、走过的关卡即开启堕落挑战
+                if Some(id)==self.red_camp() {
+                    route.extend((0..self.nodes.len()).filter(|&o|self.nodes[o].next.contains(&id)&&self.visited.contains(&o)&&Some(o)!=self.fallen_id()));
+                    route.sort_unstable();route.dedup();
+                }
+                route
+            },
             Some(id) => self.nodes[*id].next.clone(),
             None => self.start_nodes(),
         }
     }
 
-    /// 游龙：当前关卡沿连线上下相邻、且尚未去过的关卡；四周都去过时只能挑战首领
+    /// 堕落：当前关卡沿连线上下相邻、且尚未去过的关卡；四周都去过时只能挑战首领
     fn wander_route(&self,visited:&[usize],id:usize)->Vec<usize> {
+        let fallen=self.fallen_id();
         let mut route:Vec<usize>=self.nodes[id].next.iter().copied()
             .chain((0..self.nodes.len()).filter(|&other|self.nodes[other].next.contains(&id)))
-            .filter(|other|!visited.contains(other)).collect();
+            .filter(|other|!visited.contains(other)&&Some(*other)!=fallen).collect();
         route.sort_unstable();route.dedup();
         if route.is_empty() {
-            route=(0..self.nodes.len()).filter(|&other|self.nodes[other].kind==NodeKind::Boss&&!visited.contains(&other)).collect();
+            route=(0..self.nodes.len()).filter(|&other|self.nodes[other].kind==NodeKind::Boss&&!visited.contains(&other)&&Some(other)!=fallen).collect();
         }
         route
     }
+    /// [HansFix] 堕落挑战：只能沿连线向下进入没去过的关卡；起点那排向下就是堕落首领
+    fn fallen_route(&self,visited:&[usize],id:usize)->Vec<usize> {
+        if Some(id)==self.fallen_id() {return vec![];}
+        let route:Vec<usize>=(0..self.nodes.len()).filter(|&o|self.nodes[o].next.contains(&id)&&!visited.contains(&o)).collect();
+        if route.is_empty() {self.fallen_id().filter(|f|!visited.contains(f)).into_iter().collect()} else {route}
+    }
+    /// 堕落首领的节点编号（堕落模式地图的最后一个节点）
+    pub fn fallen_id(&self)->Option<usize> {self.fallen.as_ref().map(|_|self.nodes.len()-1)}
+    pub fn fallen_active(&self)->bool {self.fallen.as_ref().is_some_and(|f|f.active)}
+    pub fn red_camp(&self)->Option<usize> {self.fallen.as_ref().and_then(|_|descent::red_camp(&self.nodes,self.seed))}
+    /// 这一幕的地图（堕落模式下按当前状态加上篝火、堕落首领与洗牌）
+    pub(crate) fn expected_nodes(&self)->Vec<Node> {
+        let base=camp_graph(self.seed);
+        match &self.fallen {Some(f)=>descent::fallen_graph(base,self.seed,f.active),None=>base}
+    }
+    /// 红篝火处选择了走过的相邻关卡：开启堕落挑战
+    fn begin_fallen(&mut self)->RuleResult<()> {
+        let camp=self.red_camp().ok_or("没有红篝火")?;
+        self.descents_before+=self.descent_path().len() as u32;
+        if let Some(f)=self.fallen.as_mut() {f.active=true;f.page=0;}
+        self.nodes=self.expected_nodes();
+        self.visited=vec![camp];
+        Ok(())
+    }
 
-    /// [HansFix] 游龙：从 from 进入 to 是否为“向下”（不是沿连线向上；四周走完后去首领不算）
+    /// [HansFix] 堕落：从 from 进入 to 是否为“向下”（不是沿连线向上；四周走完后去首领不算）
     pub fn is_descent(&self,from:usize,to:usize)->bool {
-        self.wander&&self.nodes.get(from).is_some_and(|n|!n.next.contains(&to))&&self.nodes.get(to).is_some_and(|n|n.kind!=NodeKind::Boss)
+        self.wander&&self.nodes.get(from).is_some_and(|n|!n.next.contains(&to))&&self.nodes.get(to).is_some_and(|n|n.kind!=NodeKind::Boss||Some(to)==self.fallen_id())
     }
     /// 本幕已走路线（含正在进行的关卡）里向下进入的关卡，按先后
     pub fn descent_path(&self)->Vec<usize> {
@@ -792,13 +920,22 @@ impl Run {
     /// 地图上可选的关卡里，哪些是向下（红色高亮）
     pub fn descent_choice(&self,id:usize)->bool {self.visited.last().is_some_and(|&from|self.is_descent(from,id))}
 
-    /// 开启或关闭游龙模式；只能在第一幕起点、尚未行动时切换
+    /// 开启或关闭堕落模式；只能在第一幕起点、尚未行动时切换
     pub fn set_wander(&mut self,on:bool)->RuleResult<()> {
-        if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {return Err("游龙模式只能在开局、选择第一个关卡前切换".into());}
-        self.wander=on;Ok(())
+        if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {return Err("堕落模式只能在开局、选择第一个关卡前切换".into());}
+        self.wander=on;self.apply_fallen_mode();Ok(())
     }
-    /// 联机客机跟随房主的游龙设置（由房主的进入指令携带）
-    pub fn follow_wander(&mut self,on:bool) {self.wander=on;}
+    /// 联机客机跟随房主的堕落设置（由房主的进入指令携带）
+    pub fn follow_wander(&mut self,on:bool) {
+        self.wander=on;
+        if self.act==1&&self.visited.is_empty()&&self.schema==6 {self.apply_fallen_mode();}
+    }
+    /// 堕落模式开关后换上对应的地图（只在第一幕开局时调用）
+    fn apply_fallen_mode(&mut self) {
+        if self.schema!=6 {return;}
+        self.fallen=self.wander.then(descent::Fallen::default);
+        self.nodes=self.expected_nodes();
+    }
 
     pub fn start_nodes(&self)->Vec<usize> {if self.schema==1 {vec![0]}else if self.schema<4 {vec![0,1,2]}else{self.nodes.iter().enumerate().take_while(|(_,n)|n.layer==0).map(|(id,_)|id).collect()}}
 
@@ -806,6 +943,7 @@ impl Run {
         if !self.available().contains(&id) {
             return Err("节点不可达".into());
         }
+        if !self.fallen_active()&&self.visited.last().is_some_and(|&l|Some(l)==self.red_camp())&&self.visited.contains(&id) {self.begin_fallen()?;}
         self.reached_layer=self.reached_layer.max(self.nodes[id].layer+1);
         self.shop_purchased = 0;self.shop_stock=None;
         if self.nodes[id].kind==NodeKind::Event {
@@ -853,6 +991,7 @@ impl Run {
             if let Some(old)=&self.contract {self.contract=Some(old.next_act(self.reward_seed(),self.class,self.act));}
             self.schema=6;
             self.nodes=camp_graph(self.seed);
+            if self.fallen.is_some() {self.fallen=Some(descent::Fallen::default());self.nodes=self.expected_nodes();}
             self.visited.clear();
             self.phase=Phase::Map;
             return;
@@ -920,6 +1059,8 @@ impl Run {
     }
 
     fn offers(&self, id: usize) -> Vec<Reward> {
+        // [HansFix] 堕落首领：两页三件“两个词条 ×2、一个 ×(-2)”的传说装备
+        if Some(id)==self.fallen_id() {return descent::fallen_offers(self,id,self.fallen.as_ref().map_or(0,|f|f.page));}
         // [HansFix] 红色战斗关卡：精英结算，选项数量随向下次数增加
         if let Some(level)=self.red_combat(id) {return self.descent_offers(id,level);}
         let mut offers=rewards::offers(self,id);
@@ -1034,6 +1175,7 @@ impl Run {
         let curse=self.curse(id,&reward);
         self.grant(reward)?;
         if let Some(curse)=curse {self.cursed.retain(|c|c.item!=curse.item);self.cursed.push(curse);}
+        if self.fallen_second_page(id) {return Ok(());}
         self.finish(id);
         Ok(())
     }
@@ -1059,8 +1201,31 @@ impl Run {
     /// [HansFix] 红色战斗关卡的奖励里，这件装备的词条会怎样被扭曲
     pub fn curse(&self,node:usize,reward:&Reward)->Option<descent::Cursed> {
         let Reward::Item(item)=*reward else{return None};
+        if Some(node)==self.fallen_id() {return descent::super_plan(self.reward_seed(),node,item);}
         self.red_combat(node)?;
         descent::plan(self.reward_seed(),node,item)
+    }
+    /// [HansFix] 堕落商店：向下进入的商店（堕落挑战里的商店都是）
+    pub fn red_shop(&self,id:usize)->bool {self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Shop)&&self.descent_level(id).is_some()}
+    /// 堕落商店里这件装备的堕落方式（与红色关卡奖励相同：一个词条 ×2、一个 ×-1）
+    pub fn shop_curse(&self,node:usize,item:u32)->Option<descent::Cursed> {
+        if !self.red_shop(node) {return None;}
+        descent::plan(self.reward_seed(),node,item)
+    }
+    /// 在堕落商店买下的装备记入本局（之后按堕落后的效果生效）
+    pub fn keep_shop_gear(&mut self,node:usize,item:u32)->RuleResult<()> {
+        let curse=self.shop_curse(node,item).ok_or("这件装备不是堕落商店的商品")?;
+        if !self.claimed_items.contains(&item) {self.claimed_items.push(item);}
+        self.cursed.retain(|c|c.item!=item);self.cursed.push(curse);Ok(())
+    }
+    /// 在这家堕落商店消费满额：送一件“两个词条 ×2、一个 ×(-2)”的传说装备（每家一次）
+    pub fn grant_shop_bonus(&mut self,node:usize)->RuleResult<u32> {
+        if !self.red_shop(node) {return Err("只有堕落商店有满额奖励".into());}
+        if self.fallen.as_ref().is_none_or(|f|f.bonus.contains(&node)) {return Err("这家商店的满额奖励已经领过".into());}
+        let (item,curse)=descent::shop_bonus(self,node).ok_or("没有可送的传说装备")?;
+        self.claimed_items.push(item);self.cursed.retain(|c|c.item!=item);self.cursed.push(curse);
+        if let Some(f)=self.fallen.as_mut() {f.bonus.push(node);}
+        Ok(item)
     }
     /// 已领取的扭曲装备
     pub fn cursed_item(&self,item:u32)->Option<&descent::Cursed> {self.cursed.iter().find(|c|c.item==item)}
@@ -1069,8 +1234,16 @@ impl Run {
         let Phase::Reward { id, .. } = self.phase else {
             return Err("当前没有待领取奖励".into());
         };
+        if self.fallen_second_page(id) {return Ok(());}
         self.finish(id);
         Ok(())
+    }
+    /// 堕落首领的第一页奖励领完：换到第二页，而不是结束关卡
+    fn fallen_second_page(&mut self,id:usize)->bool {
+        if Some(id)!=self.fallen_id()||self.fallen.as_ref().is_none_or(|f|f.page>0) {return false;}
+        if let Some(f)=self.fallen.as_mut() {f.page=1;}
+        self.phase=Phase::Reward{id,offers:self.offers(id)};
+        true
     }
 
     pub fn finish_chest(&mut self) -> RuleResult<()> {
@@ -1194,7 +1367,7 @@ impl Run {
             || self.elite_buffs.iter().collect::<std::collections::BTreeSet<_>>().len()!=self.elite_buffs.len()
             || !self.valid_regional_event()
             || !(1..=3).contains(&self.act)
-            || self.nodes != match self.schema {1=>legacy_graph(self.seed),2=>graph(self.seed),3=>balanced_graph(self.seed),4=>expedition_graph(self.seed),5=>spaced_graph(self.seed),_=>camp_graph(self.seed)}
+            || self.nodes != match self.schema {1=>legacy_graph(self.seed),2=>graph(self.seed),3=>balanced_graph(self.seed),4=>expedition_graph(self.seed),5=>spaced_graph(self.seed),_=>self.expected_nodes()}
             || self.max_hp == 0
             || self.max_hp > 100
             || self.hp > self.max_hp
@@ -1225,17 +1398,18 @@ impl Run {
             if *id==0 || *id>999999 || self.delivered_talismans[..i].contains(id) {return fail();}
         }
         if self.claimed_items.len()>rewards::CATALOG.len()+affixes::CATALOG.len() {return fail();}
-        if self.cursed.len()>self.claimed_items.len()||self.cursed.iter().any(|c|!self.claimed_items.contains(&c.item)||c.swaps.is_empty()||c.swaps.len()>2
-            ||c.swaps.iter().any(|&(from,to)|!descent::effects(c.item).contains(&from)||(to!=descent::doubled(from)&&to!=descent::negated(from)))) {return fail();}
+        if self.cursed.len()>self.claimed_items.len()||self.cursed.iter().any(|c|!self.claimed_items.contains(&c.item)||c.swaps.is_empty()
+            ||c.swaps.len()>3||c.swaps.iter().any(|&(from,to)|!descent::effects(c.item).contains(&from)||(to!=descent::doubled(from)&&to!=descent::negated(from)&&to!=descent::negated2(from)))) {return fail();}
+        if self.fallen.is_some()!=(self.wander&&self.schema==6)||self.fallen.as_ref().is_some_and(|f|f.page>1) {return fail();}
         for (i,id) in self.claimed_items.iter().enumerate() {
             if !(rewards::lookup(*id).is_some_and(|item|item.kind.allowed(self.class)||elite::LEGENDARY.contains(&affixes::base(*id)))||rewards::RETIRED_SPELLS.contains(id))||self.claimed_items[..i].contains(id) {return fail();}
         }
-        let mut route = self.start_nodes();
+        let mut route = if self.fallen_active() {self.red_camp().into_iter().collect()} else {self.start_nodes()};
         for (i,id) in self.visited.iter().enumerate() {
             if !route.contains(id) {
                 return fail();
             }
-            route = if self.wander {self.wander_route(&self.visited[..=i],*id)} else {self.nodes[*id].next.clone()};
+            route = if self.fallen_active() {self.fallen_route(&self.visited[..=i],*id)} else if self.wander {self.wander_route(&self.visited[..=i],*id)} else {self.nodes[*id].next.clone()};
         }
         let current_id = match &self.phase {
             Phase::Combat { id } => {

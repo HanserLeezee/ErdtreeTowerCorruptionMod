@@ -150,7 +150,7 @@ fn offer_detail(run:&Run,node:usize,slot:usize,reward:&Reward)->Option<Detail> {
     let id=item_id(run,reward)?;let mut detail=DETAILS.get(&id)?.clone();
     let gem=super::random_ashes::preview(run,node,slot,id);
     if let Some((name,text))=super::random_ashes::description(gem){detail.skill=format!("{name}\n{}",text.replace("\\n","\n"));}
-    // [HansFix] 游龙·红色关卡：词条被扭曲的装备显示改动后的数值
+    // [HansFix] 堕落·红色关卡：词条被扭曲的装备显示改动后的数值
     if let Some(cursed)=run.curse(node,reward) {curse_detail(&mut detail,&cursed);}
     Some(detail)
 }

@@ -1,7 +1,7 @@
 use serde::{Deserialize,Serialize};
 use crate::{party_roster::Roster,RuleResult};
 pub const VERSION:u32=37;
-/// [HansFix] Optional patches that change the wire (游龙模式) add an offset so a patched player can
+/// [HansFix] Optional patches that change the wire (堕落模式) add an offset so a patched player can
 /// never join an unpatched party by mistake; with no such patch enabled this stays 0 = official protocol.
 static EXTENSION:std::sync::atomic::AtomicU32=std::sync::atomic::AtomicU32::new(0);
 pub fn set_extension(offset:u32){EXTENSION.store(offset,std::sync::atomic::Ordering::Relaxed);}

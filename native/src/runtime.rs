@@ -63,7 +63,7 @@ pub enum Action {
     Gear(usize),
     SkipGear,
     SkipContract,
-    /// 开局前切换游龙模式
+    /// 开局前切换堕落模式
     ToggleWander,
 }
 
@@ -264,6 +264,7 @@ struct Runtime {
     growth: super::scaling::Growth,
     hansfix_descent: super::hansfix::Descent,
     storm_revive_wait: Option<Instant>,
+    fallen_spend: super::hansfix::FallenSpend,
     law_fight: super::law::Fight,
     ember_fight: super::embers::Fight,
     bout: super::debug_menu::Bout,
@@ -323,6 +324,7 @@ fn fresh_runtime()->Runtime {
         growth: Default::default(),
         hansfix_descent: Default::default(),
         storm_revive_wait: None,
+        fallen_spend: Default::default(),
         law_fight: Default::default(),
         ember_fight: Default::default(),
         bout: Default::default(),
@@ -600,8 +602,8 @@ fn recover_party_at_hub(state:&mut Runtime,world:&WorldChrMan,game:&GameMan) {
     super::log("Empty or closed Seamless session released at hub; personal progress retained");
 }
 fn toggle_wander(state:&mut Runtime)->Result<(),String> {
-    if !super::hansfix::wander() {return Err("未安装游龙模式补丁".into());}
-    if state.party.as_ref().is_some_and(|p|!p.host()) {return Err("联机时由房主在开局前决定游龙模式".into());}
+    if !super::hansfix::wander() {return Err("未安装堕落模式补丁".into());}
+    if state.party.as_ref().is_some_and(|p|!p.host()) {return Err("联机时由房主在开局前决定堕落模式".into());}
     let run=state.view.run.as_mut().ok_or("旅程未加载")?;
     let on=!run.wander;run.set_wander(on)?;record_checked(run)?;
     super::log(format!("WANDER mode={on}"));Ok(())
@@ -939,6 +941,7 @@ fn tick_locked() {
     if state.departure.as_mut().is_some_and(|departure|departure.tick()){state.departure=None;}
     let lobby=state.view.run.is_none();
     super::hansfix::curses_tick(state.view.run.as_ref());
+    super::hansfix::night_tick(state.view.run.as_ref());
     if state.party.as_mut().is_some_and(|link|link.poll_force_end(lobby)) {
         super::log("HOME_SYNC received host force end before room processing");
         QUICK_END.store(true,std::sync::atomic::Ordering::Relaxed);
@@ -1711,7 +1714,7 @@ fn tick_locked() {
             let message=state.view.run.as_ref().filter(|r|r.act>1&&r.visited.is_empty()&&r.phase==Phase::Map)
                 .map(|r|format!("第 {} 幕已开启，生命、专注与圣杯瓶已回满。下一战：{}。",r.act,super::arenas::for_act(r.act).name))
                 .unwrap_or_else(||if matches!(action,Action::ToggleWander) {
-                    if state.view.run.as_ref().is_some_and(|r|r.wander) {"游龙模式已开启：可沿连线向上或向下进入相邻、未去过的关卡。".into()} else {"游龙模式已关闭，恢复只能向上选择关卡。".into()}
+                    if state.view.run.as_ref().is_some_and(|r|r.wander) {"堕落模式已开启：可沿连线向上或向下进入相邻、未去过的关卡。".into()} else {"堕落模式已关闭，恢复只能向上选择关卡。".into()}
                 } else {story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into())});
             report(&mut state, message);
         }
@@ -2184,6 +2187,19 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 state.view.run = Some(next);
                 super::log(format!("Native shop blessings applied: {pending:?}"));
             }
+            // [HansFix] 堕落商店：这家店累计消费满 3 万卢恩，送一件“两个词条 ×2、一个 ×(-2)”的传说装备
+            if let Some(run)=state.view.run.as_ref()&&let Phase::Node{id}=run.phase&&super::hansfix::wander()&&run.red_shop(id)
+                &&run.fallen.as_ref().is_some_and(|f|!f.bonus.contains(&id)) {
+                let runes=unsafe {player.player_game_data.as_ref()}.rune_count;
+                if state.fallen_spend.update((run.seed,id),runes)>=erdtree_tower::descent::SHOP_BONUS_RUNES {
+                    let mut next=run.clone();
+                    let item=next.grant_shop_bonus(id)?;
+                    super::items::give_reward(unsafe {player.player_game_data.as_mut()},item)?;
+                    record_checked(&next)?;state.view.run=Some(next);
+                    super::log(format!("HANSFIX_SHOP bonus granted item={item}"));
+                    report(state,"堕落商店：消费满 3 万卢恩，获得一件堕落的传说装备。");
+                }
+            }
         }
         if flags.virtual_memory_flag.get_flag(base + 994) {
             flags.virtual_memory_flag.set_flag(base + 994, false);
@@ -2192,7 +2208,10 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
             if matches!(run.phase, Phase::Node { .. }) {
                 match room.kind {
                     erdtree_tower::NodeKind::Camp => run.leave_camp()?,
-                    erdtree_tower::NodeKind::Shop => run.leave_shop()?,
+                    erdtree_tower::NodeKind::Shop => {
+                        if let Some(player)=world.main_player.as_ref() {super::hansfix::keep_fallen_purchases(run,unsafe {player.player_game_data.as_ref()})?;}
+                        run.leave_shop()?
+                    },
                     erdtree_tower::NodeKind::Event => run.leave_regional_event()?,
                     _ => return Err("宝箱尚未领取".into()),
                 }

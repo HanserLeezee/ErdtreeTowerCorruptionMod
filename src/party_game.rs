@@ -5,7 +5,7 @@ pub fn act_seed(initial:u64,act:u8)->RuleResult<u64> {
     Ok((2..=act).fold(initial,|seed,act|crate::mix(seed^u64::from(act))))
 }
 
-/// [游龙] 游龙模式下一幕最多可走遍整张地图，队员进度上报的上限按整张地图节点数放宽
+/// [堕落] 堕落模式下一幕最多可走遍整张地图，队员进度上报的上限按整张地图节点数放宽
 pub const MAX_VISITED:usize=128;
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,7 +76,7 @@ pub enum Order {
     NewRun{epoch:u64,seed:u64},
     Votes{epoch:u64,ballots:Vec<crate::party_vote::Ballot>},
     Enter{epoch:u64,act:u8,visited:Vec<usize>,node:usize,has_stonesword_key:bool,
-        /// 房主的游龙模式设置，客机据此跟随
+        /// 房主的堕落模式设置，客机据此跟随
         #[serde(default,skip_serializing_if="std::ops::Not::not")] wander:bool},
     EventStart(crate::party_events::Job),
     EventHunt{epoch:u64,wave:u8},

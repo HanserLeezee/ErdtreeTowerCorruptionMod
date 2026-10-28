@@ -5,6 +5,7 @@ usage: python3 -I descent_patch.py <tools_dir> <paramdef SpEffect.xml> <input re
 - 9641001..9641060: descent k -> maxHpRate 2*1.1^(k-1), *AttackPowerRate 1+0.05k (cloned from growth row 9640001)
 - 9851000+kind*10+tier: affix effect 9850000+kind*10+tier with its value doubled
 - 9852000+kind*10+tier: the same effect negated
+- 9853000+kind*10+tier: the same effect x-2 (fallen boss / fallen shop bonus gear)
 Every other byte of the regulation is verified unchanged.
 """
 import sys, json, hashlib
@@ -12,7 +13,7 @@ sys.path.insert(0, sys.argv[1])
 from erreg import Regulation, Param, load_def, get, put
 
 DEF, SRC, OUT, BUILD = sys.argv[2:6]
-AFFIX, DOUBLE, NEGATE, ENEMY, GROWTH1 = 9850000, 9851000, 9852000, 9641000, 9640001
+AFFIX, DOUBLE, NEGATE, NEGATE2, ENEMY, GROWTH1 = 9850000, 9851000, 9852000, 9853000, 9641000, 9640001
 ATK = [f'{e}AttackPowerRate' for e in ('physics', 'magic', 'fire', 'thunder', 'dark')]
 HIT = [f'{e}AttackRate' for e in ('physics', 'magic', 'fire', 'thunder', 'dark')]
 # kind -> (fields, value in percent (or points for kind 3), reduce?)
@@ -52,7 +53,7 @@ for kind in range(21):
             got = get(before[src], fields[name])
             want = (1 + tier) if kind == 3 else 1 + (-value if reduce else value) / 100
             assert abs(got - want) < 1e-4, (src, name, got, want)
-        for first, factor, label in ((DOUBLE, 2, 'x2'), (NEGATE, -1, 'x-1')):
+        for first, factor, label in ((DOUBLE, 2, 'x2'), (NEGATE, -1, 'x-1'), (NEGATE2, -2, 'x-2')):
             vals = {}
             for name in names:
                 got = get(before[src], fields[name])
