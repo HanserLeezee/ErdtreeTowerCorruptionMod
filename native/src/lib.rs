@@ -66,6 +66,7 @@ mod map_scarabs;
 mod chest_award;
 mod smith;
 mod whetblades;
+mod parkour_barrier;
 mod spirits;
 mod bloodstain;
 mod run_screen;
