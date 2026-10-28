@@ -1920,9 +1920,9 @@ html.reduced-motion *::after {
 
 /* ---------------- 窗口尺寸自适应 ----------------
    设计画布固定 1280x720；视口不足时整体等比缩放并居中。
-   接进 WebView2 时窗口本身就是 1280x720，不会触发缩放。 */
+   高 DPI 下 WebView2 的 CSS 视口也可能小于设计画布。 */
 #app {
-  transform-origin: center center;
+  transform-origin: left top;
 }
 
 /* ---------------- 游戏内设置区块 ---------------- */

@@ -87,7 +87,7 @@
   /* ================= 窗口尺寸自适应 =================
      设计画布固定 1280x720。视口比它小就整体等比缩小并居中，
      比它大则保持原尺寸（stage 模式下由 stage 规则居中）。
-     接进 WebView2 时窗口本身就是 1280x720，这里不会触发。
+     WebView2 的 CSS 视口随系统 DPI 变化，不能假定与窗口像素相同。
      ================================================= */
   function fitCanvas() {
     var app = document.getElementById('app');
@@ -97,11 +97,9 @@
     var vw = window.innerWidth;
     var vh = window.innerHeight;
     var s = Math.min(1, vw / 1280, vh / 720);
-    if (s >= 1) {
-      app.style.transform = '';
-      return;
-    }
-    app.style.transform = 'scale(' + s.toFixed(4) + ')';
+    app.style.left = Math.max(0, (vw - 1280 * s) / 2) + 'px';
+    app.style.top = Math.max(0, (vh - 720 * s) / 2) + 'px';
+    app.style.transform = 'scale(' + s + ')';
   }
 
   /* ---------------- 工具 ---------------- */

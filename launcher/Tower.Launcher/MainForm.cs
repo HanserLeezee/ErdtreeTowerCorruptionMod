@@ -120,7 +120,7 @@ namespace Tower.Launcher
                 Log.Write($"WebView2 进程异常：{a.ProcessFailedKind}");
                 if (a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessExited || a.ProcessFailedKind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive) core.Reload();
             };
-            core.Navigate($"https://{PageHost}/index.html");
+            ReloadPage();
         }
 
         static bool WebViewInstalled()
@@ -149,7 +149,7 @@ namespace Tower.Launcher
         }
 
         /// <summary>启动器自己的界面文件更新后重新加载页面（状态由 PageReady 重新推送）</summary>
-        public void ReloadPage() => web.CoreWebView2?.Reload();
+        public void ReloadPage() => web.CoreWebView2?.Navigate($"https://{PageHost}/index.html?ui={File.GetLastWriteTimeUtc(Path.Combine(paths.UiDir, "index.html")).Ticks}");
 
         /// <summary>页面在可拖动区域按下鼠标：交给系统按标题栏拖动处理。消息到达时鼠标已经松开就不拖，免得窗口粘在指针上。</summary>
         public void StartDrag()

@@ -46,11 +46,9 @@ body {
 
 /* 通用：完全贴合窗口的根容器 */
 #app {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  min-width: var(--win-w);
-  min-height: var(--win-h);
+  position: absolute;
+  width: var(--win-w);
+  height: var(--win-h);
   overflow: hidden;
 }
 
@@ -87,15 +85,46 @@ html.stage #app {
 }
 
 /* 滚动条（弹窗内可能用到） */
-.scroll::-webkit-scrollbar {
-  width: 6px;
+.scroll, .set-body, .set-menu, .sel-list {
+  color-scheme: dark;
 }
-.scroll::-webkit-scrollbar-thumb {
+.scroll::-webkit-scrollbar,
+.set-body::-webkit-scrollbar,
+.set-menu::-webkit-scrollbar,
+.sel-list::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll::-webkit-scrollbar-thumb,
+.set-body::-webkit-scrollbar-thumb,
+.set-menu::-webkit-scrollbar-thumb,
+.sel-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.22);
   border-radius: 3px;
 }
-.scroll::-webkit-scrollbar-track {
+.scroll::-webkit-scrollbar-thumb:hover,
+.set-body::-webkit-scrollbar-thumb:hover,
+.set-menu::-webkit-scrollbar-thumb:hover,
+.sel-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
+}
+.scroll::-webkit-scrollbar-track,
+.set-body::-webkit-scrollbar-track,
+.set-menu::-webkit-scrollbar-track,
+.sel-list::-webkit-scrollbar-track,
+.scroll::-webkit-scrollbar-corner,
+.set-body::-webkit-scrollbar-corner,
+.set-menu::-webkit-scrollbar-corner,
+.sel-list::-webkit-scrollbar-corner {
   background: transparent;
+}
+.scroll::-webkit-scrollbar-button,
+.set-body::-webkit-scrollbar-button,
+.set-menu::-webkit-scrollbar-button,
+.sel-list::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* 视觉隐藏 */
