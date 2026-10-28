@@ -276,6 +276,7 @@ impl Hub {
                 return Ok(None);
             }
             match (npc,choice) {
+                (1,1)=>super::run_screen::progression_entry(),
                 // 联机由房主选律法，客机选完职业后等待规则同步。
                 (0,1)=>super::run_screen::class_entry(None,law_start_allowed(),self.current_class()),
                 (0,3)=>{if seeded_start_allowed(){super::run_screen::seed_entry();}else{room.notice(9500105)?;}},

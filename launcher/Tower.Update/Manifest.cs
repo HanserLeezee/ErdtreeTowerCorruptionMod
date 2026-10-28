@@ -16,6 +16,8 @@ namespace Tower.Update
         [JsonPropertyName("schema")] public int SchemaVersion { get; set; }
         [JsonPropertyName("version")] public int Version { get; set; }
         [JsonPropertyName("displayVersion")] public string DisplayVersion { get; set; } = "";
+        [JsonPropertyName("launcherVersion")] public string LauncherVersion { get; set; } = "";
+        [JsonPropertyName("updateKind")] public string UpdateKind { get; set; } = "package";
         [JsonPropertyName("tag")] public string Tag { get; set; } = "";
         [JsonPropertyName("notes")] public string Notes { get; set; } = "";
         [JsonPropertyName("files")] public List<FileEntry> Files { get; set; } = new List<FileEntry>();
@@ -34,6 +36,8 @@ namespace Tower.Update
             if (SchemaVersion != Schema) throw new InvalidDataException($"不支持的更新清单格式：{SchemaVersion}");
             if (Version <= 0 || Files.Count == 0) throw new InvalidDataException("更新清单不完整");
             if (!string.IsNullOrEmpty(DisplayVersion) && !Versions.Valid(DisplayVersion)) throw new InvalidDataException("整合包显示版本格式无效");
+            if (!string.IsNullOrEmpty(LauncherVersion) && !Versions.Valid(LauncherVersion)) throw new InvalidDataException("启动器版本格式无效");
+            if (UpdateKind != "package" && UpdateKind != "launcher") throw new InvalidDataException("更新类型无效");
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var file in Files)
             {
@@ -78,6 +82,8 @@ namespace Tower.Update
         public const string FileName = "tower-install.json";
         [JsonPropertyName("version")] public int Version { get; set; }
         [JsonPropertyName("displayVersion")] public string DisplayVersion { get; set; } = "";
+        [JsonPropertyName("launcherVersion")] public string LauncherVersion { get; set; } = "";
+        [JsonPropertyName("transaction")] public string Transaction { get; set; } = "";
         [JsonPropertyName("files")] public List<FileEntry> Files { get; set; } = new List<FileEntry>();
 
         public static InstallState? Load(string installDir)

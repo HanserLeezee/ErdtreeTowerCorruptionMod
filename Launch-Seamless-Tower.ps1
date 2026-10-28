@@ -89,7 +89,12 @@ $verifiedSeamless = @(
     'FCD11A1849FD37851BB449BE30F1525CF498F63FD1FA568C4E15030EBE7CB251' # 2.0.1 (revival fix supported)
     '0A093D8490967BF19C62F895FDF1FDA21840282D2B2B371B9B4FC24A0CFE146E' # 2.0.2 (revival fix not ported, it turns itself off)
 )
-$erscHash = (Get-FileHash -LiteralPath $ersc).Hash
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $erscStream = [System.IO.File]::OpenRead($ersc)
+    try { $erscHash = [System.BitConverter]::ToString($sha256.ComputeHash($erscStream)).Replace('-', '') }
+    finally { $erscStream.Dispose() }
+} finally { $sha256.Dispose() }
 if ($verifiedSeamless -notcontains $erscHash) {
     Write-Warning "This Seamless Co-op build is not verified with the tower (SHA256 $erscHash). Launching anyway: the revival fix turns itself off; all players must use the same Seamless build."
 }

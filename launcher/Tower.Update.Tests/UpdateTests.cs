@@ -181,6 +181,123 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task LauncherOnlyPackInstallsWithoutChangingModOrPrivateFiles()
+    {
+        var files = new Dictionary<string, byte[]> {
+            ["mod.dll"] = Encoding.UTF8.GetBytes("game content"),
+            ["ErdtreeTowerLauncher.exe"] = Encoding.UTF8.GetBytes("old launcher"),
+            ["launcher/removed.dll"] = Encoding.UTF8.GetBytes("obsolete library")
+        };
+        var previous = Release(1, files, null);
+        var old = ReleaseManifest.Parse(File.ReadAllText(previous));
+        old.DisplayVersion = "1.0.0";
+        File.WriteAllText(previous, System.Text.Json.JsonSerializer.Serialize(old));
+        File.Copy(previous, Path.Combine(root, "releases/latest/tower-release.json"), true);
+        var install = Path.Combine(root, "install");
+        await Update(install);
+        File.WriteAllText(Path.Combine(install, "GamePath.txt"), "private path");
+        var stage = Path.Combine(root, "launcher-stage");
+        Write(stage, new() { ["ErdtreeTowerLauncher.exe"] = Encoding.UTF8.GetBytes("new launcher") });
+        var output = Path.Combine(root, "releases/v2");
+        var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "python" : "python3") { CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false };
+        foreach (var arg in new[] { "-c", "import sys; sys.path.insert(0, sys.argv[1]); from package_launcher import build_update; build_update(sys.argv[2], sys.argv[3], 2, '1.1.1', sys.argv[4])", Path.Combine(Repo, "distribution"), stage, previous, output }) start.ArgumentList.Add(arg);
+        using (var process = Process.Start(start)!) {
+            Assert.True(process.WaitForExit(30000));
+            Assert.True(process.ExitCode == 0, process.StandardError.ReadToEnd());
+        }
+        File.Copy(Path.Combine(output, "tower-release.json"), Path.Combine(root, "releases/latest/tower-release.json"), true);
+        var plan = await Update(install);
+        Assert.DoesNotContain(plan.Writes, f => f.Path == "mod.dll");
+        Assert.Equal(new[] { "launcher/removed.dll" }, plan.Deletes);
+        Assert.Equal(files["mod.dll"], File.ReadAllBytes(Path.Combine(install, "mod.dll")));
+        Assert.Equal("private path", File.ReadAllText(Path.Combine(install, "GamePath.txt")));
+        Assert.Equal("1.0.0", InstallState.Load(install)!.DisplayVersion);
+        Assert.Equal("1.1.1", InstallState.Load(install)!.LauncherVersion);
+        Assert.Equal("launcher", plan.Target.UpdateKind);
+    }
+
+    [Fact]
+    public async Task InterruptedAfterBackupButBeforeCopyRestoresOriginal()
+    {
+        var install = Path.Combine(root, "install");
+        Release(1, V1, null);
+        await Update(install);
+        var backup = InstallPaths.Work(install, "backup-456");
+        Directory.CreateDirectory(backup);
+        File.Move(Path.Combine(install, "erdtree_tower.dll"), Path.Combine(backup, "erdtree_tower.dll"));
+        File.WriteAllText(InstallPaths.Work(install, "journal.json"), "{\"Version\":2,\"Backup\":\"backup-456\",\"Backed\":[\"erdtree_tower.dll\"],\"Written\":[]}");
+        Updater.Recover(install);
+        AssertInstalled(install, V1, 1);
+    }
+
+    [Fact]
+    public async Task CommittedStateSurvivesInterruptionBeforeJournalCleanup()
+    {
+        var install = Path.Combine(root, "install");
+        Release(1, V1, null);
+        await Update(install);
+        var state = InstallState.Load(install)!;
+        Assert.StartsWith("backup-", state.Transaction);
+        var backup = InstallPaths.Work(install, state.Transaction);
+        Directory.CreateDirectory(backup);
+        File.WriteAllText(Path.Combine(backup, "erdtree_tower.dll"), "obsolete binary");
+        File.WriteAllText(InstallPaths.Work(install, "journal.json"), System.Text.Json.JsonSerializer.Serialize(new {
+            Version = 1, Backup = state.Transaction, Backed = new[] { "erdtree_tower.dll" }, Written = new[] { "erdtree_tower.dll" }
+        }));
+        Updater.Recover(install);
+        AssertInstalled(install, V1, 1);
+    }
+
+    [Fact]
+    public async Task WindowsRunningExecutableAndLoadedDependencyCanBeUpdatedAndRestarted()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var compiler = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe");
+        Assert.True(File.Exists(compiler));
+        Dictionary<string, byte[]> Build(string version)
+        {
+            var dir = Path.Combine(root, "build-" + version);
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "Dependency.cs"), "public static class Dependency { public static string Value() { return \"" + version + "\"; } }");
+            File.WriteAllText(Path.Combine(dir, "App.cs"), "class App { static void Main() { System.Console.WriteLine(Dependency.Value()); System.Console.ReadLine(); } }");
+            void Compile(string args)
+            {
+                using var compilerProcess = Process.Start(new ProcessStartInfo(compiler, args) { WorkingDirectory = dir, CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+                Assert.True(compilerProcess.WaitForExit(30000));
+                Assert.True(compilerProcess.ExitCode == 0, compilerProcess.StandardOutput.ReadToEnd() + compilerProcess.StandardError.ReadToEnd());
+            }
+            Compile("/nologo /target:library /out:Dependency.dll Dependency.cs");
+            Compile("/nologo /target:exe /out:ErdtreeTowerLauncher.exe /reference:Dependency.dll App.cs");
+            return new() { ["ErdtreeTowerLauncher.exe"] = File.ReadAllBytes(Path.Combine(dir, "ErdtreeTowerLauncher.exe")), ["Dependency.dll"] = File.ReadAllBytes(Path.Combine(dir, "Dependency.dll")), ["mod.dll"] = Encoding.UTF8.GetBytes("unchanged Mod") };
+        }
+        var first = Build("old");
+        var second = Build("new");
+        var previous = Release(1, first, null);
+        var install = Path.Combine(root, "install");
+        await Update(install);
+        Process Start() => Process.Start(new ProcessStartInfo(Path.Combine(install, "ErdtreeTowerLauncher.exe")) { WorkingDirectory = install, CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardInput = true })!;
+        using (var old = Start())
+        {
+            try
+            {
+                Assert.Equal("old", await old.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+                Release(2, second, previous);
+                var plan = await Update(install);
+                Assert.DoesNotContain(plan.Writes, f => f.Path == "mod.dll");
+                Assert.False(old.HasExited);
+            }
+            finally { old.StandardInput.WriteLine(); Assert.True(old.WaitForExit(10000)); }
+        }
+        using (var current = Start())
+        {
+            try { Assert.Equal("new", await current.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10))); }
+            finally { current.StandardInput.WriteLine(); Assert.True(current.WaitForExit(10000)); }
+        }
+        Updater.Recover(install);
+        AssertInstalled(install, second, 2);
+    }
+
+    [Fact]
     public async Task HttpSourceUsesRangeRequestsAgainstAReleaseServer()
     {
         var install = Path.Combine(root, "install");

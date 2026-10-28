@@ -120,24 +120,29 @@ namespace Tower.Update
                 {
                     if (FailAfterWrites == count) throw new IOException("模拟安装失败");
                     var target = InstallPaths.Full(installDir, file.Path);
-                    if (File.Exists(target)) { MoveAside(file.Path, target, backup); journal.Backed.Add(file.Path); }
+                    if (File.Exists(target))
+                    {
+                        journal.Backed.Add(file.Path);
+                        Save(journal);
+                        MoveAside(file.Path, target, backup);
+                    }
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                    File.Copy(Planner.StagePath(installDir, file.Sha256), target);
                     journal.Written.Add(file.Path);
-                    cache.Forget(file.Path);
                     Save(journal);
+                    File.Copy(Planner.StagePath(installDir, file.Sha256), target);
+                    cache.Forget(file.Path);
                     count++;
                 }
                 foreach (var path in plan.Deletes)
                 {
                     var target = InstallPaths.Full(installDir, path);
                     if (!File.Exists(target)) continue;
-                    MoveAside(path, target, backup);
                     journal.Backed.Add(path);
-                    cache.Forget(path);
                     Save(journal);
+                    MoveAside(path, target, backup);
+                    cache.Forget(path);
                 }
-                new InstallState { Version = plan.Target.Version, DisplayVersion = plan.Target.DisplayVersion, Files = plan.Target.Files.Select(f => new FileEntry { Path = f.Path, Size = f.Size, Sha256 = f.Sha256 }).ToList() }.Save(installDir);
+                new InstallState { Version = plan.Target.Version, DisplayVersion = plan.Target.DisplayVersion, LauncherVersion = plan.Target.LauncherVersion, Transaction = journal.Backup, Files = plan.Target.Files.Select(f => new FileEntry { Path = f.Path, Size = f.Size, Sha256 = f.Sha256 }).ToList() }.Save(installDir);
             }
             catch
             {
@@ -159,9 +164,9 @@ namespace Tower.Update
             try { File.Move(target, saved); }
             catch (IOException)
             {
-                var old = target + ".old-" + DateTime.UtcNow.Ticks;
-                File.Move(target, old);
+                var old = target + ".old-" + Path.GetFileName(backup).Substring("backup-".Length);
                 File.WriteAllText(saved + ".moved", old);
+                File.Move(target, old);
             }
         }
 
@@ -177,7 +182,7 @@ namespace Tower.Update
             {
                 Journal? journal = null;
                 try { journal = JsonSerializer.Deserialize<Journal>(File.ReadAllText(path)); } catch (JsonException) { }
-                if (journal != null) Rollback(installDir, journal);
+                if (journal != null && InstallState.Load(installDir)?.Transaction != journal.Backup) Rollback(installDir, journal);
                 File.Delete(path);
             }
             var work = InstallPaths.Work(installDir);

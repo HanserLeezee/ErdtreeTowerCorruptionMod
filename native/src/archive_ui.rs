@@ -18,6 +18,12 @@ pub struct Archive {records:Vec<Record>,codex:Codex,bosses:Vec<(u8,String)>,affi
     /// 职业传承：角色存档与读到的数据；class 是选中的职业，talent 是选中的开局护符，column 0 为职业列表、1 为护符列表
     legacy:Option<((u32,i32),Legacy)>,class:usize,talent:usize,column:usize,notice:Option<(String,f64)>}
 impl Archive {
+    pub fn progression(records:Vec<Record>)->Self {
+        let mut archive=Self::new(records);
+        archive.tab=2;
+        archive.column=0;
+        archive
+    }
     pub fn new(records:Vec<Record>)->Self {
         let codex=journal::codex(&records);
         let recent:Vec<Record>=records.into_iter().rev().take(LIMIT).collect();
@@ -424,6 +430,14 @@ fn legacy(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureId
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn progression_opens_legacy_with_class_focus_without_changing_archive_default() {
+        let archive=Archive::new(vec![]);
+        let progression=Archive::progression(vec![]);
+        assert_eq!(archive.tab,0);
+        assert_eq!((progression.tab,progression.column),(2,0));
+        assert_eq!(progression.class,archive.class);
+    }
     #[test]
     fn relative_times_read_naturally() {
         assert_eq!(ago(1000,0),"");

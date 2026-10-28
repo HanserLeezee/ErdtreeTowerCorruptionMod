@@ -398,7 +398,7 @@ namespace Tower.Launcher
                 ["closeExit"] = settings.CloseExit,
                 ["gameDir"] = GameDir() ?? "（未设置：开始游戏时自动查找，找不到再询问）",
                 ["version"] = PackageVersion(state),
-                ["launcherVersion"] = typeof(TowerHost).Assembly.GetName().Version?.ToString(3) ?? "未知",
+                ["launcherVersion"] = LauncherVersionLabel(state),
                 ["updateStatus"] = updateStatus,
             };
             foreach (var (id, _, fallback) in TowerOptions.Hotkeys) values["key." + id] = TowerOptions.Key(options, id, fallback);
@@ -435,7 +435,15 @@ namespace Tower.Launcher
 
         bool IsInstalled(InstallState? state) => state != null || File.Exists(Path.Combine(paths.InstallDir, "Start-Tower.ps1"));
 
-        static string Label(ReleaseManifest release) => Versions.Label(release.Version, release.DisplayVersion);
+        static string Label(ReleaseManifest release) => release.UpdateKind == "launcher" && release.LauncherVersion.Length > 0
+            ? "启动器 " + release.LauncherVersion : Versions.Label(release.Version, release.DisplayVersion);
+
+        static string LauncherVersionLabel(InstallState? state)
+        {
+            var current = typeof(TowerHost).Assembly.GetName().Version?.ToString(3) ?? "未知";
+            return !string.IsNullOrEmpty(state?.LauncherVersion) && state!.LauncherVersion != current
+                ? current + "（已安装 " + state.LauncherVersion + "，重启生效）" : current;
+        }
         static string Label(InstallState state) => Versions.Label(state.Version, state.DisplayVersion);
         string PackageVersion(InstallState? state) => state != null ? Label(state) : IsInstalled(state) ? "开发版（未发布）" : "未安装";
 

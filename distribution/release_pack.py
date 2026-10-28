@@ -48,9 +48,11 @@ def collect(stage):
     return files
 
 
-def build(stage, version, output, previous=None, notes='', display_version=''):
+def build(stage, version, output, previous=None, notes='', display_version='', launcher_version=''):
     if display_version and not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', display_version):
         raise ValueError('Display version must be major.minor.patch')
+    if launcher_version and not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', launcher_version):
+        raise ValueError('Launcher version must be major.minor.patch')
     stage, output = Path(stage), Path(output)
     output.mkdir(parents=True, exist_ok=True)
     tag = f'v{version}'
@@ -82,6 +84,8 @@ def build(stage, version, output, previous=None, notes='', display_version=''):
         'schema': SCHEMA,
         'version': int(version),
         'displayVersion': display_version,
+        'launcherVersion': launcher_version,
+        'updateKind': 'package',
         'tag': tag,
         'notes': notes,
         'files': [{'path': e['path'], 'size': e['size'], 'sha256': e['sha256']} for e in files],

@@ -118,6 +118,11 @@ impl NativeTalk {
             0 => {
                 if self.query(56, &[if self.service == 1 {9500001} else {6000}])? == 0 { return Ok(()); }
                 super::log(format!("Native NPC interaction: service={}", self.service));
+                if self.service==4 {
+                    self.event(110,&[])?;
+                    self.choice=Some(1);
+                    return Ok(());
+                }
                 if self.service==6 && self.event_menu.trial {
                     if self.event_menu.busy||self.event_menu.used {return Ok(());}
                     self.event(110,&[])?;self.event(20,&[])?;
@@ -171,9 +176,8 @@ impl NativeTalk {
                     self.event(19,&[2,9500051,-1])?;
                     self.event(19,&[3,9500052,-1])?;
                     self.event(19,&[99,9500003,-1])?;
-                } else if self.service == 3 || self.service == 4 {
-                    // 职业重做后职业在“开始新旅程”时选择，原来的 10 选 1 职业菜单不再列出选项
-                    let messages: &[i32] = if self.service == 3 { &[9500020,9500021,9500104] } else { &[] };
+                } else if self.service == 3 {
+                    let messages: &[i32] = &[9500020,9500021,9500104];
                     for (i,&message) in messages.iter().enumerate() { self.event(19,&[i as i32+1,message,-1])?; }
                     self.event(19,&[99,9500003,-1])?;
                 } else if self.service==0 {

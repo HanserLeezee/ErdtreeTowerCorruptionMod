@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 import zipfile
 import re
+import xml.etree.ElementTree as ET
 from native_build import build_native
 from release_pack import build as build_release
 
@@ -146,7 +147,8 @@ def previous_manifest():
 
 
 release_dir = dist / f'release-v{version}'
-release = build_release(stage, version, release_dir, previous_manifest(), args.notes.read_text(encoding='utf-8') if args.notes else '', args.display_version)
+launcher_version = ET.parse(project / 'launcher/Tower.Launcher/Tower.Launcher.csproj').findtext('.//Version')
+release = build_release(stage, version, release_dir, previous_manifest(), args.notes.read_text(encoding='utf-8') if args.notes else '', args.display_version, launcher_version)
 # Mirror upload folder: the same paths as GitHub's release download URLs
 mirror_dir = dist / f'mirror-v{version}' / 'releases'
 for folder in [mirror_dir / 'download' / release['tag'], mirror_dir / 'latest' / 'download']:
@@ -154,7 +156,7 @@ for folder in [mirror_dir / 'download' / release['tag'], mirror_dir / 'latest' /
     shutil.copy2(release_dir / 'tower-release.json', folder / 'tower-release.json')
 shutil.copy2(release_dir / release['pack']['asset'], mirror_dir / 'download' / release['tag'] / release['pack']['asset'])
 # The ZIP carries the install record, so the launcher in a freshly extracted package knows its exact version and files
-(stage / 'tower-install.json').write_text(json.dumps({'version': release['version'], 'displayVersion': release['displayVersion'], 'files': release['files']}, ensure_ascii=False),
+(stage / 'tower-install.json').write_text(json.dumps({'version': release['version'], 'displayVersion': release['displayVersion'], 'launcherVersion': release['launcherVersion'], 'files': release['files']}, ensure_ascii=False),
                                           encoding='utf-8')
 archive = dist / f'ErdtreeTower-v{version}.zip'
 with zipfile.ZipFile(archive, 'x', zipfile.ZIP_DEFLATED, compresslevel=6) as output:

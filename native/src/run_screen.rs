@@ -34,9 +34,17 @@ pub fn summary(run:&Run) {summary_with((Record::new(run,vec![],vec![],0),None));
 pub fn summary_with(summary:(Record,Option<Gain>)) {if let Ok(mut pending)=PENDING.lock(){*pending=Some(summary);}}
 /// 打开旅程档案（往期旅程与图鉴）；其他界面打开时盖在它们上面，关闭后回到原界面
 pub fn archive_entry() {
+    open_archive(false);
+}
+pub fn progression_entry() {
+    open_archive(true);
+}
+fn open_archive(progression:bool) {
     let Ok(mut screens)=SCREEN.lock() else{return;};
     if screens.iter().any(|s|matches!(s,Screen::Archive(_))) {return;}
-    screens.push_front(Screen::Archive(Box::new(crate::archive_ui::Archive::new(crate::run_log::records()))));ACTIVE.store(true,Ordering::Relaxed);
+    let records=crate::run_log::records();
+    let archive=if progression {crate::archive_ui::Archive::progression(records)}else{crate::archive_ui::Archive::new(records)};
+    screens.push_front(Screen::Archive(Box::new(archive)));ACTIVE.store(true,Ordering::Relaxed);
 }
 pub fn hub_ready() {
     if let Ok(mut screen)=SCREEN.lock() {
