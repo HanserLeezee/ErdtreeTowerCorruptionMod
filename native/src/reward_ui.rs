@@ -199,13 +199,20 @@ impl Panel {
         use erdtree_tower::contracts::Card;
         // (贴图, 标题, 角标说明, 增益, 代价, 描边颜色)
         let cards:Vec<(usize,String,Option<String>,String,String,Option<(u8,u8,u8)>)>=contract.cards().into_iter().map(|card|match card {
-            Card::Oath(kind) if fresh=>(kind.index(),format!("{} I",kind.name()),None,kind.boon_at(1),kind.bane_at().to_owned(),None),
-            Card::Oath(kind)=>(kind.index(),kind.name().to_owned(),None,kind.boon().to_owned(),kind.bane().to_owned(),None),
+            Card::Oath(kind) if fresh=>(kind.art(),format!("{} I",kind.name()),None,kind.boon_at(1),kind.bane_at().to_owned(),None),
+            Card::Oath(kind)=>(kind.art(),kind.name().to_owned(),None,kind.boon().to_owned(),kind.bane().to_owned(),None),
             Card::Deepen(kind)=>{
                 let level=(contract.level(kind).unwrap_or(1)+1).min(3);
-                (kind.index(),format!("{} {}",kind.name(),LEVELS[usize::from(level)]),Some(format!("深化 · {} 升至 {}",LEVELS[usize::from(level-1)],LEVELS[usize::from(level)])),kind.boon_at(level),"代价不变 · 获得圣杯滴露 ×1".to_owned(),Some((236,196,104)))
+                (kind.art(),format!("{} {}",kind.name(),LEVELS[usize::from(level)]),Some(format!("深化 · {} 升至 {}",LEVELS[usize::from(level-1)],LEVELS[usize::from(level)])),kind.boon_at(level),"代价不变 · 获得圣杯滴露 ×1".to_owned(),Some((236,196,104)))
             },
         }).collect();
+        // [HansFix] 原十种誓约共用 6 张插画：同一次选择里不重复；新誓约有各自的封面（6–11）
+        let mut cards=cards;let mut used=Vec::new();
+        for card in cards.iter_mut() {
+            let mut art=card.0;
+            while art<6&&used.contains(&art)&&used.iter().filter(|a|**a<6).count()<6 {art=(art+1)%6;}
+            used.push(art);card.0=art;
+        }
         let size=ui.io().display_size;let s=(size[0]/1600.0).min(size[1]/900.0);
         let oy=(size[1]-900.0*s)*0.5;let mid=size[0]*0.5;
         let gold=[0.91,0.79,0.53,1.0];
@@ -216,13 +223,16 @@ impl Panel {
             crate::oath_art::background(&ui.get_window_draw_list(),size);
             ui.set_window_font_scale(s*0.95);center(ui,mid,oy+32.0*s,&format!("第 {} 幕",run.act),gold);
             ui.set_window_font_scale(s*1.85);center(ui,mid,oy+73.0*s,"立 下 誓 约",gold);
-            let subtitle=if !fresh {"二选一 · 本幕生效"}else if count==3 {"三选一 · 誓约整局保留，可以深化"}else{"二选一 · 誓约整局保留"};
-            ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s,subtitle,[0.63,0.58,0.46,1.0]);
+            let number=["","一","二","三","四","五"].get(count).copied().unwrap_or("多");
+            let subtitle=if !fresh {format!("{number}选一 · 本幕生效")}else if contract.deepen.is_some() {format!("{number}选一 · 誓约整局保留，可以深化")}else{format!("{number}选一 · 誓约整局保留")};
+            ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s,&subtitle,[0.63,0.58,0.46,1.0]);
             if fresh&&!contract.held.is_empty() {
                 let held=contract.held.iter().map(|o|format!("{} {}",o.kind.name(),LEVELS[usize::from(o.level.min(3))])).collect::<Vec<_>>().join(" · ");
                 ui.set_window_font_scale(s*0.8);center(ui,mid,oy+155.0*s,&format!("已立誓约：{held}"),[0.80,0.70,0.50,1.0]);
             }
-            let width=366.0*s;let gap=72.0*s;let top=oy+187.0*s;let height=549.0*s;
+            // [HansFix6] Up to four cards (three new oaths + deepen): shrink cards and gaps so they fit the 1600-unit layout.
+            let (width,gap)=match count {0..=2=>(366.0*s,72.0*s),3=>(352.0*s,44.0*s),_=>(334.0*s,28.0*s)};
+            let top=oy+187.0*s;let height=width*549.0/366.0;let k=width/(366.0*s);
             for (i,(art,title,label,boon,bane,accent)) in cards.iter().enumerate() {
                 let x=mid-(width*count as f32+gap*(count as f32-1.0))*0.5+i as f32*(width+gap);
                 ui.set_cursor_pos([x,top-7.0*s]);
@@ -230,24 +240,26 @@ impl Panel {
                 let hovered=ui.is_item_hovered();let selected=self.selection.selected==i;
                 let y=top-if selected{7.0*s}else if hovered{3.0*s}else{0.0};
                 crate::oath_art::card(&ui.get_window_draw_list(),*art,[x,y],[x+width,y+height],if selected{255}else if hovered{225}else{165});
+                let tall=crate::oath_art::tall_art(*art);
                 if let Some((r,g,b))=accent {
                     ui.get_window_draw_list().add_rect([x-4.0*s,y-4.0*s],[x+width+4.0*s,y+height+4.0*s],ImColor32::from_rgba(*r,*g,*b,if selected{230}else{150})).rounding(6.0*s).thickness(2.5*s).build();
                 }
                 if let Some(label)=label {
                     let (r,g,b)=accent.unwrap_or((236,196,104));
                     ui.set_window_font_scale(s*0.85);
-                    let half=ui.calc_text_size(label)[0]*0.5+14.0*s;let (cx,cy)=(x+width*0.5,y+300.0*s);
+                    let half=ui.calc_text_size(label)[0]*0.5+14.0*s;let (cx,cy)=(x+width*0.5,y+(if tall{338.0}else{300.0})*s*k);
                     let draw=ui.get_window_draw_list();
                     draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(14,10,7,225)).filled(true).rounding(11.0*s).build();
                     draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(r,g,b,220)).rounding(11.0*s).thickness(1.4*s).build();
                     drop(draw);
                     center(ui,cx,cy,label,[f32::from(r)/255.0*0.6+0.4,f32::from(g)/255.0*0.6+0.4,f32::from(b)/255.0*0.6+0.4,1.0]);
                 }
-                ui.set_window_font_scale(s*1.35);center(ui,x+width*0.5,y+333.0*s,title,gold);
+                ui.set_window_font_scale(s*1.35);center(ui,x+width*0.5,y+(if tall{375.0}else{333.0})*s*k,title,gold);
                 ui.set_window_font_scale(s*0.95);
-                let bane_y=(401.0+boon.lines().count() as f32*24.0+14.0).max(462.0);
-                for (offset,text,color) in [(401.0,boon.as_str(),[0.64,0.83,0.58,1.0]),(bane_y,bane.as_str(),[0.91,0.49,0.40,1.0])] {
-                    center(ui,x+width*0.5,y+offset*s,text,color);
+                let boon_y=if tall{428.0}else{401.0};
+                let bane_y=(boon_y+boon.lines().count() as f32*24.0+14.0).max(if tall{482.0}else{462.0});
+                for (offset,text,color) in [(boon_y,boon.as_str(),[0.64,0.83,0.58,1.0]),(bane_y,bane.as_str(),[0.91,0.49,0.40,1.0])] {
+                    center(ui,x+width*0.5,y+offset*s*k,text,color);
                 }
             }
             let min=[mid-210.0*s,oy+786.0*s];let max=[mid+210.0*s,oy+852.0*s];
@@ -590,7 +602,7 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
         context.io_mut().display_size=[width as f32,height as f32];
         for kind in erdtree_tower::contracts::Kind::ALL {
             let mut contract=Run::new(42,erdtree_tower::Class::Samurai);contract.enable_contracts();
-            contract.contract.as_mut().unwrap().offers=[kind,erdtree_tower::contracts::Kind::ALL[(kind.index()+1)%erdtree_tower::contracts::Kind::ALL.len()]];
+            {let all=erdtree_tower::contracts::Kind::ALL;contract.contract.as_mut().unwrap().offers=(0..3).map(|i|all[(kind.index()+i)%all.len()]).collect();}
             for _ in 0..3 {panel.draw_contract(context.frame(),&contract,&view);context.render();}
             panel.draw_contract(context.frame(),&contract,&view);let data=context.render();assert!(data.total_vtx_count>0);
             if let Some(path)=&output {write_frame(&path.join(format!("oath-{}-{width}.draw",kind.index())),data,width,height);}
@@ -603,11 +615,11 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
         use erdtree_tower::contracts::{Kind,Oath,State};
         let mut deepen=Run::new(42,erdtree_tower::Class::Samurai);
         deepen.contract=Some(State::start(deepen.reward_seed(),deepen.class,2,vec![Oath{kind:Kind::Steel,level:1},Oath{kind:Kind::Blood,level:2}],0));
-        assert_eq!(deepen.contract.as_ref().unwrap().options(),3);
+        assert_eq!(deepen.contract.as_ref().unwrap().options(),4);
         for _ in 0..3 {panel.draw_contract(context.frame(),&deepen,&view);context.render();}
         panel.draw_contract(context.frame(),&deepen,&view);let data=context.render();assert!(data.total_vtx_count>0);
         if let Some(path)=&output {write_frame(&path.join(format!("oath-deepen-{width}.draw")),data,width,height);}
-        let seed=deepen.reward_seed();deepen.contract.as_mut().unwrap().choose(2,seed,deepen.class).unwrap();
+        let seed=deepen.reward_seed();deepen.contract.as_mut().unwrap().choose(3,seed,deepen.class).unwrap();
         panel.draw(context.frame(),&deepen,&view);context.render();
     }
     run.phase=Phase::Reward{id:0,offers:vec![Reward::Item(1000000),Reward::Item(erdtree_tower::elite::EPIC[0]),Reward::Item(2140000)]};

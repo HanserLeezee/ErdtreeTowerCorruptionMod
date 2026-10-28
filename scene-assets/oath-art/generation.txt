@@ -8,3 +8,6 @@ Production background texture for a premium dark fantasy PC game oath selection 
 
 button.png prompt (transparent background):
 A single game UI confirmation button sprite on a truly transparent background. Wide horizontal 6:1 button shape centered in a landscape image. Premium Elden Ring inspired antique gold thin filigree frame, subtle dark charcoal hammered metal filled center. Restrained pointed ornamental ends and delicate corner engraving. Center completely empty dark for runtime Chinese text. Entire button fully visible, straight-on flat orthographic, no perspective. Sharp fine gold borders with a very subtle warm halo. No text, no letters, no symbols in the center, no watermark, no backdrop, no extra buttons, no shadows beyond a small soft edge. Transparent canvas with minimal empty padding.
+
+cards2.png: oath covers supplied by the HansFix author (6 images, 848×1264 each), resized to 560×840 tiles in a 3×2 grid, row-major:
+磐石之誓, 吊命之誓, 贪婪之誓 / 灵辉之誓, 锻铁之誓, 疫血之誓.

@@ -17,7 +17,7 @@ fn oaths_persist_and_can_be_deepened_to_level_three() {
     let mut run=Run::new(31,Class::Samurai);run.enable_contracts();
     let state=run.contract.as_ref().unwrap();
     assert_eq!((state.rules,state.deepen),(1,None),"no deepen card before holding an oath");
-    assert!(matches!(state.cards()[..],[Card::Oath(_),Card::Oath(_)]),"first act offers two oaths");
+    assert!(matches!(state.cards()[..],[Card::Oath(_),Card::Oath(_),Card::Oath(_)]),"first act offers three oaths");
     let seed=run.reward_seed();
     let state=run.contract.as_mut().unwrap();state.choose(0,seed,run.class).unwrap();let first=state.chosen.unwrap();
     assert_eq!(state.held,vec![Oath{kind:first,level:1}]);
@@ -26,9 +26,9 @@ fn oaths_persist_and_can_be_deepened_to_level_three() {
     let state=run.contract.as_ref().unwrap();
     assert_eq!(state.act,2);assert_eq!(state.held,vec![Oath{kind:first,level:1}],"oaths survive the act change");
     assert_eq!(state.deepen,Some(first));assert!(!state.offers.contains(&first));
-    assert!(matches!(state.cards()[..],[Card::Oath(_),Card::Oath(_),Card::Deepen(k)] if k==first),"later acts add a deepen card");
+    assert!(matches!(state.cards()[..],[Card::Oath(_),Card::Oath(_),Card::Oath(_),Card::Deepen(k)] if k==first),"later acts add a deepen card");
     let seed=run.reward_seed();
-    let state=run.contract.as_mut().unwrap();state.choose(2,seed,run.class).unwrap();
+    let state=run.contract.as_mut().unwrap();state.choose(3,seed,run.class).unwrap();
     assert!(state.deepened&&state.gear==[0;3]);assert!(state.begin_gift(0).is_err()&&state.skip_gift().is_err());
     assert!(run.contract_pending());
     assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
@@ -37,7 +37,7 @@ fn oaths_persist_and_can_be_deepened_to_level_three() {
     finish_act(&mut run);
     let seed=run.reward_seed();
     let state=run.contract.as_mut().unwrap();assert_eq!(state.deepen,Some(first));
-    state.choose(2,seed,run.class).unwrap();state.finish_deepen().unwrap();
+    state.choose(3,seed,run.class).unwrap();state.finish_deepen().unwrap();
     assert_eq!(state.level(first),Some(MAX_LEVEL));
     assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
     // 满级后不再提供深化卡
@@ -66,7 +66,8 @@ fn new_gifts_are_epic_and_old_saves_keep_the_old_rules() {
         let (id,tier)=l.split_once('\t').unwrap();(id.parse().unwrap(),tier.trim().parse().unwrap())
     }).collect();
     for kind in Kind::ALL {for seed in 0..64 {
-        let mut s=State::start(seed,Class::Prophet,1,vec![],0);s.offers[0]=kind;s.offers[1]=*Kind::ALL.iter().find(|k|**k!=kind).unwrap();
+        let mut s=State::start(seed,Class::Prophet,1,vec![],0);
+        s.offers=std::iter::once(kind).chain(Kind::ALL.into_iter().filter(|k|*k!=kind)).take(3).collect();
         s.choose(0,seed,Class::Prophet).unwrap();assert!(s.valid(1));
         assert!(s.gear.iter().all(|id|tiers[id]==2),"{kind:?} gift must be epic");
         if kind==Kind::Guard {assert!(matches!(s.gear[0]/1_000_000,31|32));}

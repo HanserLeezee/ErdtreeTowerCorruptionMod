@@ -88,11 +88,11 @@ fn contract_pool_is_white_or_blue_varied_and_keeps_matching_ammunition() {
     let tiers:std::collections::HashMap<u32,u8>=include_str!("../scene-assets/reward-rarities.tsv").lines().map(|l| {
         let (id,tier)=l.split_once('\t').unwrap();(id.parse().unwrap(),tier.parse().unwrap())
     }).collect();
-    for kind in Kind::ALL {
+    for kind in Kind::LEGACY {
         let mut seen=std::collections::HashSet::new();
         for seed in 0..128 {
             let mut s=State::new(seed,Class::Prophet,1,None,0);s.offers[0]=kind;
-            s.offers[1]=*Kind::ALL.iter().find(|k|**k!=kind).unwrap();
+            s.offers[1]=*Kind::LEGACY.iter().find(|k|**k!=kind).unwrap();
             s.choose(0,seed,Class::Prophet).unwrap();
             assert!(s.valid(1));
             for id in s.gear {assert!(tiers[&id]<=1);seen.insert(id);}
@@ -140,4 +140,33 @@ fn act_changes_replace_contract_and_selection_blocks_travel() {
     let mut legacy=serde_json::to_value(Run::new(9,Class::Samurai)).unwrap();
     legacy.as_object_mut().unwrap().remove("contract");
     assert!(Run::decode(&legacy.to_string()).unwrap().contract.is_none());
+}
+
+#[test]
+fn new_rules_offer_three_distinct_oaths_from_all_fifteen_and_every_kind_has_gear() {
+    let mut first=std::collections::BTreeSet::new();let mut appeared=std::collections::BTreeSet::new();
+    for seed in 0..400u64 {for class in [Class::Samurai,Class::Astrologer,Class::Vagabond] {
+        let s=State::start(seed,class,1,vec![],0);
+        assert_eq!(s.offers.len(),erdtree_tower::contracts::OFFERS);assert!(s.valid(1));
+        assert_eq!(s.options(),3,"no deepen card without held oaths");
+        if class.sorcerer() {assert_eq!(s.offers[0],Kind::Mystic);} else {first.insert(s.offers[0].index());}
+        appeared.extend(s.offers.iter().map(|k|k.index()));
+        assert_eq!(s,serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap());
+    }}
+    assert_eq!(appeared.len(),Kind::ALL.len(),"every oath can appear");
+    assert!(first.len()>=4,"first card follows the class preference: {}",first.len());
+    let held=vec![erdtree_tower::contracts::Oath{kind:Kind::Radiant,level:1},erdtree_tower::contracts::Oath{kind:Kind::Plague,level:1}];
+    let s=State::start(9,Class::Samurai,3,held.clone(),0);
+    assert!(s.offers.iter().all(|k|!held.iter().any(|o|o.kind==*k)));assert_eq!(s.options(),4);
+    for kind in Kind::ALL {for seed in 0..32 {
+        let mut s=State::start(seed,Class::Samurai,1,vec![],0);
+        if !s.offers.contains(&kind){s.offers[0]=kind;}
+        let index=s.offers.iter().position(|k|*k==kind).unwrap();
+        s.choose(index,seed,Class::Samurai).unwrap();assert!(s.valid(1),"{kind:?}");
+        for (i,id) in s.gear.iter().enumerate() {assert!(!s.gear[..i].contains(id));assert!(erdtree_tower::rewards::lookup(*id).is_some());}
+        assert!(!kind.boon_at(1).is_empty()&&!kind.bane_at().is_empty()&&!kind.hint().is_empty());
+    }}
+    // An old two-offer save with new rules still loads and validates.
+    let mut old=State::start(5,Class::Samurai,1,vec![],0);old.offers.truncate(2);
+    let json=serde_json::to_string(&old).unwrap();assert!(serde_json::from_str::<State>(&json).unwrap().valid(1));
 }

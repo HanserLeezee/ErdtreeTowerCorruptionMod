@@ -3,11 +3,15 @@
 //! each other and can be combined. Without any marker the DLL behaves exactly like the official build.
 //!   hansfix-wander.enabled               堕落模式（改变联机协议：队伍里所有人都要装同一补丁）
 //!   hansfix-better-map-merchant.enabled  N 键只读地图、联机画线不随换层清空、每人独立商店（与官方版联机兼容）
+//!   hansfix-oaths.enabled                新誓约：灵辉、锻铁、磐石、贪婪、疫血、吊命，每幕三选一（改变联机协议）
 //! The map key can be rebound with `key.map=<键>` in tower-options.ini.
 use std::{path::{Path,PathBuf},sync::atomic::{AtomicBool,Ordering}};
 
 pub const WANDER_MARKER:&str="hansfix-wander.enabled";
 pub const MERCHANT_MARKER:&str="hansfix-better-map-merchant.enabled";
+pub const OATHS_MARKER:&str="hansfix-oaths.enabled";
+/// 新誓约改变誓约池与每幕张数，混装的队伍同样要在握手时失败
+pub const OATHS_PROTOCOL_OFFSET:u32=2000;
 /// Protocol offset used when the wander patch is on, so mixed parties fail the handshake loudly.
 pub const WANDER_PROTOCOL_OFFSET:u32=1000;
 
@@ -21,8 +25,8 @@ pub const BASE_RELEASE:&str="v99";
 /// tower-install.json 里启动器记录的模组版本号；不一致说明启动器已经装了别的版本
 pub const BASE_INSTALL_VERSION:u64=99;
 pub const BASE_REGULATION_LEN:u64=3438688;
-/// 堕落补丁带的 regulation.bin（v98/v99 + 向下强化与扭曲词条效果）
-pub const HANSFIX_REGULATION_LEN:u64=3374128;
+/// 堕落补丁与新誓约补丁带的同一份 regulation.bin（v99 + 新誓约效果 + 向下强化与扭曲词条效果）
+pub const HANSFIX_REGULATION_LEN:u64=3372000;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}
@@ -38,7 +42,14 @@ pub fn map_key()->hudhook::imgui::Key {crate::options::key_named(map_label()).un
 
 pub fn set(wander_on:bool,merchant_on:bool) {
     WANDER.store(wander_on,Ordering::Relaxed);MERCHANT.store(merchant_on,Ordering::Relaxed);
-    erdtree_tower::party_handshake::set_extension(if wander_on {WANDER_PROTOCOL_OFFSET} else {0});
+    erdtree_tower::party_handshake::set_extension(extension(wander_on,oaths()));
+}
+pub fn oaths()->bool {erdtree_tower::contracts::extended()&&OATHS_ON.load(Ordering::Relaxed)}
+static OATHS_ON:AtomicBool=AtomicBool::new(false);
+/// 新誓约开关：同时切换核心库的誓约池；只在 DllMain 调用
+fn set_oaths(on:bool) {OATHS_ON.store(on,Ordering::Relaxed);erdtree_tower::contracts::set_extended(on);}
+fn extension(wander_on:bool,oaths_on:bool)->u32 {
+    (if wander_on {WANDER_PROTOCOL_OFFSET} else {0})+(if oaths_on {OATHS_PROTOCOL_OFFSET} else {0})
 }
 
 /// Warning text when this patched DLL sits on top of a different official release.
@@ -62,14 +73,15 @@ pub fn detect(dir:&Path)->(bool,bool) {(dir.join(WANDER_MARKER).is_file(),dir.jo
 pub fn init(dll:Option<PathBuf>) {
     let dir=dll.as_deref().and_then(Path::parent).map(PathBuf::from);
     let (mut wander_on,mut merchant_on)=dir.as_deref().map(detect).unwrap_or_default();
+    let mut oaths_on=dir.as_deref().is_some_and(|d|d.join(OATHS_MARKER).is_file());
     if let Some(reason)=dir.as_deref().and_then(stale_in) {
         crate::log(format!("HANSFIX_STALE base={BASE_RELEASE} {reason}"));
         let _=STALE.set(format!("HansFix 补丁是为爬塔 {BASE_RELEASE} 制作的，与当前模组版本不匹配：请在启动器「设置 → 更新 → 校验并修复文件」恢复官方文件，再安装对应新版本的补丁。"));
-        wander_on=false;merchant_on=false;
+        wander_on=false;merchant_on=false;oaths_on=false;
     }
-    set(wander_on,merchant_on);
+    set_oaths(oaths_on);set(wander_on,merchant_on);
     if let Some(key)=dir.as_deref().and_then(|d|std::fs::read_to_string(d.join(erdtree_tower::options::FILE)).ok()).and_then(|t|map_key_from(&t)) {let _=MAP_KEY.set(key);}
-    crate::log(format!("HANSFIX wander={wander_on} better_map_merchant={merchant_on} map_key={} protocol={} link={}",map_label(),
+    crate::log(format!("HANSFIX wander={wander_on} better_map_merchant={merchant_on} oaths={oaths_on} map_key={} protocol={} link={}",map_label(),
         erdtree_tower::party_handshake::protocol(),erdtree_tower::party_link::wire_version()));
 }
 
@@ -233,6 +245,7 @@ mod tests {
         std::fs::write(dir.join("tower-install.json"),r#"{"version": 100,"files":[]}"#).unwrap();
         assert_eq!(super::stale_in(&dir).as_deref(),Some("install_version=100"));
         let _=std::fs::remove_dir_all(&dir);
+        assert_eq!((super::extension(false,true),super::extension(true,true)),(2000,3000));
         assert_eq!(super::map_key_from("key.map = m\nkey.build=C"),Some("M"));
         assert_eq!(super::map_key_from("key.map=bogus"),None);
     }
