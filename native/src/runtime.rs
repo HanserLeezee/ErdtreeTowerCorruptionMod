@@ -1120,7 +1120,7 @@ fn tick_locked() {
     // whether it is what triggers the arena-arrival crash. The fog gate and fight do not need it.
     let attendant_allowed=!attendant_disabled()&&state.room.is_none()&&!game.warp_requested
         &&world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp>0&&(
-            (state.travel.is_some()&&state.view.run.as_ref().is_some_and(|r|super::arenas::for_act(r.act).block==i32::from(p.current_block_id))&&super::native_talk::flag(45007993).unwrap_or(false))
+            (state.travel.is_some()&&state.view.run.as_ref().is_some_and(|r|super::arenas::for_run(r,state.party.is_some()).block==i32::from(p.current_block_id))&&super::native_talk::flag(45007993).unwrap_or(false))
             ||state.pending.as_ref().is_some_and(|fight|fight.block==i32::from(p.current_block_id)&&fight.foes.iter().all(|f|f.entity_address.is_some()))));
     if attendant_allowed {
         if state.attendant.is_none() {
@@ -1516,7 +1516,9 @@ fn tick_locked() {
         report(&mut state, "准备期间角色死亡，本局结束。");
         return;
     }
-    let arena=super::arenas::for_act(state.view.run.as_ref().map_or(1,|r|r.act));
+    let arena=state.view.run.as_ref().map_or_else(||super::arenas::for_act(1),|r|super::arenas::for_run(r,state.party.is_some()));
+    // 主题幕：进竞技场时按主题切换时间
+    if state.travel.is_some()&&block==arena.block {if let Some(run)=state.view.run.as_ref(){super::scenery::arena_time(run);}}
     if state.travel.is_some()&&block==arena.block&&!game.warp_requested&&!player_dead&&player.block_position.y < -1.5 {
         let error="门外地面未就绪，已退回安全点，未消耗节点。".to_string();
         if super::native_talk::set_flag(45007994,true).is_ok() {
@@ -1721,7 +1723,7 @@ fn tick_locked() {
         } else if !matches!(action, Action::Enter(_)) {
             state.view.busy = false;
             let message=state.view.run.as_ref().filter(|r|r.act>1&&r.visited.is_empty()&&r.phase==Phase::Map)
-                .map(|r|format!("第 {} 幕已开启，生命、专注与圣杯瓶已回满。下一战：{}。",r.act,super::arenas::for_act(r.act).name))
+                .map(|r|format!("第 {} 幕已开启，生命、专注与圣杯瓶已回满。下一战：{}。",r.act,super::arenas::for_run(r,state.party.is_some()).name))
                 .unwrap_or_else(||story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into()));
             report(&mut state, message);
         }
@@ -3128,7 +3130,7 @@ fn request_travel(
     state.view.travelling = true;
     state.pad_capture.update(false);
     super::input::CAPTURE.store(false, std::sync::atomic::Ordering::Relaxed);
-    let arena=super::arenas::for_act(run.act);
+    let arena=super::arenas::for_run(run,state.party.is_some());
     game.move_map_target = BlockId::from(arena.block);
     game.initial_area_entity_id = arena.combat_entry();
     game.warp_requested = true;

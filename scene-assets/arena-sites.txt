@@ -1,0 +1,9 @@
+anticipation_scion|m10_01_00_00|c4690_9000|预言大教堂·接肢贵族后裔的战场|0
+siofra_ancestor|m12_08_00_00|c4670_9000|希芙拉河·祖灵的猎场|0
+raya_library|m14_00_00_00|c2031_9000|雷亚卢卡利亚·满月女王的书库|0
+nokstella_hall|battlefield|2|诺克史黛拉·地下殿堂|0
+leyndell_tree|battlefield|3|王城·黄金树前战场|0
+farum_maliketh|m13_00_00_00|c2110_9001|法姆亚兹拉·黑剑的神殿|0
+belurat_lion|auto|model:5210|贝鲁拉特·神兽舞狮的战场|1
+fissure_knight|auto|?|石棺巨坑·腐败骑士的战场|1
+enir_ilim_gate|auto|?|恩尼尔伊利姆·神门之前|1

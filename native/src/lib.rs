@@ -93,6 +93,7 @@ mod dummy;
 mod name_tags;
 mod auras;
 mod law_art;
+mod scenery;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -200,6 +201,7 @@ impl TowerPreview {
 impl ImguiRenderLoop for TowerPreview {
     fn before_render(&mut self, ctx: &mut Context, renderer: &mut dyn RenderContext) {
         self.rewards.load_icons(renderer);
+        scenery::load(renderer);
         let player_present = SNAPSHOT.lock().is_ok_and(|snapshot| snapshot.is_some());
         let capture = runtime::with_view(|view| input::capture_route(self.visible, player_present, view)).unwrap_or(false);
         input::CAPTURE.store(capture, Ordering::Relaxed);
@@ -341,6 +343,8 @@ impl ImguiRenderLoop for TowerPreview {
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
         if run_screen {return;}
         if let Some(view) = &view {
+            if let Some(run)=&view.run {scenery::observe(run);}
+            scenery::draw_card(ui);
             if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
             if view.room.is_some()||view.shared_event {
                 return;

@@ -213,6 +213,13 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
         .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
             crate::oath_art::background(&ui.get_window_draw_list(),size);
             ui.set_window_font_scale(scale);
+            // 主题幕：本幕的主题与地区
+            {
+                let theme=crate::scenery::theme(run);let (_,_,accent)=crate::scenery::palette(run);
+                let draw=ui.get_window_draw_list();let pos=ui.window_pos();
+                draw.add_text([pos[0]+size[0]-right+margin,pos[1]+12.0*scale],accent,theme.name);
+                draw.add_text([pos[0]+size[0]-right+margin,pos[1]+36.0*scale],ImColor32::from_rgb(150,140,118),theme.region);
+            }
             ui.set_cursor_pos([size[0]-right+margin,65.0*scale]);ui.text("图例");
             for (i,kind) in [NodeKind::Monster,NodeKind::Elite,NodeKind::Camp,NodeKind::Shop,NodeKind::Chest,NodeKind::Event,NodeKind::Boss].into_iter().enumerate() {
                 let y=(126.0+i as f32*62.0)*scale;
@@ -232,7 +239,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
             }
             ui.set_cursor_pos([left+margin,margin]);
             let _paper=ui.push_style_color(StyleColor::ChildBg,[0.84,0.79,0.66,1.0]);
-            let _ink=ui.push_style_color(StyleColor::Text,[0.20,0.17,0.11,1.0]);
+            let _ink=ui.push_style_color(StyleColor::Text,crate::scenery::ink_rgba(run));
             let _popup=ui.push_style_color(StyleColor::PopupBg,[0.91,0.86,0.72,1.0]);
             ui.child_window("route-content").flags(hudhook::imgui::WindowFlags::NO_NAV).scroll_bar(false).scrollable(false).size([size[0]-left-right-2.0*margin,size[1]-2.0*margin]).build(|| {
                 let _disabled=ui.begin_disabled(!view.ready||view.busy);
@@ -346,7 +353,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
     }).collect();
     let point=|id:usize|points[id];
     let draw = ui.get_window_draw_list();
-    let ink = ImColor32::from_rgb(64, 54, 38);
+    let (paper_tint,ink,_)=crate::scenery::palette(run);
     let mut hovered=None;let mut pressed=None;
     let pad=crate::reward_ui::map_command();
     let pad_point=pad.and_then(|(point,_)|point);
@@ -376,7 +383,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
     if let Some(&id)=available.first(){*TEST_TARGET.lock().unwrap()=(point(id),hovered==Some(id));}
     #[cfg(test)]
     if let Some(id)=available.first().and_then(|&id|run.nodes[id].next.first()).copied(){*TEST_FUTURE.lock().unwrap()=(point(id),hovered==Some(id));}
-    crate::map_art::paper(&draw,[origin[0]-8.0,origin[1]-8.0],[origin[0]+content[0]+8.0,origin[1]+height+8.0]);
+    crate::map_art::paper_tinted(&draw,[origin[0]-8.0,origin[1]-8.0],[origin[0]+content[0]+8.0,origin[1]+height+8.0],paper_tint);
     for n in 0..500 {
         let x=origin[0]+(n*71%997) as f32/997.0*content[0];let y=origin[1]+(n*137%1451) as f32/1451.0*height;
         draw.add_line([x,y],[x+3.0,y+1.0],ImColor32::from_rgba(109,87,48,25)).build();

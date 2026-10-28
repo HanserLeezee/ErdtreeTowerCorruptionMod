@@ -30,10 +30,73 @@ impl Arena {
 pub fn for_act(act: u8) -> Arena {
     LEGACY[usize::from(act.clamp(1,3)-1)]
 }
-pub fn for_block(block: i32) -> Option<Arena> { ARENAS.iter().chain(LEGACY.iter()).copied().find(|a| a.block == block) }
+pub fn for_block(block: i32) -> Option<Arena> { ARENAS.iter().chain(LEGACY.iter()).chain(BUILT.iter().map(|(_,a)|a)).copied().find(|a| a.block == block) }
+
+/// 主题幕的战斗场地：scene-builder arena-build（Windows）把原版地图改造成战场后写出 scene-assets/arenas-built.txt，每行
+/// 键|地图|名称|中心 x y z|朝向（度）|场边引导者 x y z。改造时复用宁姆格福竞技场（m45_02）的进场设施与编号，
+/// 所以入口点、召唤石等编号与第一幕竞技场相同（两张地图不会同时加载）。文件缺失或缺某块场地时退回竞技场
+const SITE_BASIS:u32=45020000;
+static BUILT:std::sync::LazyLock<Vec<(&'static str,Arena)>>=std::sync::LazyLock::new(|| {
+    let path=crate::LOG_PATH.with_file_name("scene-assets").join("arenas-built.txt");
+    let Ok(text)=std::fs::read_to_string(&path) else {return Vec::new();};
+    let rows:Vec<_>=text.lines().filter(|l|!l.trim().is_empty()&&!l.starts_with('#')).filter_map(parse_built).collect();
+    crate::log(format!("Built arenas: {}",rows.iter().map(|(k,_)|*k).collect::<Vec<_>>().join(",")));
+    rows
+});
+fn parse_built(line:&str)->Option<(&'static str,Arena)> {
+    let p:Vec<&str>=line.split('|').collect();
+    if p.len()<10 {return None;}
+    let map:Vec<u8>=p[1].strip_prefix('m')?.split('_').map(|v|v.parse().ok()).collect::<Option<_>>()?;
+    if map.len()!=4 {return None;}
+    let f=|i:usize|p.get(i).and_then(|v|v.parse::<f32>().ok());
+    let leak=|v:&str|->&'static str {Box::leak(v.to_owned().into_boxed_str())};
+    Some((leak(p[0]),Arena{block:i32::from_be_bytes([map[0],map[1],map[2],map[3]]),entry:SITE_BASIS+2600,stone:SITE_BASIS+100,name:leak(p[2]),
+        center:[f(3)?,f(4)?,f(5)?],yaw:f(6)?.to_radians(),arrival:Some([f(7)?,f(8)?,f(9)?])}))
+}
+/// 调试菜单“下一战指定场地”（单人）：场地键，空为按主题
+static OVERRIDE:std::sync::Mutex<Option<&'static str>>=std::sync::Mutex::new(None);
+pub fn set_override(key:Option<&'static str>) {if let Ok(mut o)=OVERRIDE.lock(){*o=key;}crate::log(format!("Arena override: {key:?}"));}
+pub fn override_key()->Option<&'static str> {OVERRIDE.lock().ok().and_then(|o|*o)}
+/// v89 的战场（battlefields.txt，已随资源发布）：arena-sites.txt 里地图写 battlefield、锚点写战场序号的场地直接用它们。
+/// 第 1 处史东薇尔庭院已被跑酷试炼改写，不再引用
+static PREBUILT:std::sync::LazyLock<Vec<(&'static str,Arena)>>=std::sync::LazyLock::new(||include_str!("../../scene-assets/arena-sites.txt").lines()
+    .filter_map(|l|{let p:Vec<&str>=l.split('|').collect();(p.len()>=5&&p[1]=="battlefield").then(||(p[0],ARENAS[p[2].parse::<usize>().unwrap()-1]))}).collect());
+fn sites()->impl Iterator<Item=&'static (&'static str,Arena)> {PREBUILT.iter().chain(BUILT.iter())}
+/// 可用的场地键与名称（调试菜单用）
+pub fn built()->Vec<(&'static str,&'static str)> {sites().map(|(k,a)|(*k,a.name)).collect()}
+/// 由 arena-build 生成的场地：复用宁姆格福竞技场的编号与场边服务
+pub fn is_built(block:i32)->bool {BUILT.iter().any(|(_,a)|a.block==block)}
+/// 这一局这一幕的战斗场地：单人按主题（或调试指定）选已生成的场地；DLC 场地要求 DLC 完整模式；联机与未生成时用本幕竞技场
+pub fn for_run(run:&erdtree_tower::Run,party:bool)->Arena {
+    if party {return for_act(run.act);}
+    let theme=erdtree_tower::themes::for_run(run);
+    let key=override_key().unwrap_or(theme.arena);
+    if key.is_empty()||(theme.dlc&&erdtree_tower::dlc::mode()!=erdtree_tower::dlc::Mode::Full) {return for_act(run.act);}
+    sites().find(|(k,_)|*k==key).map_or_else(||for_act(run.act),|(_,a)|*a)
+}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prebuilt_sites_use_the_v89_battlefields_with_matching_act_numbers() {
+        let sites:Vec<_>=super::PREBUILT.iter().collect();
+        assert!(sites.iter().all(|(_,a)|a.block!=0x0a000000),"Stormveil now belongs to the parkour trial");
+        for theme in erdtree_tower::themes::THEMES.iter() {
+            if let Some((_,arena))=sites.iter().find(|(k,_)|*k==theme.arena) {assert_eq!(arena.stone,super::for_act(theme.act).stone,"{}",theme.name);}
+        }
+        assert_eq!(sites.len(),2);
+    }
+    #[test]
+    fn built_site_rows_parse_and_reuse_the_first_arena_numbers() {
+        let (key,arena)=super::parse_built("leyndell_morgott|m11_00_00_00|王城·恶兆王的战场|12.5|60|-300|90|20|60.5|-310").unwrap();
+        assert_eq!((key,arena.block,arena.entry,arena.stone),("leyndell_morgott",0x0b000000,45022600,45020100));
+        assert_eq!(arena.combat_entry(),45022951);assert_eq!(arena.attendant_position(),[20.0,60.5,-310.0]);
+        assert!((arena.yaw-std::f32::consts::FRAC_PI_2).abs()<1e-5);
+        assert!(super::parse_built("broken|m11_00|x").is_none());
+        assert!(super::parse_built("x|m11_00_00_00|名|a|0|0|0|0|0|0").is_none());
+        let run=erdtree_tower::Run::new(1,erdtree_tower::Class::Hero);
+        assert_eq!(super::for_run(&run,true).block,super::for_act(1).block,"multiplayer keeps the colosseum");
+    }
     #[test]
     fn combat_arrival_uses_exterior_gate_region_without_moving_services() {
         for act in 1..=3 {

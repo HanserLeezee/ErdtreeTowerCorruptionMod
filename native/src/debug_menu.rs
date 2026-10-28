@@ -93,6 +93,7 @@ impl Menu {
                 if let Some(_tab)=ui.tab_item("构筑") {self.build(ui,run);}
                 if let Some(_tab)=ui.tab_item("物品") {self.items(ui);}
                 if let Some(_tab)=ui.tab_item("状态") {self.state(ui,run);}
+                if let Some(_tab)=ui.tab_item("场地") {arenas(ui,run);}
             }
         });
         if !keep {OPEN.store(false,Ordering::Relaxed);}
@@ -227,6 +228,39 @@ impl Menu {
         crate::fancy_text::text_wrapped(ui,"使用过调试功能的旅程会标记为调试旅程：不计入苦难律法纪录，结算页会注明。联机时调试命令不会执行。");
     }
 }
+/// 主题幕的战斗场地：查看本幕主题与场地、指定下一战的场地（单人）、记下当前位置（地图块内坐标与朝向）用于调整场地坐标
+fn arenas(ui:&Ui,run:&Run) {
+    let theme=erdtree_tower::themes::for_run(run);
+    let current=crate::arenas::for_run(run,false);
+    crate::fancy_text::text_wrapped(ui,format!("本幕主题：{}（{}）　场地键：{}",theme.name,theme.region,if theme.arena.is_empty(){"（用竞技场）"}else{theme.arena}));
+    crate::fancy_text::text_wrapped(ui,format!("下一战（单人）：{}　地图块 {:#010x}",current.name,current.block));
+    ui.separator();
+    ui.text("下一战指定场地（单人；联机始终用竞技场）");
+    let chosen=crate::arenas::override_key();
+    if ui.radio_button_bool("按主题",chosen.is_none()) {crate::arenas::set_override(None);}
+    let built=crate::arenas::built();
+    if built.is_empty() {crate::fancy_text::text_wrapped(ui,"还没有生成好的场地：在 Windows 上运行 scene-builder arena-build 后，把输出的 arenas-built.txt 与地图放进 scene-assets。");}
+    for (key,name) in built {
+        if ui.radio_button_bool(format!("{name}##arena-{key}"),chosen==Some(key)) {crate::arenas::set_override(Some(key));}
+    }
+    ui.separator();
+    if ui.button("记下当前位置") {
+        let line=match unsafe {eldenring::cs::PlayerIns::local_player()} {
+            Ok(player)=>{
+                let p=player.chr_ins.modules.physics.position;let block=i32::from(player.current_block_id).to_be_bytes();
+                let yaw=player.chr_ins.modules.physics.orientation.to_euler_angles().1.to_degrees();
+                format!("m{:02}_{:02}_{:02}_{:02}|{:.3}|{:.3}|{:.3}|{:.1}",block[0],block[1],block[2],block[3],p.0-player.block_position.x,p.1-player.block_position.y,p.2-player.block_position.z,yaw)
+            },
+            Err(_)=>"角色未加载".into(),
+        };
+        let path=crate::LOG_PATH.with_file_name("tower-arena-points.txt");
+        let saved=std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f|{use std::io::Write;writeln!(f,"{line}")});
+        crate::log(format!("ARENA_POINT {line}"));
+        POINT.with(|p|*p.borrow_mut()=format!("{line}{}",if saved.is_ok(){"（已写入 tower-arena-points.txt）"}else{"（写入失败，见日志）"}));
+    }
+    POINT.with(|p|if !p.borrow().is_empty(){crate::fancy_text::text_wrapped(ui,&*p.borrow());});
+}
+thread_local! {static POINT:std::cell::RefCell<String>=const {std::cell::RefCell::new(String::new())};}
 fn set_roster(roster:Vec<Enemy>) {
     crate::log(format!("DEBUG_MENU next roster: {}",roster.iter().map(|e|e.name).collect::<Vec<_>>().join(",")));
     if let Ok(mut slot)=ROSTER.lock(){*slot=Some(roster);}

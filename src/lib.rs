@@ -29,6 +29,7 @@ pub mod journal;
 pub mod legacy;
 pub mod titles;
 pub mod auras;
+pub mod themes;
 
 pub mod music;
 pub mod options;

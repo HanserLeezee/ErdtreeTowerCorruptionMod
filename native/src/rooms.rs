@@ -38,6 +38,7 @@ fn conditional_services(block:i32,kind:NodeKind)->Vec<(u32,i32,i32,u32)> {
         let role=p[7].parse().unwrap();
         Some((i32::from_be_bytes([map[0],map[1],map[2],map[3]]),kind,(p[2].parse().unwrap(),if role==5{2180}else{p[3].parse().unwrap()},if role==5{21801034}else{p[4].parse().unwrap()},role)))
     }).collect());
+    let block=if super::arenas::is_built(block) {0x2d020000}else{block};
     SERVICES.iter().filter(|(b,k,_)|*b==block&&*k==kind).map(|(_,_,service)|*service).collect()
 }
 fn camp_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadStatus,hp:i32)->bool {

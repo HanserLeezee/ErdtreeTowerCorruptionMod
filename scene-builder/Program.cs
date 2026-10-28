@@ -5,6 +5,8 @@ modes=modes.Append("party-dlc-patch").ToArray();
 modes=modes.Append("bout-patch").ToArray();
 modes=modes.Append("party-boss-model-sync").ToArray();
 modes=modes.Append("aura-patch").ToArray();
+modes=modes.Append("arena-build").ToArray();
+modes=modes.Append("arena-candidates").ToArray();
 modes=modes.Append("stormveil-no-runes-patch").ToArray();
 modes=modes.Append("stormveil-sidewall-patch").ToArray();
 if(args.Length<4||!modes.Contains(args[3])||args.Length!=4||args.Take(3).Any(modes.Contains)){Console.Error.WriteLine("Usage: SceneBuilder <game> <output> <cache> <mode>"+(args.Length>3?" (rejected: "+string.Join(" ",args.Skip(3))+")":"")+"\nModes: "+string.Join(" ",modes));Environment.Exit(2);}
@@ -17,6 +19,8 @@ if(args.Contains("stormveil-no-runes-patch")){StormveilRuneAssets.Patch(cache,ou
 if(args.Contains("stormveil-sidewall-patch")){StormveilBarrierAssets.Patch(cache,output);return;}
 if(args.Contains("bgm-patch")){MusicAssets.Patch(cache,output);return;}
 if(args.Contains("party-dlc-patch")){PartyDlcAssets.Build(game,cache,output);return;}
+if(args.Contains("arena-build")){ArenaAssets.Build(game,cache,output);return;}
+if(args.Contains("arena-candidates")){ArenaAssets.Candidates(game,cache);return;}
 if(args.Contains("equipment-style-patch")){EquipmentStyleAssets.Patch(cache,output);return;}
 if(args.Contains("talisman-affix-patch")){TalismanAssets.Build(cache,output);return;}
 if(args.Contains("talisman-affix-verify")){TalismanAssets.Verify(cache);return;}

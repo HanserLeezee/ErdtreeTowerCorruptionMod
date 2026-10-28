@@ -17,9 +17,10 @@ pub fn initialize(renderer:&mut dyn RenderContext) {
         }
     }
 }
-pub fn paper(draw:&DrawListMut<'_>,min:[f32;2],max:[f32;2])->bool {
+/// 按主题幕的纸色给纸张贴图上色（乘色）
+pub fn paper_tinted(draw:&DrawListMut<'_>,min:[f32;2],max:[f32;2],tint:ImColor32)->bool {
     let Some(id)=texture(&PAPER) else{return false;};
-    draw.add_image(id,min,max).build();true
+    draw.add_image(id,min,max).col(tint).build();true
 }
 pub fn icon(draw:&DrawListMut<'_>,p:[f32;2],kind:NodeKind,alpha:f32)->bool {
     icon_scaled(draw,p,kind,alpha,1.0)
