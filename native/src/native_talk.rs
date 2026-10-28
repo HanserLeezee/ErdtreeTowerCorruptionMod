@@ -83,6 +83,7 @@ impl NativeTalk {
         Self { script: TalkScript::new(BlockId::from(block), 950000000 + service as i32, handle), service, state: 0, menu_kind: 0, choice: None, flask_upgrade: None, camp: CampInteraction::default(),event_menu:Default::default(),event_request:None,event_confirmation:None,enemies:Vec::new(),talismans:Vec::new(),talisman:None }
     }
     fn event(&mut self, id: i32, args: &[i32]) -> Result<(), String> {
+        if id==48 {super::whetblades::sync_owned()?;}
         let args: Vec<_> = args.iter().copied().map(EzStateValue::Int32).collect();
         self.script.event((id, args)).map_err(|e| e.to_string())
     }
