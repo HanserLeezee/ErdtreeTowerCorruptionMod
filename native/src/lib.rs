@@ -22,6 +22,7 @@ use hudhook::{
 
 mod blessings;
 mod options;
+mod hansfix;
 mod stats;
 mod enemies;
 mod chariot;
@@ -282,6 +283,9 @@ impl ImguiRenderLoop for TowerPreview {
 
     fn render(&mut self, ui: &mut Ui) {
         diagnostics::frame();
+        if let Some(text)=hansfix::stale() {
+            ui.get_foreground_draw_list().add_text([24.0,24.0],hudhook::imgui::ImColor32::from_rgb(255,96,72),text);
+        }
         if ui.is_key_pressed_no_repeat(options::key(Hotkey::Settle)) {
             if runtime::PLAYER_READY.load(Ordering::Relaxed) {
                 runtime::QUICK_END.store(true,Ordering::Relaxed);
@@ -339,7 +343,15 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let key=format!("UI visible={} snapshot={} capture={} settlement={} view={:?}",self.visible,snapshot.is_some(),input::CAPTURE.load(Ordering::Relaxed),run_screen,view.as_ref().map(|v|(v.ready,v.busy,v.travelling,v.room.is_some(),v.shared_event,v.prompt)));
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
-        if run_screen {return;}
+        if run_screen {map_ui::set_peek(false);return;}
+        // [HansFix7] N opens/closes a read-only route map anywhere in a journey (not over the normal map).
+        let journey=view.as_ref().and_then(|v|v.run.as_ref()).filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won));
+        if !hansfix::merchant()||journey.is_none()||map_open {map_ui::set_peek(false);}
+        else if ui.is_key_pressed_no_repeat(hansfix::map_key())&&!ui.io().want_text_input {map_ui::set_peek(!map_ui::peek());}
+        if map_ui::peek()&&let (Some(run),Some(view))=(journey,view.as_ref()) {
+            if map_ui::draw_peek(ui,run,view) {map_ui::set_peek(false);}
+            return;
+        }
         if let Some(view) = &view {
             if let Some(dummy)=&view.dummy {dummy::draw_hud(ui,dummy);}
             if view.room.is_some()||view.shared_event {
@@ -408,6 +420,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
     let address = module.0 as usize;
     std::thread::spawn(move || {
         diagnostics::startup(address);
+        hansfix::init(diagnostics::module_path(address));
         options::init(diagnostics::module_path(address));
         diagnostics::watchdog();
         if std::env::var("ERDTREE_TOWER_PREVIEW").as_deref() != Ok("1") {

@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, io::{self, Read, Write}, net::{SocketAddr, TcpListener, TcpStream}, time::{Duration, Instant}};
 
 pub const VERSION: u32 = 22;
+/// [HansFix] Same optional-patch offset as the Steam handshake.
+pub fn wire_version()->u32 {VERSION+crate::party_handshake::extension()}
 const MAX_FRAME: usize = 256 * 1024;
 const MAX_QUEUE: usize = 1024 * 1024;
 const HELLO_TIMEOUT: Duration = Duration::from_secs(2);
@@ -131,16 +133,16 @@ impl Host {
                 Ok(messages) => for message in messages {
                     if !valid { break; }
                     match (self.peers[i].1,message) {
-                        (None,Wire::Hello { version, session, token }) if version == VERSION && session == self.session => {
+                        (None,Wire::Hello { version, session, token }) if version == wire_version() && session == self.session => {
                             let id = self.credentials.iter().find(|c| c.token == token).map(|c| c.player);
                             if let Some(id) = id.filter(|id| !self.peers.iter().any(|(_,p)| *p == Some(*id))) {
-                                valid = self.peers[i].0.send(Wire::Welcome { version: VERSION, session, player: id }).is_ok();
+                                valid = self.peers[i].0.send(Wire::Welcome { version: wire_version(), session, player: id }).is_ok();
                                 if valid { self.peers[i].1 = Some(id); events.push(HostEvent::Connected(id)); }
                             } else { valid = false; }
                         }
-                        (None,Wire::Hello { version, session, .. }) if version != VERSION => {
+                        (None,Wire::Hello { version, session, .. }) if version != wire_version() => {
                             let socket = &mut self.peers[i].0;
-                            if socket.send(Wire::Welcome { version: VERSION, session, player: 0 }).is_ok() { let _ = socket.flush(); }
+                            if socket.send(Wire::Welcome { version: wire_version(), session, player: 0 }).is_ok() { let _ = socket.flush(); }
                             valid = false;
                         }
                         (Some(player),Wire::Client(message)) => events.push(HostEvent::Message { player, message }),
@@ -162,7 +164,7 @@ impl Client {
     pub fn connect(address: SocketAddr, session: u64, token: String) -> io::Result<Self> {
         if session == 0 || token.len() > 256 { return Err(invalid()); }
         let mut socket = Socket::new(TcpStream::connect_timeout(&address, Duration::from_secs(3))?)?;
-        socket.send(Wire::Hello { version: VERSION, session, token })?;
+        socket.send(Wire::Hello { version: wire_version(), session, token })?;
         Ok(Self { socket: Some(socket), session, player: None })
     }
     pub fn send(&mut self, message: ClientMessage) -> io::Result<()> {
@@ -178,8 +180,8 @@ impl Client {
             Ok(messages) => for message in messages {
                 if !valid { break; }
                 match (self.player,message) {
-                    (None, Wire::Welcome { version, session, player }) if version == VERSION && session == self.session && player != 0 => { self.player = Some(player); events.push(ClientEvent::Connected(player)); }
-                    (None, Wire::Welcome { version, .. }) if version != VERSION => { events.push(ClientEvent::Mismatch(version)); valid = false; }
+                    (None, Wire::Welcome { version, session, player }) if version == wire_version() && session == self.session && player != 0 => { self.player = Some(player); events.push(ClientEvent::Connected(player)); }
+                    (None, Wire::Welcome { version, .. }) if version != wire_version() => { events.push(ClientEvent::Mismatch(version)); valid = false; }
                     (Some(_),Wire::Host(message)) => events.push(ClientEvent::Message(message)),
                     _ => valid = false,
                 }

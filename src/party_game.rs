@@ -5,6 +5,8 @@ pub fn act_seed(initial:u64,act:u8)->RuleResult<u64> {
     Ok((2..=act).fold(initial,|seed,act|crate::mix(seed^u64::from(act))))
 }
 
+/// [游龙] 游龙模式下一幕最多可走遍整张地图，队员进度上报的上限按整张地图节点数放宽
+pub const MAX_VISITED:usize=128;
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -73,7 +75,9 @@ pub enum Order {
     Stormveil{epoch:u64,decision:crate::stormveil::Decision},
     NewRun{epoch:u64,seed:u64},
     Votes{epoch:u64,ballots:Vec<crate::party_vote::Ballot>},
-    Enter{epoch:u64,act:u8,visited:Vec<usize>,node:usize,has_stonesword_key:bool},
+    Enter{epoch:u64,act:u8,visited:Vec<usize>,node:usize,has_stonesword_key:bool,
+        /// 房主的游龙模式设置，客机据此跟随
+        #[serde(default,skip_serializing_if="std::ops::Not::not")] wander:bool},
     EventStart(crate::party_events::Job),
     EventHunt{epoch:u64,wave:u8},
     EventAborted{epoch:u64,wave:u8},
@@ -175,7 +179,7 @@ impl Gate {
     }
     pub fn disconnect(&mut self,id:u64){if let Some(p)=self.peers.iter_mut().find(|p|p.0==id){p.1=None;}}
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
-        if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
+        if report.visited.len()>MAX_VISITED||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
         self.peers.iter_mut().find(|p|p.0==id).ok_or("未知队员")?.1=Some(report);Ok(())
     }
@@ -190,7 +194,7 @@ impl Gate {
         self.stage=if run.nodes[node].kind.combat(){Stage::Travel}else{Stage::Service};
         self.events=None;self.stormveil=None;self.trial=None;
         for p in &mut self.peers {p.1=None;}
-        Ok(Order::Enter{epoch:self.epoch,act:run.act,visited:run.visited.clone(),node,has_stonesword_key})
+        Ok(Order::Enter{epoch:self.epoch,act:run.act,visited:run.visited.clone(),node,has_stonesword_key,wander:run.wander})
     }
     pub fn resolve_votes(&mut self,run:&Run,entropy:u64)->RuleResult<Option<Order>> {
         if self.events_unsettled()||!matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service)
@@ -222,6 +226,15 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn enter_order_carries_the_host_wander_setting() {
+        let mut run=Run::new(42,crate::Class::Samurai);run.set_wander(true).unwrap();
+        let node=run.available()[0];let mut gate=Gate::new(vec![1,2]);
+        for id in [1,2] {let mut r=Report::new(&run,0,false,false,true);r.selected=Some(node);gate.report(id,r).unwrap();}
+        assert!(matches!(gate.enter(&run,node).unwrap(),Order::Enter{wander:true,..}));
+        let old=r#"{"Enter":{"epoch":1,"act":1,"visited":[],"node":0,"has_stonesword_key":false}}"#;
+        assert!(matches!(serde_json::from_str::<Order>(old).unwrap(),Order::Enter{wander:false,..}));
+    }
     #[test]
     fn key_eligibility_is_committed_from_any_current_member() {
         for count in 2..=8 {for holder in 0..=count {

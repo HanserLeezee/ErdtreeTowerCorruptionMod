@@ -63,6 +63,8 @@ pub enum Action {
     Gear(usize),
     SkipGear,
     SkipContract,
+    /// 开局前切换游龙模式
+    ToggleWander,
 }
 
 #[derive(Clone)]
@@ -274,6 +276,7 @@ struct Runtime {
     reward_wait: Option<(Instant, Run)>,
     reward_portal:super::reward_delay::Completion,
     action_guard: super::input::ActionGuard,
+    shop_guard: super::native_shop::StockGuard,
     last_blessing_sync: Option<Instant>,
     room: Option<super::rooms::Room>,
     event_start: Option<Instant>,
@@ -330,6 +333,7 @@ fn fresh_runtime()->Runtime {
         reward_wait: None,
         reward_portal:Default::default(),
         action_guard: Default::default(),
+        shop_guard: Default::default(),
         last_blessing_sync: None,
         room: None,
         event_start: None,
@@ -497,8 +501,9 @@ fn stop_map_combat(state:&Runtime,world:&mut WorldChrMan) {
 fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,order:erdtree_tower::party_game::Order)->Result<(),String> {
     use erdtree_tower::party_game::Order;
     if matches!(order,Order::Enter{epoch,..} if epoch==state.party.as_ref().unwrap().epoch){return Ok(());}
-    if let Order::Enter{act,ref visited,node,..}=order {
-        let run=state.view.run.as_ref().ok_or("队友旅程尚未开启")?;
+    if let Order::Enter{act,ref visited,node,wander,..}=order {
+        let run=state.view.run.as_mut().ok_or("队友旅程尚未开启")?;
+        if run.wander!=wander {run.follow_wander(wander);super::log(format!("WANDER follow host: {wander}"));}
         if run.act!=act||&run.visited!=visited||!run.available().contains(&node){return Err("队友路线与房主不同，未执行传送".into());}
     }
     if !state.party.as_mut().unwrap().accept(&order)?{return Ok(());}
@@ -589,6 +594,13 @@ fn recover_party_at_hub(state:&mut Runtime,world:&WorldChrMan,game:&GameMan) {
     state.party=None;state.party_pending=None;state.party_error=None;
     state.command=None;state.view.ballots.clear();state.view.busy=false;
     super::log("Empty or closed Seamless session released at hub; personal progress retained");
+}
+fn toggle_wander(state:&mut Runtime)->Result<(),String> {
+    if !super::hansfix::wander() {return Err("未安装游龙模式补丁".into());}
+    if state.party.as_ref().is_some_and(|p|!p.host()) {return Err("联机时由房主在开局前决定游龙模式".into());}
+    let run=state.view.run.as_mut().ok_or("旅程未加载")?;
+    let on=!run.wander;run.set_wander(on)?;record_checked(run)?;
+    super::log(format!("WANDER mode={on}"));Ok(())
 }
 fn attendant_disabled()->bool {
     static OFF:std::sync::LazyLock<bool>=std::sync::LazyLock::new(||std::env::var("ERDTREE_TOWER_NO_ATTENDANT").as_deref()==Ok("1"));
@@ -1649,6 +1661,10 @@ fn tick_locked() {
         return;
     }
     if state.room.is_some() {
+        let shop=state.view.run.as_ref().and_then(|r|match r.phase {Phase::Node{id} if r.nodes[id].kind==erdtree_tower::NodeKind::Shop=>Some((r.seed,id)),_=>None})
+            .filter(|_|super::hansfix::merchant()&&!game.warp_requested&&state.room.as_ref().is_some_and(|room|!room.view.loading));
+        let runes=world.main_player.as_ref().map_or(0,|p|unsafe {p.player_game_data.as_ref()}.rune_count);
+        state.shop_guard.tick(shop,runes);
         tick_room(&mut state, world, game, player_dead);
         return;
     }
@@ -1669,6 +1685,7 @@ fn tick_locked() {
                     run.and_then(|run|state.party.as_mut().unwrap().enter(&run,id))
                 }else {request_travel(&mut state, world, game, id)}
             },
+            Action::ToggleWander => toggle_wander(&mut state),
             Action::KeepCurrency => transact(&mut state, world, action, journaled),
             Action::Contract(_) | Action::Gear(_) | Action::SkipGear | Action::SkipContract => contract_action(&mut state,world,action),
             Action::Story(_) | Action::Claim(_) | Action::Camp(_) => {
@@ -1687,7 +1704,9 @@ fn tick_locked() {
             state.view.busy = false;
             let message=state.view.run.as_ref().filter(|r|r.act>1&&r.visited.is_empty()&&r.phase==Phase::Map)
                 .map(|r|format!("第 {} 幕已开启，生命、专注与圣杯瓶已回满。下一战：{}。",r.act,super::arenas::for_act(r.act).name))
-                .unwrap_or_else(||story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into()));
+                .unwrap_or_else(||if matches!(action,Action::ToggleWander) {
+                    if state.view.run.as_ref().is_some_and(|r|r.wander) {"游龙模式已开启：可沿连线向上或向下进入相邻、未去过的关卡。".into()} else {"游龙模式已关闭，恢复只能向上选择关卡。".into()}
+                } else {story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into())});
             report(&mut state, message);
         }
     }

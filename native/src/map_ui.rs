@@ -44,9 +44,13 @@ static TEST_FUTURE:std::sync::Mutex<([f32;2],bool)>=std::sync::Mutex::new(([0.0,
 #[cfg(test)]
 static TEST_ENTER:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(usize::MAX);
 
+#[cfg(test)]
+thread_local!{static TEST_ENTERED:std::cell::Cell<usize>=const {std::cell::Cell::new(usize::MAX)};}
 fn enter_node(id:usize) {
     #[cfg(test)]
     TEST_ENTER.store(id,Ordering::Relaxed);
+    #[cfg(test)]
+    TEST_ENTERED.with(|e|e.set(id));
     runtime::submit(Action::Enter(id));
 }
 
@@ -75,6 +79,27 @@ mod tests {
         assert_eq!(s.step(current,500.0,-100.0,0.016,true),500.0);
         assert_eq!(s.step(500.0,500.0,100.0,0.016,true),0.0);
     }
+    /// Runs inside the map test: imgui allows a single context at a time.
+    fn read_only_peek_renders_in_any_phase_and_never_enters_nodes(context:&mut hudhook::imgui::Context) {
+        crate::map_art::preview();crate::oath_art::preview();
+        context.io_mut().display_size = [1920.0, 1080.0];
+        let mut run=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);
+        let first=run.available()[0];run.enter(first).unwrap();
+        let mut view=crate::runtime::view().unwrap();view.ready=true;view.busy=false;
+        super::TEST_ENTERED.with(|e|e.set(usize::MAX));super::set_peek(false);super::set_peek(true);
+        for _ in 0..3 {assert!(!super::draw_peek(context.frame(),&run,&view));assert!(context.render().total_vtx_count>0);}
+        context.io_mut().add_key_event(hudhook::imgui::Key::GamepadFaceDown,true);
+        super::draw_peek(context.frame(),&run,&view);let data=context.render();
+        if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {
+            crate::reward_ui::write_peek_frame(&std::path::PathBuf::from(path).join("map-peek-1920.draw"),data,1920,1080);
+        }
+        context.io_mut().add_key_event(hudhook::imgui::Key::GamepadFaceDown,false);
+        assert_eq!(super::TEST_ENTERED.with(|e|e.get()),usize::MAX,"the peek map is read-only");
+        context.io_mut().add_key_event(hudhook::imgui::Key::Escape,true);
+        assert!(super::draw_peek(context.frame(),&run,&view),"Esc closes the peek");context.render();
+        context.io_mut().add_key_event(hudhook::imgui::Key::Escape,false);
+        super::draw_peek(context.frame(),&run,&view);context.render();
+    }
     #[test]
     fn full_route_renders_during_loading_and_after_player_ready() {
         let mut context = hudhook::imgui::Context::create();
@@ -92,8 +117,18 @@ mod tests {
             super::draw(context.frame(), &run, &view, "HP 455/455");
             assert!(context.render().total_vtx_count > 0);
         }
+        // [HansFix] The wander toggle only exists with the wander marker.
+        crate::hansfix::set(true,false);
+        super::draw(context.frame(), &run, &view, "HP 455/455");context.render();
+        super::draw(context.frame(), &run, &view, "HP 455/455");
+        let data=context.render();
+        if let Ok(path)=std::env::var("ERDTREE_UI_PREVIEW") {
+            crate::reward_ui::write_peek_frame(&std::path::PathBuf::from(path).join("map-wander-1920.draw"),data,1920,1080);
+        }
+        crate::hansfix::set(false,false);
         crate::reward_ui::test_frames(&mut context);
         crate::run_screen::test_frames(&mut context);
+        read_only_peek_renders_in_any_phase_and_never_enters_nodes(&mut context);
         context.io_mut().config_flags.insert(hudhook::imgui::ConfigFlags::NAV_ENABLE_GAMEPAD);
         context.io_mut().backend_flags.insert(hudhook::imgui::BackendFlags::HAS_GAMEPAD);
         // Esc 与 B 都不关路线图（draw 不再返回“关闭”）
@@ -198,6 +233,35 @@ pub fn class_name(class: Class) -> &'static str {
 }
 
 
+/// [HansFix7] N toggles a read-only copy of the route map at any time during a journey.
+static PEEK:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub fn peek()->bool {PEEK.load(Ordering::Relaxed)}
+static PEEK_FOCUS:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub fn set_peek(open:bool) {if PEEK.swap(open,Ordering::Relaxed)!=open {PEEK_FOCUS.store(open,Ordering::Relaxed);crate::log(format!("MAP_PEEK open={open}"));}}
+/// Read-only map: shows the route, drawings and the current position; nothing can be entered or drawn.
+/// Returns true when the player asks to close it (B on a controller).
+pub fn draw_peek(ui: &Ui, run: &Run, view: &View)->bool {
+    if ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadFaceRight)||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::Escape) {return true;}
+    let size=ui.io().display_size;
+    let scale=(size[0]/1600.0).min(size[1]/900.0).clamp(0.65,1.6);
+    let margin=18.0*scale;
+    let _background=ui.push_style_color(StyleColor::WindowBg,[0.04,0.05,0.04,0.96]);
+    let _text=ui.push_style_color(StyleColor::Text,[0.84,0.72,0.46,1.0]);
+    ui.window("黄金树爬塔##peek").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
+        .flags(hudhook::imgui::WindowFlags::NO_NAV)
+        .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
+            crate::oath_art::background(&ui.get_window_draw_list(),size);
+            ui.set_window_font_scale(scale);
+            ui.set_cursor_pos([margin,margin*0.4]);
+            ui.text(format!("只读地图 · 第 {} 幕{} · 按 {} 关闭",run.act,if run.wander {" · 游龙模式"} else {""},crate::hansfix::map_label()));
+            ui.set_cursor_pos([margin,margin+18.0*scale]);
+            let _paper=ui.push_style_color(StyleColor::ChildBg,[0.84,0.79,0.66,1.0]);
+            let _ink=ui.push_style_color(StyleColor::Text,[0.20,0.17,0.11,1.0]);
+            ui.child_window("peek-content").flags(hudhook::imgui::WindowFlags::NO_NAV).scroll_bar(false).scrollable(false)
+                .size([size[0]-2.0*margin,size[1]-2.0*margin-18.0*scale]).build(|| route_with(ui,run,false,&view.ballots,true));
+        });
+    false
+}
 /// 选路阶段的路线图常驻：没有关闭键（手柄 B 原来能关，关掉后手柄没有办法再打开，键盘也一直关不掉）
 pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
     let size=ui.io().display_size;
@@ -222,6 +286,14 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
                 ui.set_cursor_pos([size[0]-right+68.0*scale,y-10.0*scale]);ui.text(if kind==NodeKind::Boss{"首领"}else{kind.label()});
             }
             crate::map_ink::toolbar(ui,erdtree_tower::map_drawing::Scope::of(run),[size[0]-right+margin,555.0*scale],scale,view.ready&&!view.busy&&run.phase==Phase::Map);
+            ui.set_cursor_pos([size[0]-right+margin,700.0*scale]);
+            if crate::hansfix::wander()&&run.phase==Phase::Map&&run.act==1&&run.visited.is_empty() {
+                let _disabled=ui.begin_disabled(!view.ready||view.busy);
+                let _on=run.wander.then(||ui.push_style_color(StyleColor::Button,[0.53,0.40,0.16,1.0]));
+                if ui.button_with_size(if run.wander {"游龙：开"} else {"游龙：关"},[108.0*scale,32.0*scale]) {runtime::submit(Action::ToggleWander);}
+            } else if run.wander {
+                ui.text("游龙模式");
+            }
             ui.set_cursor_pos([size[0]-right+margin,size[1]-126.0*scale]);
             if ui.button_with_size(format!("档案  [{}]",crate::options::label(erdtree_tower::options::Hotkey::Archive)),[right-2.0*margin,44.0*scale])||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadBack) {
                 crate::run_screen::archive_entry();
@@ -281,8 +353,10 @@ pub(crate) fn reward_description(run: &Run, reward: &Reward) -> String {
     }
 }
 
-fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ballot]) {
-    let selecting=crate::map_ink::selecting();
+fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ballot]) {route_with(ui,run,ready,ballots,ready)}
+/// `ready`: nodes can be entered and ink edited; `browse`: the map can still be dragged and scrolled.
+fn route_with(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ballot],browse:bool) {
+    let selecting=crate::map_ink::selecting()||!ready;
     let available = run.available();
     let origin = ui.cursor_screen_pos();
     let content = ui.content_region_avail();
@@ -294,9 +368,9 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
         let mouse=ui.io().mouse_pos;
         let hovered=ui.is_window_hovered();
         let left=hudhook::imgui::MouseButton::Left;
-        if !ready || !selecting || !ui.is_mouse_pos_valid(mouse) {state.anchor=None;state.dragging=false;}
-        let blocked=state.gesture(mouse,ready&&selecting&&hovered&&ui.is_mouse_clicked(left),ui.is_mouse_down(left),ui.scroll_y(),ui.scroll_max_y());
-        let wheel=if ready&&hovered&&state.anchor.is_none(){ui.io().mouse_wheel}else{0.0};
+        if !browse || !selecting || !ui.is_mouse_pos_valid(mouse) {state.anchor=None;state.dragging=false;}
+        let blocked=state.gesture(mouse,browse&&selecting&&hovered&&ui.is_mouse_clicked(left),ui.is_mouse_down(left),ui.scroll_y(),ui.scroll_max_y());
+        let wheel=if browse&&hovered&&state.anchor.is_none(){ui.io().mouse_wheel}else{0.0};
         let next=state.step(ui.scroll_y(),ui.scroll_max_y(),wheel,ui.io().delta_time,blocked);
         (blocked,next)
     });
@@ -370,7 +444,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
         if !reachable[id] { continue; }
         for &next in &node.next {
             let preview=hovered==Some(id)||hovered==Some(next);
-            let taken = run.visited.windows(2).any(|w| w == [id, next]);
+            let taken = run.visited.windows(2).any(|w| w == [id, next] || w == [next, id]);
             let a = point(id);
             let b = point(next);
             let curve = |t: f32| {
@@ -384,7 +458,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
                 ImColor32::from_rgb(191,117,15)
             } else if taken {
                 ImColor32::from_rgb(60, 94, 67)
-            } else if run.visited.last()==Some(&id)&&available.contains(&next) {
+            } else if run.visited.last()==Some(&id)&&available.contains(&next)||run.visited.last()==Some(&next)&&available.contains(&id) {
                 ImColor32::from_rgb(179,126,32)
             } else {
                 ImColor32::from_rgba(78, 64, 39, 165)
@@ -485,7 +559,12 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
     static LAST_ROUTE: AtomicU64 = AtomicU64::new(u64::MAX);
     let signature=run.seed.rotate_left(8)^run.visited.len() as u64
         ^u64::from(ui.io().display_size[0].to_bits()).rotate_left(29)^u64::from(ui.io().display_size[1].to_bits());
-    if LAST_ROUTE.swap(signature, Ordering::Relaxed) != signature {
+    // [HansFix7] When the read-only peek opens, centre it on where the player is.
+    let focus=match run.phase {Phase::Combat{id}|Phase::Node{id}|Phase::Reward{id,..}=>Some(id),_=>run.visited.last().copied().or(available.first().copied())};
+    if browse&&!ready&&PEEK_FOCUS.swap(false,Ordering::Relaxed)&&let Some(id)=focus {
+        ui.set_scroll_y(((last - run.nodes[id].layer) as f32 * row - viewport * 0.5 + 70.0).max(0.0));
+        SCROLL.with(|state| *state.borrow_mut()=MapScroll::default());
+    } else if LAST_ROUTE.swap(signature, Ordering::Relaxed) != signature {
         if let Some(id) = available.first() {
             ui.set_scroll_y(((last - run.nodes[*id].layer) as f32 * row - viewport * 0.62 + 70.0).max(0.0));
             SCROLL.with(|state| *state.borrow_mut()=MapScroll::default());

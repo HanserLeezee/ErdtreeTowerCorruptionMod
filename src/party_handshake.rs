@@ -1,6 +1,12 @@
 use serde::{Deserialize,Serialize};
 use crate::{party_roster::Roster,RuleResult};
 pub const VERSION:u32=37;
+/// [HansFix] Optional patches that change the wire (游龙模式) add an offset so a patched player can
+/// never join an unpatched party by mistake; with no such patch enabled this stays 0 = official protocol.
+static EXTENSION:std::sync::atomic::AtomicU32=std::sync::atomic::AtomicU32::new(0);
+pub fn set_extension(offset:u32){EXTENSION.store(offset,std::sync::atomic::Ordering::Relaxed);}
+pub fn extension()->u32 {EXTENSION.load(std::sync::atomic::Ordering::Relaxed)}
+pub fn protocol()->u32 {VERSION+EXTENSION.load(std::sync::atomic::Ordering::Relaxed)}
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Payload {
     Handshake(Message),
@@ -12,17 +18,17 @@ pub enum Payload {
 struct Envelope {magic:String,version:u32,payload:Payload}
 impl Payload {
     pub fn encode(&self)->RuleResult<Vec<u8>> {
-        let bytes=serde_json::to_vec(&Envelope{magic:"ERDTREE-PARTY".into(),version:VERSION,payload:self.clone()}).map_err(|_|"消息序列化失败")?;
+        let bytes=serde_json::to_vec(&Envelope{magic:"ERDTREE-PARTY".into(),version:protocol(),payload:self.clone()}).map_err(|_|"消息序列化失败")?;
         if bytes.len()>256*1024 {return Err("队伍消息过大".into());}Ok(bytes)
     }
     pub fn decode(bytes:&[u8])->RuleResult<Self> {
         if bytes.len()>256*1024{return Err("队伍消息过大".into());}
         let header:serde_json::Value=serde_json::from_slice(bytes).map_err(|_|"队伍消息格式无效")?;
         if let Some(version)=header.get("version").and_then(|v|v.as_u64()) {
-            if version!=u64::from(VERSION){return Err(format!("爬塔协议版本不匹配：本机 {VERSION}，对方 {version}。请所有玩家更新同一版爬塔补丁。"));}
+            if version!=u64::from(protocol()){return Err(format!("爬塔协议版本不匹配：本机 {}，对方 {version}。请所有玩家更新同一版爬塔补丁。",protocol()));}
         }
         let envelope:Envelope=serde_json::from_value(header).map_err(|_|"队伍消息格式无效")?;
-        if envelope.magic!="ERDTREE-PARTY"||envelope.version!=VERSION{return Err("队伍协议不匹配".into());}
+        if envelope.magic!="ERDTREE-PARTY"||envelope.version!=protocol(){return Err("队伍协议不匹配".into());}
         Ok(envelope.payload)
     }
 }
@@ -47,7 +53,7 @@ impl Handshake {
         Ok(Self{roster,nonce,session,peers,committed:false})
     }
     pub fn hello(&self)->Option<(u64,Message)> {
-        (self.roster.local!=self.roster.host&&!self.committed).then(||(self.roster.host,Message::Hello{version:VERSION,nonce:self.nonce,members:self.roster.members.clone()}))
+        (self.roster.local!=self.roster.host&&!self.committed).then(||(self.roster.host,Message::Hello{version:protocol(),nonce:self.nonce,members:self.roster.members.clone()}))
     }
     pub fn ready(&self)->Option<(u64,u64)> {self.committed.then_some(self.session).flatten()}
     pub fn waiting_reason(&self)->String {
@@ -58,9 +64,9 @@ impl Handshake {
         format!("爬塔握手未完成（队伍 {} 人）：\n{}\n尚未收到响应不等于版本不匹配；请检查对应队员是否从爬塔入口启动。",self.roster.members.len(),pending.join("\n"))
     }
     pub fn receive_lobby(&mut self,sender:u64,message:Message)->RuleResult<Vec<(u64,Message)>> {
-        if matches!(&message,Message::Hello{version,..} if *version!=VERSION){return Err("队伍协议不匹配".into());}
+        if matches!(&message,Message::Hello{version,..} if *version!=protocol()){return Err("队伍协议不匹配".into());}
         if let Message::Hello{version,nonce,members}=&message {
-            if self.roster.local==self.roster.host&&*version==VERSION&&*nonce!=0&&members==&self.roster.members {
+            if self.roster.local==self.roster.host&&*version==protocol()&&*nonce!=0&&members==&self.roster.members {
                 if let Some(peer)=self.peers.iter_mut().find(|p|p.0==sender) {
                     if peer.1.is_some_and(|old|old!=*nonce) {
                         if self.committed {return Err("队员已重新连接，需要重新建立会话".into());}
@@ -77,7 +83,7 @@ impl Handshake {
         let host=self.roster.local==self.roster.host;
         match message {
             Message::Hello{version,nonce,members} if host=>{
-                if version!=VERSION||nonce==0||members!=self.roster.members{return Err("队伍版本或成员不一致".into());}
+                if version!=protocol()||nonce==0||members!=self.roster.members{return Err("队伍版本或成员不一致".into());}
                 let peer=self.peers.iter_mut().find(|p|p.0==sender).unwrap();
                 if peer.1.is_some_and(|old|old!=nonce){return Err("队员已重新连接，需要重新建立会话".into());}
                 peer.1=Some(nonce);

@@ -479,6 +479,8 @@ fn textured_button(ui:&Ui,label:&str,pos:[f32;2],size:[f32;2],color:[f32;4])->bo
 fn center(ui:&Ui,x:f32,y:f32,text:&str,color:[f32;4]) {ui.set_cursor_pos([x-ui.calc_text_size(text)[0]*0.5,y]);ui.text_colored(color,text);}
 
 #[cfg(test)]
+#[cfg(test)]
+pub fn write_peek_frame(path:&std::path::Path,data:&hudhook::imgui::DrawData,width:i32,height:i32) {write_frame(path,data,width,height)}
 fn write_frame(path:&std::path::Path,data:&hudhook::imgui::DrawData,width:i32,height:i32) {
     use std::io::Write;
     let mut file=std::fs::File::create(path).unwrap();writeln!(file,"{width} {height}").unwrap();

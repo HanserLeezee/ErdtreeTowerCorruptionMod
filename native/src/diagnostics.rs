@@ -41,7 +41,7 @@ pub(crate) fn module_path(address:usize)->Option<PathBuf> {
 }
 pub fn startup(address:usize) {
     super::log(format!("DIAGNOSTIC_SWITCHES no_attendant={} stall_victory={}",std::env::var("ERDTREE_TOWER_NO_ATTENDANT").as_deref()==Ok("1"),std::env::var("ERDTREE_TOWER_STALL_VICTORY").as_deref()==Ok("1")));
-    super::log(format!("SESSION_START build={} protocol={} dll={:?} exe={:?} log={:?}",env!("TOWER_BUILD_ID"),erdtree_tower::party_handshake::VERSION,module_path(address),module_path(0),*super::LOG_PATH));
+    super::log(format!("SESSION_START build={} protocol={} dll={:?} exe={:?} log={:?}",env!("TOWER_BUILD_ID"),erdtree_tower::party_handshake::protocol(),module_path(address),module_path(0),*super::LOG_PATH));
     for name in ["ersc.dll","dxgi.dll","d3d12.dll","dinput8.dll","ReShade64.dll","nvngx_dlssg.dll"] {
         let wide:Vec<_>=name.encode_utf16().chain(Some(0)).collect();
         let handle=unsafe {GetModuleHandleW(wide.as_ptr())};

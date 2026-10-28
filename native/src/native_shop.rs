@@ -185,6 +185,55 @@ fn crystal_shop_roll_is_rare_stable_and_costs_6000() {
     }
     assert!((25..=75).contains(&count));
 }
+/// [HansFix7] Shop whose purchase flags were just cleared by `prepare(refresh)`: (route seed, node).
+static FRESH:std::sync::Mutex<Option<(u64,usize)>>=std::sync::Mutex::new(None);
+/// Guards this player's shop purchase flags. A slot's purchase flags may only change together with
+/// this player spending runes; any other change (another player's purchase arriving through the
+/// session, or stale bits from an earlier shop) is reverted so goods never show as sold out unbought.
+#[derive(Default)]
+pub struct StockGuard {key:Option<(u64,usize)>,mirror:Vec<u8>,runes:u32,pending:Option<std::time::Instant>}
+fn read_slots(flags:&eldenring::cs::CSEventFlagMan)->Vec<u8> {
+    (0..STOCK_COUNT).map(|i|(0..8).fold(0u8,|v,bit|v|(u8::from(flags.virtual_memory_flag.get_flag(stock_flag(i)+bit))<<bit))).collect()
+}
+fn write_slot(flags:&mut eldenring::cs::CSEventFlagMan,index:u32,value:u8) {
+    for bit in 0..8 {flags.virtual_memory_flag.set_flag(stock_flag(index)+bit,value&(1<<bit)!=0);}
+}
+/// What the guard should do with the flags it just read.
+#[derive(Debug,PartialEq)]
+enum Verdict {Keep,Accept,Wait,Restore}
+fn judge(mirror:&[u8],current:&[u8],spent:bool,waited:Option<std::time::Duration>)->Verdict {
+    if mirror==current {Verdict::Keep} else if spent {Verdict::Accept}
+    else if waited.is_some_and(|w|w>=std::time::Duration::from_millis(600)) {Verdict::Restore} else {Verdict::Wait}
+}
+impl StockGuard {
+    pub fn tick(&mut self,key:Option<(u64,usize)>,runes:u32) {
+        // Keep the mirror while the room reloads or the player is warping; only a different shop resets it.
+        let Some(key)=key else{self.pending=None;return;};
+        let Ok(flags)=(unsafe {CSEventFlagMan::instance_mut()}) else{return;};
+        let current=read_slots(flags);
+        if self.key!=Some(key) {
+            let fresh=FRESH.lock().is_ok_and(|f|*f==Some(key));
+            // A freshly prepared shop starts empty; a resumed save keeps the purchases it recorded.
+            self.mirror=if fresh {vec![0;current.len()]} else {current.clone()};
+            if fresh&&current!=self.mirror {
+                super::log(format!("SHOP_STOCK stale purchase flags cleared on arrival: {:?}",current.iter().enumerate().filter(|(_,v)|**v!=0).collect::<Vec<_>>()));
+                for i in 0..STOCK_COUNT {write_slot(flags,i,0);}
+            }
+            self.key=Some(key);self.runes=runes;self.pending=None;return;
+        }
+        match judge(&self.mirror,&current,runes<self.runes,self.pending.map(|t|t.elapsed())) {
+            Verdict::Keep=>{self.pending=None;self.runes=runes;},
+            Verdict::Accept=>{self.mirror=current;self.pending=None;self.runes=runes;},
+            Verdict::Wait=>{self.pending.get_or_insert_with(std::time::Instant::now);},
+            Verdict::Restore=>{
+                let changed:Vec<_>=(0..current.len()).filter(|&i|current[i]!=self.mirror[i]).collect();
+                super::log(format!("SHOP_STOCK purchase flags changed without this player buying; restored slots {changed:?}"));
+                for &i in &changed {write_slot(flags,i as u32,self.mirror[i]);}
+                self.pending=None;self.runes=runes;
+            },
+        }
+    }
+}
 fn stock_flag(index:u32)->u32 {if index<21 {STOCK_FLAGS+index*8}else if index<26 {45020700+(index-21)*8}else{45020600+(index-26)*8}}
 #[test]
 fn random_shop_only_sells_base_talismans() {
@@ -227,35 +276,38 @@ fn extras(group:&str)->Vec<Stock> {
 pub fn stock(run:&Run)->Vec<Stock> {
     use erdtree_tower::{Class,rewards::{CATALOG,ItemKind}};
     let visit=run.visited.iter().filter(|&&i|run.nodes[i].kind==NodeKind::Shop).count();
+    // [HansFix better_map&merchant] Shops roll from the player's personal reward seed: in a party every
+    // player gets an independent shop instead of the same goods (the shared route seed made all lineups identical).
+    let seed=if crate::hansfix::merchant() {run.reward_seed()} else {run.seed};
     let catalog:Vec<_>=include_str!("../../scene-assets/shop-catalog.txt").lines().map(|line| {
         let p:Vec<_>=line.split('|').collect();
         Stock{kind:p[0].parse().unwrap(),id:p[1].parse().unwrap(),price:p[2].parse().unwrap(),quantity:1}
     }).filter(offered).collect();
     let mut result=Vec::new();
     let catalyst=match run.class {Class::Astrologer|Class::Prisoner=>Some("staff"),Class::Prophet|Class::Confessor=>Some("seal"),_=>None};
-    if let Some(group)=catalyst {result.extend(select(extras(group),2,run.seed,visit));}
-    result.extend(select(catalog.iter().filter(|s|s.kind==0).cloned().collect(),if catalyst.is_some(){3}else{5},run.seed,visit));
+    if let Some(group)=catalyst {result.extend(select(extras(group),2,seed,visit));}
+    result.extend(select(catalog.iter().filter(|s|s.kind==0).cloned().collect(),if catalyst.is_some(){3}else{5},seed,visit));
     for (kind,equip,price) in [(ItemKind::Sorcery,3,1800),(ItemKind::Incantation,3,1800),(ItemKind::Armor,1,1500)] {
-        result.extend(select(CATALOG.iter().filter(|s|s.kind==kind&&erdtree_tower::dlc::item_allowed(s.id)).map(|s|Stock{kind:equip,id:(s.id&0x0fffffff) as i32,price,quantity:1}).collect(),3,run.seed,visit));
+        result.extend(select(CATALOG.iter().filter(|s|s.kind==kind&&erdtree_tower::dlc::item_allowed(s.id)).map(|s|Stock{kind:equip,id:(s.id&0x0fffffff) as i32,price,quantity:1}).collect(),3,seed,visit));
     }
     // 原来卖投掷壶的一格改卖第二种飞刀：投掷壶要有龟裂壶才能持有，商店不再发放龟裂壶
-    if tear_offer(hash(run.seed ^ visit as u64 ^ 0x74656172)) {
+    if tear_offer(hash(seed ^ visit as u64 ^ 0x74656172)) {
         result.push(Stock{kind:3,id:erdtree_tower::elite::TEAR as i32,price:5000,quantity:1});
-    } else {result.extend(select(extras("food"),1,run.seed,visit));}
-    result.extend(select(extras("knife"),1,run.seed,visit));
+    } else {result.extend(select(extras("food"),1,seed,visit));}
+    result.extend(select(extras("knife"),1,seed,visit));
     let knives=extras("knife").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
-    if let Some(id)=whetblade_offer(hash(run.seed ^ visit as u64 ^ 0x77686574),&run.claimed_items) {
+    if let Some(id)=whetblade_offer(hash(seed ^ visit as u64 ^ 0x77686574),&run.claimed_items) {
         result.push(Stock{kind:3,id,price:6000,quantity:1});
-    } else {result.extend(select(knives,1,run.seed^0x6b6e_6966,visit));}
-    result.extend(select(catalog.iter().filter(|s|s.kind==4).cloned().collect(),2,run.seed,visit));
+    } else {result.extend(select(knives,1,seed^0x6b6e_6966,visit));}
+    result.extend(select(catalog.iter().filter(|s|s.kind==4).cloned().collect(),2,seed,visit));
     let pool=CATALOG.iter().filter(|s|s.kind==ItemKind::Talisman&&s.random_eligible()).map(|s|Stock{kind:2,id:(s.id&0x0fffffff) as i32,price:talisman_price(super::reward_ui::item_quality(s.id)),quantity:1}).collect();
-    result.extend(select(pool,2,run.seed,visit));
+    result.extend(select(pool,2,seed,visit));
     // 召唤师的商店常备骨灰
-    if !run.law.lone_wolf()&&(run.summoner()||hash(run.seed ^ visit as u64 ^ 0xa549)%4==0) {
-        result.extend(select(CATALOG.iter().filter(|s|s.kind==ItemKind::Spirit&&erdtree_tower::dlc::item_allowed(s.id)).map(|s|Stock{kind:3,id:(s.id&0x0fffffff) as i32,price:2000,quantity:1}).collect(),1,run.seed,visit));
+    if !run.law.lone_wolf()&&(run.summoner()||hash(seed ^ visit as u64 ^ 0xa549)%4==0) {
+        result.extend(select(CATALOG.iter().filter(|s|s.kind==ItemKind::Spirit&&erdtree_tower::dlc::item_allowed(s.id)).map(|s|Stock{kind:3,id:(s.id&0x0fffffff) as i32,price:2000,quantity:1}).collect(),1,seed,visit));
     } else {
         let pool=extras("food").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
-        result.extend(select(pool,1,run.seed,visit));
+        result.extend(select(pool,1,seed,visit));
     }
     for item in &mut result {
         if item.kind==3 {item.id=(erdtree_tower::rewards::random_spirit_level(0x40000000|item.id as u32,run.reward_seed()^visit as u64)&0x0fffffff) as i32;}
@@ -264,11 +316,11 @@ pub fn stock(run:&Run)->Vec<Stock> {
     if let Some(id)=erdtree_tower::rewards::crystal_offer(run,visit as u64,0x5a09) {
         result[21]=Stock{kind:3,id:(id&0x0fffffff) as i32,price:6000,quantity:1};
     }
-    if key_offer(hash(run.seed ^ visit as u64 ^ 0x8000cafe)) {
+    if key_offer(hash(seed ^ visit as u64 ^ 0x8000cafe)) {
         result.push(Stock{kind:3,id:8000,price:2500,quantity:1});
     } else {
         let pool=extras("food").into_iter().filter(|s|!result.iter().any(|r|r.kind==s.kind&&r.id==s.id)).collect();
-        result.extend(select(pool,1,run.seed ^ 0x8000cafe,visit));
+        result.extend(select(pool,1,seed ^ 0x8000cafe,visit));
     }
     result.push(Stock{kind:0,id:50000000,price:20,quantity:100});
     let arrows=[50010000,50090000,50100000,50200000];
@@ -336,6 +388,7 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     for flag in (0..STOCK_COUNT).flat_map(|i|stock_flag(i)..stock_flag(i)+8).filter(|_|refresh) {
         flags.virtual_memory_flag.set_flag(flag, false);
     }
+    if refresh {if let Ok(mut fresh)=FRESH.lock(){*fresh=Some((run.seed,node));}}
     let peak=super::smith::inventory_peak(data,params);
     let granted:Vec<_>=stock.iter().map(|item|if item.kind==0 {super::smith::acquisition_id(item.id as u32,peak,params).map(|id|id as i32)}else{Ok(item.id)}).collect::<Result<_,String>>()?;
     let mut shop_items=Vec::with_capacity(stock.len());
@@ -445,6 +498,22 @@ pub fn add_blessings(run: &mut Run, indices: &[usize]) {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stock_guard_accepts_own_purchases_and_reverts_foreign_flag_changes() {
+        use std::time::Duration as D;
+        let (a,b)=(vec![0u8;3],vec![0,1,0]);
+        assert_eq!(judge(&a,&a,false,None),Verdict::Keep);
+        assert_eq!(judge(&a,&b,true,None),Verdict::Accept,"bought: runes went down together with the flags");
+        assert_eq!(judge(&a,&b,false,None),Verdict::Wait);
+        assert_eq!(judge(&a,&b,false,Some(D::from_millis(300))),Verdict::Wait);
+        assert_eq!(judge(&a,&b,false,Some(D::from_millis(600))),Verdict::Restore,"nobody here paid for it");
+    }
+    #[test]
+    fn party_members_get_independent_shops_from_their_own_reward_seed() {
+        let a=Run::new_personal(42,erdtree_tower::Class::Samurai,1);let b=Run::new_personal(42,erdtree_tower::Class::Samurai,2);
+        assert_eq!(a.seed,b.seed);assert_ne!(stock(&a),stock(&b));
+        assert_eq!(stock(&a),stock(&a.clone()),"the same player's shop stays stable");
+    }
     #[test]
     fn every_shop_keeps_ten_boluses_and_withdraws_livers() {
         for class in erdtree_tower::Class::ALL {for seed in 0..32 {

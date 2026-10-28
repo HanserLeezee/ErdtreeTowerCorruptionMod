@@ -232,6 +232,9 @@ pub struct Run {
     /// 2：问号房的每个事件按权重单独抽取，加入骰子赌徒、盲盒商人与词条重铸台三个房间事件（0、1 为旧分配）
     #[serde(default)]
     pub event_rules: u8,
+    /// 游龙模式：可沿地图连线向上或向下进入当前关卡相邻、尚未去过的关卡
+    #[serde(default,skip_serializing_if="std::ops::Not::not")]
+    pub wander: bool,
     #[serde(default="first_act")]
     pub act:u8,
     pub seed: u64,
@@ -336,6 +339,74 @@ fn legacy_graph(seed: u64) -> Vec<Node> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod wander_mode {
+    use super::*;
+    fn clear(run:&mut Run,id:usize) {
+        run.enter(id).unwrap();
+        match run.nodes[id].kind {
+            NodeKind::Monster|NodeKind::Elite|NodeKind::Boss=>{run.win_combat().unwrap();run.decline_reward().unwrap();},
+            NodeKind::Camp=>run.leave_camp().unwrap(),NodeKind::Shop=>run.leave_shop().unwrap(),
+            NodeKind::Chest=>run.finish_chest().unwrap(),NodeKind::Event=>run.resolve_event(false).unwrap(),
+        }
+    }
+    fn neighbours(run:&Run,id:usize)->Vec<usize> {
+        let mut v:Vec<usize>=run.nodes[id].next.iter().copied().chain((0..run.nodes.len()).filter(|&o|run.nodes[o].next.contains(&id))).collect();
+        v.sort_unstable();v.dedup();v
+    }
+    #[test]
+    fn toggle_only_before_the_first_node_and_old_saves_default_off() {
+        let mut run=Run::new(42,Class::Samurai);
+        assert!(!run.wander);assert!(!run.encode().unwrap().contains("wander"));
+        run.set_wander(true).unwrap();assert!(run.wander);
+        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+        let first=run.available()[0];clear(&mut run,first);
+        assert!(run.set_wander(false).is_err());assert!(run.wander);
+    }
+    #[test]
+    fn wandering_moves_up_and_down_but_never_revisits_and_saves_stay_valid() {
+        for seed in 0..40u64 {
+            let mut run=Run::new(seed,Class::Samurai);run.set_wander(true).unwrap();
+            let mut went_down=false;let mut steps=0;
+            while run.act==1&&run.phase==Phase::Map {
+                let current=*run.visited.last().unwrap_or(&usize::MAX);
+                let options=run.available();assert!(!options.is_empty());
+                for &o in &options {assert!(!run.visited.contains(&o));}
+                if current!=usize::MAX {
+                    let near:Vec<usize>=neighbours(&run,current).into_iter().filter(|o|!run.visited.contains(o)).collect();
+                    if near.is_empty() {assert!(options.iter().all(|&o|run.nodes[o].kind==NodeKind::Boss));}
+                    else {assert_eq!(options,near);}
+                }
+                // Prefer non-boss nodes, and go down whenever possible, to explore the map.
+                let pick=options.iter().copied().filter(|&o|run.nodes[o].kind!=NodeKind::Boss)
+                    .min_by_key(|&o|run.nodes[o].layer).unwrap_or(options[0]);
+                if current!=usize::MAX&&run.nodes[pick].layer<run.nodes[current].layer {went_down=true;}
+                clear(&mut run,pick);steps+=1;
+                if run.act==1 {assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);}
+            }
+            assert_eq!(run.act,2,"seed {seed}: act should end at the boss");
+            assert!(run.wander,"mode persists into the next act");
+            println!("WANDER_PROBE seed={seed} steps={steps} went_down={went_down}");
+            assert!(steps>=1);
+        }
+    }
+    #[test]
+    fn surrounded_player_is_sent_to_the_boss() {
+        let mut run=Run::new(7,Class::Samurai);run.set_wander(true).unwrap();
+        let start=run.available()[0];
+        // Pretend every neighbour of the start node has already been visited.
+        run.visited=vec![start];
+        let route=run.wander_route(&run.visited.iter().copied().chain(neighbours(&run,start)).collect::<Vec<_>>(),start);
+        assert!(!route.is_empty());assert!(route.iter().all(|&id|run.nodes[id].kind==NodeKind::Boss));
+    }
+    #[test]
+    fn every_act_map_fits_the_party_report_limit() {
+        let most=(0..500u64).map(|seed|camp_graph(seed).len()).max().unwrap();
+        println!("WANDER_PROBE most_nodes={most}");
+        assert!(most<=crate::party_game::MAX_VISITED,"{most}");
+    }
 }
 
 #[cfg(test)]
@@ -525,6 +596,7 @@ impl Run {
             embers: vec![],
             debug: false,
             event_rules: 2,
+            wander: false,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -602,10 +674,31 @@ impl Run {
 
     fn next_route(&self) -> Vec<usize> {
         match self.visited.last() {
+            Some(&id) if self.wander => self.wander_route(&self.visited,id),
             Some(id) => self.nodes[*id].next.clone(),
             None => self.start_nodes(),
         }
     }
+
+    /// 游龙：当前关卡沿连线上下相邻、且尚未去过的关卡；四周都去过时只能挑战首领
+    fn wander_route(&self,visited:&[usize],id:usize)->Vec<usize> {
+        let mut route:Vec<usize>=self.nodes[id].next.iter().copied()
+            .chain((0..self.nodes.len()).filter(|&other|self.nodes[other].next.contains(&id)))
+            .filter(|other|!visited.contains(other)).collect();
+        route.sort_unstable();route.dedup();
+        if route.is_empty() {
+            route=(0..self.nodes.len()).filter(|&other|self.nodes[other].kind==NodeKind::Boss&&!visited.contains(&other)).collect();
+        }
+        route
+    }
+
+    /// 开启或关闭游龙模式；只能在第一幕起点、尚未行动时切换
+    pub fn set_wander(&mut self,on:bool)->RuleResult<()> {
+        if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {return Err("游龙模式只能在开局、选择第一个关卡前切换".into());}
+        self.wander=on;Ok(())
+    }
+    /// 联机客机跟随房主的游龙设置（由房主的进入指令携带）
+    pub fn follow_wander(&mut self,on:bool) {self.wander=on;}
 
     pub fn start_nodes(&self)->Vec<usize> {if self.schema==1 {vec![0]}else if self.schema<4 {vec![0,1,2]}else{self.nodes.iter().enumerate().take_while(|(_,n)|n.layer==0).map(|(id,_)|id).collect()}}
 
@@ -613,7 +706,7 @@ impl Run {
         if !self.available().contains(&id) {
             return Err("节点不可达".into());
         }
-        self.reached_layer=self.nodes[id].layer+1;
+        self.reached_layer=self.reached_layer.max(self.nodes[id].layer+1);
         self.shop_purchased = 0;self.shop_stock=None;
         if self.nodes[id].kind==NodeKind::Event {
             let draw=self.event_draw(id);
@@ -985,7 +1078,7 @@ impl Run {
             || self.shop_purchased > 7
             || self.blessings.len() > 8
             || self.delivered_talismans.len() > 24
-            || self.visited.len() > self.floors()
+            || self.visited.len() > if self.wander {self.nodes.len()} else {self.floors()}
         {
             return fail();
         }
@@ -1004,11 +1097,11 @@ impl Run {
             if !(rewards::lookup(*id).is_some_and(|item|item.kind.allowed(self.class)||elite::LEGENDARY.contains(&affixes::base(*id)))||rewards::RETIRED_SPELLS.contains(id))||self.claimed_items[..i].contains(id) {return fail();}
         }
         let mut route = self.start_nodes();
-        for id in &self.visited {
+        for (i,id) in self.visited.iter().enumerate() {
             if !route.contains(id) {
                 return fail();
             }
-            route = self.nodes[*id].next.clone();
+            route = if self.wander {self.wander_route(&self.visited[..=i],*id)} else {self.nodes[*id].next.clone()};
         }
         let current_id = match &self.phase {
             Phase::Combat { id } => {
@@ -1041,7 +1134,9 @@ impl Run {
                 Some(*id)
             }
             Phase::Won => {
-                if self.visited.len() != self.floors() || !route.is_empty() || self.hp == 0 {
+                let ended=if self.wander {self.visited.last().is_some_and(|&id|self.nodes[id].kind==NodeKind::Boss)}
+                    else {self.visited.len()==self.floors()&&route.is_empty()};
+                if !ended || self.hp == 0 {
                     return fail();
                 }
                 None
