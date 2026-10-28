@@ -2,7 +2,7 @@
 
 usage: python3 -I descent_patch.py <tools_dir> <paramdef SpEffect.xml> <input regulation.bin> <output regulation.bin> <build.json>
 
-- 9641001..9641060: descent k -> maxHpRate 2*1.1^(k-1), *AttackPowerRate 1.35*1.04^(k-1) (cloned from growth row 9640001)
+- 9641001..9641060: descent k -> maxHpRate 2*1.1^(k-1), *AttackPowerRate 1+0.05k (cloned from growth row 9640001)
 - 9851000+kind*10+tier: affix effect 9850000+kind*10+tier with its value doubled
 - 9852000+kind*10+tier: the same effect negated
 Every other byte of the regulation is verified unchanged.
@@ -40,7 +40,7 @@ SPEC = {}   # id -> (template id, {field: value}, name)
 g = before[GROWTH1]
 assert abs(get(g, fields['maxHpRate']) - 1.03) < 1e-5 and all(abs(get(g, fields[a]) - 1.015) < 1e-5 for a in ATK), 'growth template changed'
 for k in range(1, 61):
-    hp, atk = 2.0 * 1.1 ** (k - 1), 1.35 * 1.04 ** (k - 1)
+    hp, atk = 2.0 * 1.1 ** (k - 1), 1.0 + 0.05 * k
     SPEC[ENEMY + k] = (GROWTH1, dict({'maxHpRate': hp}, **{a: atk for a in ATK}), f'Tower HansFix descent {k}')
 for kind in range(21):
     if kind == 18: continue   # stateInfo 158 (talisman behaviour), not a number: never cursed

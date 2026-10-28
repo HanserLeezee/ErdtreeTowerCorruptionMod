@@ -1,6 +1,6 @@
 //! [HansFix] 游龙模式·向下：沿连线向上以外的方向进入关卡（原版不允许的方向）记为一次“向下”。
 //! - 向下进入的关卡在地图上标红，整局累计向下次数；
-//! - 第 k 次向下的战斗关卡：敌人血量 ×2×1.1^(k-1)，攻击伤害 ×1.35×1.04^(k-1)（第一次正好 2 倍 / 1.35 倍）；
+//! - 第 k 次向下的战斗关卡：敌人血量 ×2×1.1^(k-1)，攻击伤害 ×(1+0.05k)（第一次 2 倍血 / 1.05 倍伤害，第 20 次伤害翻倍）；
 //! - 打完红色战斗关卡进入与精英相同的结算界面；其中带随机词条的武器与防具会被“扭曲”：
 //!   随机一个词条数值 ×2、另一个词条数值 ×(-1)；只有一个词条时随机 ×2 或 ×(-1)。
 //! 词条效果是 regulation 里的 SpEffect 行（9850000 + 种类×10 + 品质），×2 / ×(-1) 的版本由
@@ -10,8 +10,8 @@ use serde::{Deserialize,Serialize};
 
 pub const HP_START:f64=2.0;
 pub const HP_STEP:f64=1.1;
-pub const ATTACK_START:f64=1.35;
-pub const ATTACK_STEP:f64=1.04;
+/// 攻击伤害线性增长：第 k 次向下 ×(1 + 0.05k)，20 次时翻倍
+pub const ATTACK_PER_DESCENT:f64=0.05;
 /// 敌人强化效果：ENEMY_EFFECT_FIRST + k（k = 第几次向下，超过 MAX_LEVEL 按 MAX_LEVEL）
 pub const ENEMY_EFFECT_FIRST:u32=9641000;
 pub const MAX_LEVEL:u32=60;
@@ -22,7 +22,7 @@ pub const AFFIX_KINDS:u32=21;
 pub const FIXED_KIND:u32=18;
 
 pub fn hp_rate(level:u32)->f64 {HP_START*HP_STEP.powi(level.clamp(1,MAX_LEVEL) as i32-1)}
-pub fn attack_rate(level:u32)->f64 {ATTACK_START*ATTACK_STEP.powi(level.clamp(1,MAX_LEVEL) as i32-1)}
+pub fn attack_rate(level:u32)->f64 {1.0+ATTACK_PER_DESCENT*f64::from(level.clamp(1,MAX_LEVEL))}
 pub fn enemy_effect(level:u32)->u32 {ENEMY_EFFECT_FIRST+level.clamp(1,MAX_LEVEL)}
 
 /// 一件被扭曲的装备：物品编号（防具带 0x10000000 标记）与“原词条效果 → 新效果”
@@ -168,8 +168,8 @@ mod tests {
     use super::*;
     #[test]
     fn scaling_starts_at_double_and_grows_per_descent() {
-        assert!((hp_rate(1)-2.0).abs()<1e-9&&(attack_rate(1)-1.35).abs()<1e-9);
-        assert!((hp_rate(3)-2.0*1.21).abs()<1e-9&&(attack_rate(3)-1.35*1.04*1.04).abs()<1e-9);
+        assert!((hp_rate(1)-2.0).abs()<1e-9&&(attack_rate(1)-1.05).abs()<1e-9&&(attack_rate(20)-2.0).abs()<1e-9);
+        assert!((hp_rate(3)-2.0*1.21).abs()<1e-9&&(attack_rate(3)-1.15).abs()<1e-9);
         assert_eq!(enemy_effect(0),ENEMY_EFFECT_FIRST+1);assert_eq!(enemy_effect(999),ENEMY_EFFECT_FIRST+MAX_LEVEL);
     }
     #[test]

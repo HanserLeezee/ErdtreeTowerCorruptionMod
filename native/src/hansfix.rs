@@ -22,7 +22,7 @@ pub const BASE_RELEASE:&str="v99";
 pub const BASE_INSTALL_VERSION:u64=99;
 pub const BASE_REGULATION_LEN:u64=3438688;
 /// 游龙补丁带的 regulation.bin（v98/v99 + 向下强化与扭曲词条效果）
-pub const HANSFIX_REGULATION_LEN:u64=3388928;
+pub const HANSFIX_REGULATION_LEN:u64=3388896;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}
