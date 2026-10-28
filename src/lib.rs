@@ -420,8 +420,10 @@ mod wander_mode {
                         run.win_combat().unwrap();
                         let Phase::Reward{ref offers,..}=run.phase else{panic!()};let offers=offers.clone();
                         if down&&run.nodes[pick].kind!=NodeKind::Boss {
-                            let mut elite=run.clone();elite.nodes[pick].kind=NodeKind::Elite;
-                            assert_eq!(offers,elite.offers(pick),"red combat pays like an elite");
+                            let page=run.elite_page(pick);
+                            assert_eq!(offers.len(),descent::offer_count(expected).min(page.len()+1),"options grow with the descent count");
+                            assert_eq!(offers[0],page[0],"the elite gear stays the first option");
+                            if offers.len()>2 {assert_eq!(offers[2..],page[1..offers.len()-1]);}
                         }
                         assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
                         let cursed=offers.iter().position(|r|run.curse(pick,r).is_some());
@@ -444,6 +446,22 @@ mod wander_mode {
             assert!(run.descent_path().is_empty());
         }
         assert!(checked_curse>0,"some red elite pages offer affixed gear");
+    }
+    #[test]
+    fn red_page_size_follows_the_descent_count_and_casters_can_draw_spells() {
+        assert_eq!((1..=12).map(descent::offer_count).collect::<Vec<_>>(),vec![1,1,1,2,2,2,3,3,3,4,4,4]);
+        let mut spells=0;
+        for seed in 0..80u64 {
+            for class in [Class::Astrologer,Class::Prophet,Class::Samurai] {
+                let run=Run::new(seed,class);
+                if let Reward::Item(id)=descent::extra_offer(&run,3,&[]) {
+                    let kind=rewards::lookup(id).unwrap().kind;
+                    assert!(kind.allowed(class));
+                    if matches!(kind,rewards::ItemKind::Sorcery|rewards::ItemKind::Incantation) {spells+=1;}
+                }
+            }
+        }
+        assert!(spells>0,"spells and incantations are in the red pool");
     }
     #[test]
     fn upward_only_runs_never_descend_and_tampered_curses_are_rejected() {
@@ -902,10 +920,8 @@ impl Run {
     }
 
     fn offers(&self, id: usize) -> Vec<Reward> {
-        // [HansFix] 红色战斗关卡：与精英关卡相同的结算
-        if self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Monster)&&self.descent_level(id).is_some() {
-            let mut elite=self.clone();elite.nodes[id].kind=NodeKind::Elite;return elite.offers(id);
-        }
+        // [HansFix] 红色战斗关卡：精英结算，选项数量随向下次数增加
+        if let Some(level)=self.red_combat(id) {return self.descent_offers(id,level);}
         let mut offers=rewards::offers(self,id);
         if !self.law.is_empty() {
             for reward in &mut offers {
@@ -1022,10 +1038,28 @@ impl Run {
         Ok(())
     }
 
+    /// [HansFix] 红色战斗关卡（向下进入的普通或精英战斗）：第几次向下
+    fn red_combat(&self,id:usize)->Option<u32> {
+        self.nodes.get(id).filter(|n|matches!(n.kind,NodeKind::Monster|NodeKind::Elite))?;self.descent_level(id)
+    }
+    /// 精英结算的奖励页（不带向下规则），红色关卡在它的基础上增减选项
+    fn elite_page(&self,id:usize)->Vec<Reward> {
+        let mut elite=self.clone();elite.nodes[id].kind=NodeKind::Elite;elite.wander=false;elite.offers(id)
+    }
+    /// 红色关卡奖励：精英奖励的装备、额外一件（含魔法与祷告）、护符效果、圣杯滴露，按向下次数取前 1–4 个
+    fn descent_offers(&self,id:usize,level:u32)->Vec<Reward> {
+        let base=self.elite_page(id);
+        let mut offers=Vec::new();
+        offers.extend(base.first().cloned());
+        offers.push(descent::extra_offer(self,id,&base));
+        offers.extend(base.iter().skip(1).cloned());
+        offers.truncate(descent::offer_count(level).min(base.len()+1));
+        offers
+    }
     /// [HansFix] 红色战斗关卡的奖励里，这件装备的词条会怎样被扭曲
     pub fn curse(&self,node:usize,reward:&Reward)->Option<descent::Cursed> {
         let Reward::Item(item)=*reward else{return None};
-        if !self.nodes.get(node).is_some_and(|n|matches!(n.kind,NodeKind::Monster|NodeKind::Elite))||self.descent_level(node).is_none() {return None;}
+        self.red_combat(node)?;
         descent::plan(self.reward_seed(),node,item)
     }
     /// 已领取的扭曲装备
@@ -1227,7 +1261,7 @@ impl Run {
                     .nodes
                     .get(*id)
                     .is_some_and(|n| n.kind.combat() || n.kind == NodeKind::Chest)
-                    || (*offers != self.offers(*id) && *offers != rewards::before_tool_rate(self,*id) && *offers != rewards::before_whetblades(self,*id) && *offers != rewards::before_claimed_bases(self,*id) && *offers != rewards::before_spirit_levels(self,*id) && *offers != rewards::before_currency_1500(self,*id) && *offers != rewards::before_chest_boosts(self,*id) && *offers != rewards::before_bosses(self,*id) && *offers != rewards::before_elites(self,*id) && *offers != rewards::before_base_talismans(self,*id) && *offers != self.legacy_offers(*id) && *offers != rewards::previous_offers(self,*id) && *offers != rewards::before_spirits(self,*id) && *offers != rewards::before_expansion(self,*id) && *offers != rewards::before_spirit_weight(self,*id))
+                    || (*offers != self.offers(*id) && !(self.red_combat(*id).is_some()&&*offers==self.elite_page(*id)) && *offers != rewards::before_tool_rate(self,*id) && *offers != rewards::before_whetblades(self,*id) && *offers != rewards::before_claimed_bases(self,*id) && *offers != rewards::before_spirit_levels(self,*id) && *offers != rewards::before_currency_1500(self,*id) && *offers != rewards::before_chest_boosts(self,*id) && *offers != rewards::before_bosses(self,*id) && *offers != rewards::before_elites(self,*id) && *offers != rewards::before_base_talismans(self,*id) && *offers != self.legacy_offers(*id) && *offers != rewards::previous_offers(self,*id) && *offers != rewards::before_spirits(self,*id) && *offers != rewards::before_expansion(self,*id) && *offers != rewards::before_spirit_weight(self,*id))
                 {
                     return fail();
                 }

@@ -4,7 +4,7 @@ use hudhook::{RenderContext,imgui::{Ui,Io,Key,Condition,StyleColor,ImColor32,Tex
 use crate::runtime::{self,Action,View};
 
 #[derive(Clone)]
-struct Detail {icon:u32,name:String,info:String,caption:String,stats:String,skill:String}
+struct Detail {icon:u32,name:String,info:String,caption:String,stats:String,skill:String,cursed:bool}
 static RARITIES:LazyLock<HashMap<u32,u8>>=LazyLock::new(||include_str!("../../scene-assets/reward-rarities.tsv").lines().chain(include_str!("../../scene-assets/affix-rarities.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-rarities.tsv").lines()).chain(include_str!("../../scene-assets/talisman-rarities.tsv").lines()).map(|line| {
     let (id,rarity)=line.split_once('\t').unwrap();(id.parse().unwrap(),rarity.parse().unwrap())
 }).collect());
@@ -40,7 +40,7 @@ fn card_light(tier:usize,selected:bool,hover:bool,time:f64)->u8 {
 static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
     let mut result:HashMap<u32,Detail>=include_str!("../../scene-assets/reward-details.tsv").lines().chain(include_str!("../../scene-assets/affix-details.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-details.tsv").lines()).chain(include_str!("../../scene-assets/talisman-details.tsv").lines()).map(|line| {
         let p:Vec<_>=line.split('\t').collect();
-        (p[0].parse().unwrap(),Detail{icon:p[1].parse().unwrap(),name:p[2].into(),info:p[3].replace("\\n","\n"),caption:p[4].replace("\\n","\n"),stats:p[5].replace("\\n","\n"),skill:p[6].replace("\\n","\n")})
+        (p[0].parse().unwrap(),Detail{icon:p[1].parse().unwrap(),name:p[2].into(),info:p[3].replace("\\n","\n"),caption:p[4].replace("\\n","\n"),stats:p[5].replace("\\n","\n"),skill:p[6].replace("\\n","\n"),cursed:false})
     }).collect();
     for (id,detail) in &mut result {
         if super::random_ashes::eligible(*id){detail.skill="获得时独立随机战灰\n包含本体与 DLC，已放开武器类型限制；获得后固定，可在铁匠处更换。".into();}
@@ -58,12 +58,12 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
 /// 路线图的构筑面板：词条装备的名称与词条行（只保留带数值的行）；id 为奖励编号（防具带 0x10000000 标记）
 /// 构筑面板里的一件词条装备：图标、品质、名字与带数值的词条
 #[derive(Clone,Debug,Default,PartialEq)]
-pub struct Gear {pub icon:u32,pub quality:u8,pub name:String,pub lines:Vec<String>}
+pub struct Gear {pub icon:u32,pub quality:u8,pub name:String,pub lines:Vec<String>,pub cursed:bool}
 /// [HansFix] 构筑面板：本局扭曲过的装备显示改动后的词条
 pub fn affix_summary_in(run:Option<&Run>,id:u32)->Option<Gear> {
     let mut gear=affix_summary(id)?;
     if let Some(cursed)=run.and_then(|r|r.cursed_item(id)) {
-        gear.name=format!("扭曲·{}",gear.name);
+        gear.name=format!("{}{}",erdtree_tower::descent::FALLEN,gear.name);gear.cursed=true;
         for line in &mut gear.lines {*line=erdtree_tower::descent::rewrite(line,cursed);}
     }
     Some(gear)
@@ -72,7 +72,7 @@ pub fn affix_summary(id:u32)->Option<Gear> {
     let quality=erdtree_tower::affixes::tier(id)?;
     let detail=DETAILS.get(&id)?;
     let lines=detail.info.lines().filter(|l|l.chars().any(|c|c.is_ascii_digit())&&(l.contains('+')||l.contains('-'))).map(str::to_owned).collect();
-    Some(Gear{icon:detail.icon,quality,name:detail.name.clone(),lines})
+    Some(Gear{icon:detail.icon,quality,name:detail.name.clone(),lines,cursed:false})
 }
 /// 图鉴：所有词条装备上出现过的词条名（去掉数值，按装备编号的先后）
 pub fn affix_names()->&'static [String] {
@@ -139,8 +139,10 @@ fn card_summary(detail:&Detail)->String {
     }
     detail.caption.split("\n\n").next().unwrap_or("").replace('\n',"")
 }
+/// [HansFix] 堕落装备词条说明的浅红色（与游戏内文字 #FF9C8C 相同）
+pub const LIGHT_RED:[f32;4]=[1.0,0.612,0.549,1.0];
 fn curse_detail(detail:&mut Detail,cursed:&erdtree_tower::descent::Cursed) {
-    detail.name=format!("扭曲·{}",detail.name);
+    detail.name=format!("{}{}",erdtree_tower::descent::FALLEN,detail.name);detail.cursed=true;
     detail.info=format!("{}\n红色关卡奖励：一个词条 ×2、一个词条 ×-1（只有一个词条时二选一）",erdtree_tower::descent::rewrite(&detail.info,cursed));
     detail.caption=erdtree_tower::descent::rewrite(&detail.caption,cursed);
 }
@@ -357,6 +359,8 @@ impl Panel {
                     let _wrap=ui.push_text_wrap_pos_with_pos(750.0*scale);let _cjk=crate::fancy_text::wrap_at(750.0*scale);
                     let _text=ui.push_style_color(StyleColor::Text,ink);
                     if let Some(d)=d {
+                        // [HansFix] 堕落装备的词条说明用浅红色
+                        let text_color=if d.cursed {LIGHT_RED} else {text_color};
                         if !d.info.trim().is_empty(){ui.text_colored(gold,"效果");ui.spacing();{let _color=ui.push_style_color(StyleColor::Text,text_color);crate::fancy_text::text_wrapped(ui,&d.info);}ui.spacing();ui.separator();ui.spacing();}
                         if matches!(reward,Reward::TalismanBuff(_)){crate::fancy_text::text_wrapped(ui,"本局生效，不占护符栏位");ui.spacing();}
                         ui.text_colored(gold,"物品说明");ui.spacing();
@@ -453,7 +457,8 @@ impl Panel {
                 ui.set_window_font_scale(scale*0.90);
                 let summary=if summary.chars().count()>48 {format!("{}…",summary.chars().take(48).collect::<String>())}else{summary};
                 ui.set_cursor_pos([x+40.0*scale,y+329.0*scale]);
-                {let _color=ui.push_style_color(StyleColor::Text,quality_color);let _wrap=ui.push_text_wrap_pos_with_pos(x+width-40.0*scale);let _cjk=crate::fancy_text::wrap_at(x+width-40.0*scale);crate::fancy_text::text_wrapped(ui,summary);}
+                let summary_color=if detail.is_some_and(|d|d.cursed) {LIGHT_RED} else {quality_color};
+                {let _color=ui.push_style_color(StyleColor::Text,summary_color);let _wrap=ui.push_text_wrap_pos_with_pos(x+width-40.0*scale);let _cjk=crate::fancy_text::wrap_at(x+width-40.0*scale);crate::fancy_text::text_wrapped(ui,summary);}
                 ui.set_window_font_scale(scale);
                 if selected {center(ui,x+width*0.5,y+height-76.0*scale,"已选",gold);}
                 ui.set_cursor_pos([x,y]);let _disabled=ui.begin_disabled(!ready||self.selection.details||self.selection.skip);
@@ -555,6 +560,31 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
         for _ in 0..3 {panel.draw(context.frame(),&elite,&view);context.render();}
         panel.draw(context.frame(),&elite,&view);let data=context.render();assert!(data.total_vtx_count>0);
         if width==1920 {if let Some(path)=&output {write_frame(&path.join("elite-1920.draw"),data,width,height);}}
+    }
+    // [HansFix] 红色关卡（第 10 次向下）：4 个选项，堕落装备暗红描边、浅红词条
+    {
+        context.io_mut().display_size=[1920.0,1080.0];
+        let mut red=Run::new(42,erdtree_tower::Class::Astrologer);red.set_wander(true).unwrap();
+        let starts=red.start_nodes();
+        let (a,b,c)=(0..red.nodes.len()).find_map(|b|{let p:Vec<_>=starts.iter().copied().filter(|&s|red.nodes[s].next.contains(&b)).collect();(p.len()>=2).then(||(p[0],b,p[1]))}).unwrap();
+        red.visited=vec![a,b];red.descents_before=9;
+        let mut cursed=None;
+        for seed in 0..400u64 {
+            let mut trial=red.clone();trial.seed=seed;trial.nodes=red.nodes.clone();
+            trial.enter(c).unwrap();trial.win_combat().unwrap();
+            if let Phase::Reward{id,ref offers}=trial.phase {if offers.len()==4&&offers.iter().any(|r|trial.curse(id,r).is_some()) {cursed=Some(trial);break;}}
+        }
+        let red=cursed.expect("a red page with cursed gear");
+        assert_eq!(red.descent_level(c),Some(10));
+        for _ in 0..3 {panel.draw(context.frame(),&red,&view);context.render();}
+        panel.draw(context.frame(),&red,&view);let data=context.render();
+        if let Some(path)=&output {write_frame(&path.join("descent-1920.draw"),data,1920,1080);}
+        let index=if let Phase::Reward{id,ref offers}=red.phase {offers.iter().position(|r|red.curse(id,r).is_some()).unwrap()} else {0};
+        panel.selection.selected=index;panel.selection.details=true;
+        for _ in 0..3 {panel.draw(context.frame(),&red,&view);context.render();}
+        panel.draw(context.frame(),&red,&view);let data=context.render();
+        if let Some(path)=&output {write_frame(&path.join("descent-details-1920.draw"),data,1920,1080);}
+        panel.selection.details=false;
     }
     for (width,height) in [(1280,720),(1920,1080),(3440,1440)] {
         context.io_mut().display_size=[width as f32,height as f32];
@@ -717,12 +747,12 @@ mod tests {
             let Some(cursed)=erdtree_tower::descent::plan(9,4,id) else{continue};
             let mut detail=DETAILS[&id].clone();let before=detail.info.clone();
             super::curse_detail(&mut detail,&cursed);
-            assert!(detail.name.starts_with("扭曲·"));assert_ne!(detail.info,before);
+            assert!(detail.name.starts_with("堕落的")&&detail.cursed);assert_ne!(detail.info,before);
             assert!(detail.info.contains("（×2）")||detail.info.contains("（×-1）"),"{}",detail.info);
             let run=Run::new(9,erdtree_tower::Class::Samurai);
             let mut owned=run.clone();owned.claimed_items.push(id);owned.cursed.push(cursed.clone());
             let gear=super::affix_summary_in(Some(&owned),id).unwrap();
-            assert!(gear.name.starts_with("扭曲·")&&gear.lines.iter().any(|l|l.contains('×')),"{gear:?}");
+            assert!(gear.name.starts_with("堕落的")&&gear.cursed&&gear.lines.iter().any(|l|l.contains('×')),"{gear:?}");
             assert_eq!(super::affix_summary_in(Some(&run),id),super::affix_summary(id));
             checked+=1;
         }

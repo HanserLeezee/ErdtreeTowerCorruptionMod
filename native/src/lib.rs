@@ -23,6 +23,7 @@ use hudhook::{
 mod blessings;
 mod options;
 mod hansfix;
+mod hansfix_text;
 mod stats;
 mod enemies;
 mod chariot;

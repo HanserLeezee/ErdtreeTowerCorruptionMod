@@ -390,6 +390,19 @@ fn middle(layer:Layer,x:&mut f32,y:f32,size:f32,word:&str,time:f32,alpha:f32)->b
 /// 史诗加字后紫光与稀疏星光；稀有、普通只有柔光或描边与扫光。史诗及以下的补正组合与防具类型保留各自的颜色与动态效果（见 middle）。
 /// x 是按 align 对齐的位置（0 左对齐、0.5 居中），返回整段宽度
 pub fn quality_name(layer:Layer,x:f32,y:f32,size:f32,text:&str,color:[f32;4],tier:usize,align:f32,time:f32)->f32 {
+    // [HansFix] 堕落装备（红色关卡）：整行名字先画一圈暗红描边，“堕落的”用名字原来的颜色，其余照常
+    if let Some(rest)=text.strip_prefix(erdtree_tower::descent::FALLEN) {
+        let total=measure(text,size);let x=x-total*align;let list=list(layer);
+        let w=(size*0.06).max(1.2);
+        let outline=rgba([0.42,0.04,0.04],0.95*color[3]);
+        for (dx,dy) in [(-1.0,0.0),(1.0,0.0),(0.0,-1.0),(0.0,1.0),(-0.7,-0.7),(0.7,-0.7),(-0.7,0.7),(0.7,0.7)] {
+            glyph(list,size,[x+dx*w,y+dy*w],outline,text);
+        }
+        let head=measure(erdtree_tower::descent::FALLEN,size);
+        glyph(list,size,[x,y],rgba([color[0],color[1],color[2]],color[3]),erdtree_tower::descent::FALLEN);
+        quality_name(layer,x+head,y,size,rest,color,tier,0.0,time);
+        return total;
+    }
     let rgb=[0,1,2].map(|i|(color[i].clamp(0.0,1.0)*255.0) as u8);let alpha=color[3];
     let total=measure(text,size);let mut x=x-total*align;
     if tier>=3 {auric(layer,[x,y],size,&legendary_parts(text,time),time,alpha);return total;}

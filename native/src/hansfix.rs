@@ -121,8 +121,9 @@ pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
         else if let Some(p)=params.get_mut::<EquipParamProtector>(row){p.set_resident_sp_effect_id(values[0]);p.set_resident_sp_effect_id2(values[1]);p.set_resident_sp_effect_id3(values[2]);}
     }
     state.original.clear();state.signature=Some(sig);
+    crate::hansfix_text::restore();
     let Some(run)=run.filter(|_|wander()) else{return};
-    let mut count=0;
+    let (mut count,mut texts)=(0,0);
     for cursed in &run.cursed {
         if cursed.swaps.iter().any(|&(_,to)|params.get::<SpEffectParam>(to).is_none()) {
             if !state.missing {crate::log(format!("HANSFIX_CURSE missing effects for {}; reinstall the wander patch regulation.bin",cursed.item));state.missing=true;}
@@ -145,8 +146,9 @@ pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
             }
             count+=1;
         }
+        texts+=crate::hansfix_text::apply(cursed);
     }
-    crate::log(format!("HANSFIX_CURSE items={} rows={count}",run.cursed.len()));
+    crate::log(format!("HANSFIX_CURSE items={} rows={count} texts={texts}",run.cursed.len()));
 }
 
 #[cfg(test)]
