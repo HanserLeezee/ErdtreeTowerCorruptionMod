@@ -9,7 +9,7 @@ impl Affix {
     pub fn index(self)->usize {Self::ALL.iter().position(|a|*a==self).unwrap()}
     pub fn name(self)->&'static str {
         match self {Affix::Stalwart=>"坚毅的",Affix::Bulwark=>"铁壁的",Affix::Frenzied=>"狂暴的",Affix::Regenerating=>"再生的",Affix::Rot=>"腐败的",
-            Affix::Envious=>"嫉妒的",Affix::Proud=>"傲慢的",Affix::Golden=>"黄金律法的",Affix::Reborn=>"涅槃的",
+            Affix::Envious=>"嫉妒的",Affix::Proud=>"傲慢的",Affix::Golden=>"黄金律法的",Affix::Reborn=>"不屈的",
             Affix::Leeching=>"吸血的",Affix::Thorned=>"荆棘的",Affix::Swift=>"迅猛的"}
     }
     pub fn description(self)->&'static str {

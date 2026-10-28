@@ -29,7 +29,7 @@ fn expanded_oaths_keep_existing_ids_and_all_enter_the_offer_pool() {
 
 #[test]
 fn two_distinct_contracts_persist_and_do_not_repeat_previous_act() {
-    for class in Class::ALL { for seed in 0..128 {
+    for class in Class::PLAYABLE { for seed in 0..128 {
         let mut state=State::new(seed,class,1,None,0);
         assert_ne!(state.offers[0],state.offers[1]);
         assert!(state.choose(2,seed,class).is_err());
@@ -72,7 +72,7 @@ fn catch_up_never_exceeds_recorded_progress() {
 
 #[test]
 fn every_contract_has_three_valid_distinct_weapons() {
-    for kind in Kind::ALL {for class in Class::ALL {
+    for kind in Kind::ALL {for class in Class::PLAYABLE {
         let mut s=State::new(9,class,1,None,0);s.offers[0]=kind;
         s.choose(0,9,class).unwrap();
         assert_eq!(s.gear.len(),3);

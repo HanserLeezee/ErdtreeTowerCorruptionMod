@@ -26,7 +26,7 @@ fn expanded_catalog_is_large_unique_and_keeps_previous_items() {
 
 #[test]
 fn class_pools_cover_equipment_and_only_matching_spells() {
-    for class in Class::ALL {
+    for class in Class::PLAYABLE {
         let mut seen=Vec::new();
         for seed in 0..200 {
             let mut run=Run::new(seed,class);run.enter(0).unwrap();run.win_combat().unwrap();

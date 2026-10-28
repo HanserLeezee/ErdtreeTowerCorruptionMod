@@ -90,10 +90,9 @@ fn preferred(class:Class,roll:u64)->Kind {
         Class::Vagabond=>&[Kind::Guard,Kind::Steel],
         Class::Hero=>&[Kind::Breaker,Kind::Blood],
         Class::Samurai=>&[Kind::Execution,Kind::Combo],
-        Class::Astrologer|Class::Prisoner=>&[Kind::Mystic],
+        Class::Astrologer=>&[Kind::Mystic],
         Class::Prophet=>&[Kind::Mystic,Kind::Guard],
         Class::Confessor=>&[Kind::Mystic,Kind::Hunter],
-        _=>&[Kind::Steel,Kind::Breaker,Kind::Combo,Kind::Guard],
     };
     kinds[roll as usize%kinds.len()]
 }

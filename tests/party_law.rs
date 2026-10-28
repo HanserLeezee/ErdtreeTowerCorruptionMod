@@ -41,6 +41,6 @@ fn every_law_node_survives_party_alignment_and_wire_roundtrip() {
         let decoded=erdtree_tower::party_handshake::Payload::decode(&payload.encode().unwrap()).unwrap();
         assert!(matches!(decoded,erdtree_tower::party_handshake::Payload::Order{order:Order::Law{law:actual,..},..} if actual==law));
     }
-    let run=Run::new(42,Class::Samurai);let mut report=Report::new(&run,0,false,false,true);report.law=Law(u32::MAX);
+    let run=Run::new(42,Class::Samurai);let mut report=Report::new(&run,0,false,false,true);report.law=Law(1<<31);
     assert!(Gate::new(vec![1,2]).report(2,report).is_err());
 }

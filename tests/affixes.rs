@@ -95,7 +95,7 @@ fn quality_follows_the_prefix_with_source_floors_and_old_runs_keep_vanilla_floor
         assert!(affixes::tier(affixes::roll_min(&run,3140000,seed,true,3).unwrap())==Some(3));
         let mut old=run.clone();old.affix_rules=2;
         assert_eq!(affixes::tier(affixes::roll(&old,3140000,seed,true).unwrap()),Some(3),"old runs keep the vanilla rarity floor");
-        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().affix_rules,4);
+        assert_eq!(Run::decode(&run.encode().unwrap()).unwrap().affix_rules,5);
     }
 }
 

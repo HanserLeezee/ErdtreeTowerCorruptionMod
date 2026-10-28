@@ -13,5 +13,21 @@
       "tagsVerified": 694,
       "changedTag": "DoABC"
     }
+  ],
+  "rebuilds": [
+    {
+      "date": "2026-10-28",
+      "reason": "Reborn affix renamed 涅槃的 → 不屈的 (槃 is missing from the native font)",
+      "rebasedFromPatched": true,
+      "files": [
+        {
+          "file": "menu/01_000_fe.gfx",
+          "originalSha256": "ef480dc6f7a6a0eeabf1890edc56461f87d1b706f098697afdd63c842a1aa025",
+          "patchedSha256": "a9fa84d1a1fa34f84fd3c0ac49dd9c94cb4870053ee1ccc731a3dc9b56ca097f",
+          "tagsVerified": 694,
+          "changedTag": "DoABC"
+        }
+      ]
+    }
   ]
 }

@@ -159,7 +159,16 @@ impl Hub {
     pub fn dialog_active(&self)->bool {self.active && self.room.as_ref().is_some_and(|r|r.dialog_active())}
     pub fn new(owner:(u32,i32), archetype:u8)->Result<Self,String> {
         let save=path(owner,"json");
-        let resume=if save.exists() {Some(Run::decode(&std::fs::read_to_string(save).map_err(|e|e.to_string())?)?)} else {None};
+        let resume=if save.exists() {
+            let text=std::fs::read_to_string(&save).map_err(|e|e.to_string())?;
+            // 职业重做前的旧存档（旧职业或旧职业规则）不再继续：改名备份，按没有存档处理
+            if Run::retired_save(&text) {
+                let backup=save.with_extension("retired-class.json");
+                std::fs::rename(&save,&backup).map_err(|e|format!("旧职业存档备份失败：{e}"))?;
+                super::log(format!("Retired pre-rework save moved to {}",backup.display()));
+                None
+            } else {Some(Run::decode(&text)?)}
+        } else {None};
         let chosen=std::fs::read_to_string(path(owner,"reset")).or_else(|_|std::fs::read_to_string(path(owner,"class"))).ok().and_then(|s|s.parse().ok()).filter(|a|super::class_from_archetype(*a).is_some()).unwrap_or(if super::class_from_archetype(archetype).is_some(){archetype}else{0});
         let reset=resume.as_ref().is_none_or(|r| matches!(r.phase,Phase::Dead|Phase::Won)) || path(owner,"reset").exists();
         let paused=!reset&&path(owner,"paused").exists();
@@ -168,8 +177,8 @@ impl Hub {
         Ok(Self {active:true,paused,owner,room:None,clock:Instant::now(),warp:WarpGate::default(),reset,start:false,chosen,resume,seed:None,law:Default::default(),settled})
     }
     pub fn finish(&mut self) { self.active=true;self.paused=false;self.settled=true;self.reset=true;self.start=false;self.resume=None;self.seed=None;self.law=Default::default();self.warp=WarpGate::default(); }
-    /// 选职业界面默认选中上次的职业（旧职业时选第一个）
-    fn current_class(&self)->Class {super::class_from_archetype(self.chosen).filter(|c|c.playable()).unwrap_or(Class::PLAYABLE[0])}
+    /// 选职业界面默认选中上次的职业
+    fn current_class(&self)->Class {super::class_from_archetype(self.chosen).unwrap_or(Class::PLAYABLE[0])}
     /// 选定职业后开局：重置为该职业的出身再开始旅程
     fn begin(&mut self,class:Class,seed:Option<u64>,law:erdtree_tower::law::Law) {
         self.chosen=class.archetype();self.seed=seed;self.law=law;self.reset=true;self.start=true;

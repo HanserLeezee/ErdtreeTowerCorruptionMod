@@ -125,9 +125,9 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             let wheel = ui.io().mouse_wheel;
             if wheel != 0.0 && !ui.is_window_hovered() {ui.set_scroll_y((ui.scroll_y() - wheel * 48.0 * s).clamp(0.0, ui.scroll_max_y()));}
             stats(ui, s, &view.stats);
-            // 职业与机制（旧存档的旧职业只显示名字）
+            // 职业与机制
             heading(ui, s, "职业", None);
-            let role = (run.class_rules >= 1).then(|| erdtree_tower::Class::PLAYABLE.iter().position(|c| *c == run.class)).flatten().map(|i| &crate::class_ui::ROLES[i]);
+            let role = erdtree_tower::Class::PLAYABLE.iter().position(|c| *c == run.class).map(|i| &crate::class_ui::ROLES[i]);
             {
                 let pos = ui.cursor_screen_pos();let right = ui.window_pos()[0] + ui.window_size()[0] - 14.0 * s;
                 let color = role.map_or(WHITE, |r| [f32::from(r.accent.0) / 255.0, f32::from(r.accent.1) / 255.0, f32::from(r.accent.2) / 255.0, 1.0]);

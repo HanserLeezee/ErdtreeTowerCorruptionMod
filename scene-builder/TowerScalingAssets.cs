@@ -5,7 +5,7 @@ static class TowerScalingAssets {
     public const int GrowthFirst=9640000,GrowthSteps=11;
     public const float GrowthHp=0.03f,GrowthAttack=0.015f;
     // 本体区域强度 7000–7280；DLC 的区域强度 20007000–20007150（敌人）与 20007200–20007350（人形 NPC），之后追加的 DLC Boss 带着它们
-    static bool AreaScaling(int id)=>id>=7000&&id<=7280||id>=20007000&&id<=20007350;
+    public static bool AreaScaling(int id)=>id>=7000&&id<=7280||id>=20007000&&id<=20007350;
     static readonly string[] Attacks=["physicsAttackPowerRate","magicAttackPowerRate","fireAttackPowerRate","thunderAttackPowerRate","darkAttackPowerRate"];
     public record Target(int Id,int Act,string Role,string Name);
     public static Dictionary<int,int[]> Tiers(string input)=>File.ReadAllLines(Path.Combine(input,"tower-scaling.txt")).Where(l=>!l.StartsWith('#')&&l.Length>0)

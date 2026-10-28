@@ -161,7 +161,7 @@ fn flask_target(id:ItemId,remaining:u32)->(ItemId,u32) {
 
 #[test]
 fn expanded_capacity_keeps_camp_supply_bounded() {
-    for class in Class::ALL {for bonus in 0..=4 {
+    for class in Class::PLAYABLE {for bonus in 0..=4 {
         let cap=capacity(class,bonus,[0,0]).unwrap();
         assert_eq!(cap,[5+bonus,5+bonus]);
         assert_eq!(capacity(class,bonus,[2,1]).unwrap(),[3+bonus,4+bonus]);

@@ -45,10 +45,15 @@ pub fn spirit_base(id:u32)->u32 {
     let base=id-(id&0x0fffffff)%1000;
     if id-base<=10&&CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit){base}else{id}
 }
-pub fn random_spirit_level(id:u32,entropy:u64)->u32 {
+/// 刷出的骨灰最高等级：武器的等价强化等级（背包里武器的最高强化，换算成 +0～+10）再 +1，最多 +10；没有记录时不限
+pub fn spirit_cap(weapon_peak:Option<u8>)->u32 {
+    weapon_peak.map_or(10,|peak|(u32::from(crate::contracts::reinforcement_level(peak,10))+1).min(10))
+}
+/// 随机骨灰等级 +0～+cap（cap 为 10 时与原来的 +0～+10 相同）
+pub fn random_spirit_level(id:u32,entropy:u64,cap:u32)->u32 {
     let base=spirit_base(id);
     if !CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit){return id;}
-    base+(crate::mix(entropy^u64::from(base)^0xa541_e7e1)%11) as u32
+    base+(crate::mix(entropy^u64::from(base)^0xa541_e7e1)%u64::from(cap.min(10)+1)) as u32
 }
 
 pub fn offers(run:&Run,node:usize)->Vec<Reward> {
@@ -73,12 +78,12 @@ pub(crate) fn before_claimed_bases(run:&Run,node:usize)->Vec<Reward> {
     crate::affixes::rewards(run,node,casting_replaced(run,node,false))
 }
 fn casting_replaced(run:&Run,node:usize,spread:bool)->Vec<Reward> {
-    let mut result=before_spirit_levels(run,node);
+    let mut result=before_spirit_levels(run,node);let cap=spirit_cap(run.weapon_peak);
     for reward in &mut result {if let Reward::Item(id)=reward {
-        *id=random_spirit_level(*id,run.reward_seed()^(node as u64).wrapping_mul(7919));
+        *id=random_spirit_level(*id,run.reward_seed()^(node as u64).wrapping_mul(7919),cap);
         if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)&&run.claimed_items.contains(id) {
             let base=spirit_base(*id);let level=*id-base;
-            *reward=(1..=10).map(|offset|base+(level+offset)%11).find(|id|!run.claimed_items.contains(id))
+            *reward=(1..=cap).map(|offset|base+(level+offset)%(cap+1)).find(|id|!run.claimed_items.contains(id))
                 .map_or(Reward::Gold(1500),Reward::Item);
         }
     }}
@@ -194,7 +199,7 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
         if kind==ItemKind::Spirit&&!spirits {continue;}
         let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&crate::dlc::item_allowed(item.id)&&(!base_only||item.random_eligible())).collect();
         // 职业规则 1：武器约七成从职业擅长的类型里出
-        if kind==ItemKind::Weapon&&run.class_rules>=1&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
+        if kind==ItemKind::Weapon&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
             let favored:Vec<_>=pool.iter().copied().filter(|i|run.class.weapon_types().contains(&((i.id&0x0fffffff)/1_000_000))).collect();
             if !favored.is_empty() {pool=favored;}
         }
@@ -207,7 +212,7 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
     indexed.sort_by_key(|(index,_)|crate::mix(run.reward_seed()^(node as u64*167+*index as u64+9876)));
     let mut result:Vec<_>=indexed.into_iter().map(|(_,reward)|reward).collect();
     // 职业规则 1：术士一半的奖励页必有魔法、祷誓者必有祷告，召唤师每页都有骨灰
-    if run.class_rules>=1 && let Some((kind,always))=favored_kind(run.class) {
+    if let Some((kind,always))=favored_kind(run.class) {
         if always||crate::mix(run.reward_seed()^(node as u64*173)^0xfa70)%2==0 {
             if let Some(index)=result.iter().position(|r|matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|i.kind==kind))) {let reward=result.remove(index);result.insert(0,reward);}
         }
@@ -222,6 +227,23 @@ fn favored_kind(class:Class)->Option<(ItemKind,bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn spirit_rewards_stay_within_weapon_level_plus_one() {
+        assert_eq!(spirit_cap(None),10);
+        assert_eq!([0u8,4,5,24,45,50].map(|p|spirit_cap(Some(p))),[1,1,2,5,10,10]);
+        let mut seen=[false;11];
+        for seed in 0..3000 {for peak in [None,Some(0u8),Some(12),Some(50)] {
+            let mut run=crate::Run::new(seed,crate::Class::Confessor);run.weapon_peak=peak;
+            let cap=spirit_cap(peak);
+            for node in 0..run.nodes.len().min(12) {for reward in offers(&run,node) {
+                if let Reward::Item(id)=reward {if lookup(id).is_some_and(|i|i.kind==ItemKind::Spirit) {
+                    let level=id-spirit_base(id);assert!(level<=cap,"+{level} over +{cap}");
+                    if peak.is_none(){seen[level as usize]=true;}
+                }}
+            }}
+        }}
+        assert!(seen.iter().all(|s|*s),"without a recorded weapon every level still appears");
+    }
     #[test]
     fn pending_rewards_from_before_whetblades_still_load() {
         for seed in 0..60 {

@@ -69,7 +69,7 @@ impl Fight {
 /// 按职业记录的苦难律法最高分（只记登顶的旅程）
 fn best_path(owner:(u32,i32))->std::path::PathBuf {super::hub::path(owner,"law-best")}
 fn parse_best(text:&str)->Vec<(Class,u32)> {
-    text.lines().filter_map(|line|{let (class,score)=line.split_once('|')?;Some((Class::ALL.into_iter().find(|c|format!("{c:?}")==class)?,score.trim().parse().ok()?))}).collect()
+    text.lines().filter_map(|line|{let (class,score)=line.split_once('|')?;Some((Class::PLAYABLE.into_iter().find(|c|format!("{c:?}")==class)?,score.trim().parse().ok()?))}).collect()
 }
 fn merge_best(mut records:Vec<(Class,u32)>,class:Class,score:u32)->Option<Vec<(Class,u32)>> {
     match records.iter_mut().find(|(c,_)|*c==class) {

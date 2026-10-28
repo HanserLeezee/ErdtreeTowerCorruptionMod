@@ -1,7 +1,7 @@
 use erdtree_tower::{Class,NodeKind,Phase,Reward,Run};
 #[test]
 fn elites_offer_legendary_buff_and_one_tear_and_persist_chosen_buff() {
-    for class in Class::ALL {
+    for class in Class::PLAYABLE {
         let mut run=Run::new(26,class);
         let id=run.nodes.iter().position(|n|n.kind==NodeKind::Elite).unwrap();
         let offers=erdtree_tower::rewards::offers(&run,id);

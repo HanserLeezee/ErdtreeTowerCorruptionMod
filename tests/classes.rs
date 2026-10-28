@@ -1,9 +1,9 @@
 use erdtree_tower::{Class,NodeKind,Reward,Run,rewards::{self,ItemKind}};
 
-fn weapon_offers(class:Class,rules:u8)->(u32,u32) {
+fn weapon_offers(class:Class)->(u32,u32) {
     let (mut favored,mut total)=(0,0);
     for seed in 0..300 {
-        let mut run=Run::new(seed,class);run.class_rules=rules;run.ember_rewards=false;
+        let mut run=Run::new(seed,class);run.ember_rewards=false;
         for (id,node) in run.nodes.iter().enumerate().filter(|(_,n)|n.kind==NodeKind::Monster) {
             let _=node;
             for reward in rewards::offers(&run,id) {
@@ -19,20 +19,21 @@ fn weapon_offers(class:Class,rules:u8)->(u32,u32) {
 #[test]
 fn six_playable_classes_keep_their_original_archetypes() {
     assert_eq!(Class::PLAYABLE.len(),6);
-    for class in Class::ALL {assert_eq!(Class::ALL.iter().filter(|c|c.archetype()==class.archetype()).count(),1);}
-    assert_eq!((Class::Confessor.archetype(),Class::Prisoner.archetype()),(6,8));
+    for class in Class::PLAYABLE {
+        assert_eq!(Class::PLAYABLE.iter().filter(|c|c.archetype()==class.archetype()).count(),1);
+        assert_eq!(Class::from_archetype(class.archetype()),Some(class));
+    }
+    assert_eq!(Class::Confessor.archetype(),6);
+    // 职业重做前的剑士、盗贼、囚犯、一贫如洗已移除
+    for archetype in [1,3,8,9] {assert_eq!(Class::from_archetype(archetype),None);}
     assert!(Class::PLAYABLE.iter().all(|c|!c.weapon_types().is_empty()));
-    assert!(!Class::Wretch.playable()&&Class::Confessor.playable());
     assert_eq!(Run::new(1,Class::Hero).class_rules,1);
 }
 #[test]
 fn weapon_rewards_lean_towards_the_class() {
     for class in [Class::Vagabond,Class::Hero,Class::Samurai] {
-        let (favored,total)=weapon_offers(class,1);
-        let share=favored as f64/total as f64;
-        assert!(share>0.6,"{class:?} favored {favored}/{total}");
-        let (old_favored,old_total)=weapon_offers(class,0);
-        assert!((old_favored as f64/old_total as f64)<share-0.25,"old saves keep the unbiased pool: {class:?} {old_favored}/{old_total}");
+        let (favored,total)=weapon_offers(class);
+        assert!(favored as f64/total as f64>0.6,"{class:?} favored {favored}/{total}");
     }
 }
 #[test]
@@ -45,7 +46,28 @@ fn summoners_see_a_spirit_ash_on_every_ordinary_reward_page() {
             pages+=1;
             if rewards::offers(&run,id).iter().any(|r|matches!(r,Reward::Item(i) if rewards::lookup(*i).is_some_and(|i|i.kind==ItemKind::Spirit))) {with_spirit+=1;}
         }
-        let mut old=run.clone();old.class_rules=0;assert!(!old.summoner());
     }
     assert!(with_spirit*10>=pages*9,"{with_spirit}/{pages}");
+}
+
+#[test]
+fn pre_rework_saves_are_retired_instead_of_loaded() {
+    let run=Run::new(5,Class::Samurai);let text=run.encode().unwrap();
+    assert!(!Run::retired_save(&text));
+    let mut json:serde_json::Value=serde_json::from_str(&text).unwrap();
+    json["class"]=serde_json::Value::String("Prisoner".into());
+    assert!(Run::retired_save(&json.to_string())&&Run::decode(&json.to_string()).is_err());
+    let mut old:serde_json::Value=serde_json::from_str(&text).unwrap();old.as_object_mut().unwrap().remove("class_rules");
+    assert!(Run::retired_save(&old.to_string()));
+    old["class_rules"]=serde_json::Value::from(0);assert!(Run::retired_save(&old.to_string())&&Run::decode(&old.to_string()).is_err());
+    assert!(!Run::retired_save("not json"),"corrupted saves are still reported instead of retired");
+}
+#[test]
+fn heritage_keeps_current_classes_and_drops_removed_ones() {
+    use erdtree_tower::legacy::Legacy;
+    let text=r#"{"classes":[["Samurai",{"xp":300,"talisman":2090}],["Wretch",{"xp":900,"talisman":0}],["Hero",{"xp":50,"talisman":0}]]}"#;
+    let legacy=Legacy::decode(text);
+    assert_eq!(legacy.classes.iter().map(|(c,_)|*c).collect::<Vec<_>>(),vec![Class::Samurai,Class::Hero]);
+    assert_eq!((legacy.get(Class::Samurai).xp,legacy.get(Class::Samurai).talisman),(300,2090));
+    assert_eq!(Legacy::decode(&legacy.encode()),legacy);
 }

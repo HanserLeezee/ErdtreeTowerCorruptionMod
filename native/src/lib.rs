@@ -88,6 +88,7 @@ mod party_death;
 mod seamless_revival;
 mod weapon_glow;
 mod dummy;
+mod name_tags;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -166,12 +167,7 @@ fn capture(_: &FD4TaskData) {
     }
 }
 
-fn class_from_archetype(archetype: u8) -> Option<Class> {
-    match archetype {
-        6=>Some(Class::Confessor),8=>Some(Class::Prisoner),
-        _=>Class::ALL.get(archetype as usize).copied(),
-    }
-}
+fn class_from_archetype(archetype: u8) -> Option<Class> {Class::from_archetype(archetype)}
 
 struct TowerPreview {
     diagnostics:diagnostics::Changes,
@@ -485,10 +481,11 @@ mod tests {
         assert_eq!(class_from_archetype(0), Some(Class::Vagabond));
         assert_eq!(class_from_archetype(4), Some(Class::Astrologer));
         assert_eq!(class_from_archetype(5), Some(Class::Prophet));
-        for (archetype,class) in [(1,Class::Warrior),(2,Class::Hero),(3,Class::Bandit),(6,Class::Confessor),(8,Class::Prisoner),(9,Class::Wretch)] {
+        for (archetype,class) in [(2,Class::Hero),(6,Class::Confessor)] {
             assert_eq!(class_from_archetype(archetype),Some(class));
         }
-        for archetype in [10, 255] {
+        // 职业重做前的剑士、盗贼、囚犯、一贫如洗已移除
+        for archetype in [1,3,8,9,10, 255] {
             assert_eq!(class_from_archetype(archetype), None);
         }
     }

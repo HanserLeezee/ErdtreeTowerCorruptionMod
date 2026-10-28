@@ -39,6 +39,10 @@ pub struct Report {
     #[serde(default)] pub trial_choice:Option<crate::regional_events::Trial>,
     #[serde(default)] pub has_stonesword_key:bool,
     #[serde(default)] pub rest_end:bool,
+    /// 战斗胜利后已交互奖励传送门（全员都进入后房主才发奖励）
+    #[serde(default)] pub portal:bool,
+    /// 选用的称号（titles::TITLES 的编号，0 为不戴），房主汇总后用 Order::Titles 发给全队
+    #[serde(default)] pub title:u8,
     pub present:bool,
     pub at_hub:bool,
     pub event_request:Option<crate::party_events::Kind>,
@@ -56,10 +60,10 @@ pub struct Report {
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
@@ -79,6 +83,8 @@ pub enum Order {
     EventAborted{epoch:u64,wave:u8},
     EventDone{epoch:u64,wave:u8,killed:u8},
     Spawn{epoch:u64},Engage{epoch:u64},Victory{epoch:u64},Rewards{epoch:u64},Defeat{epoch:u64},Stop(String),
+    /// 全队的称号：(Steam ID, 称号编号)；不分轮次，随时覆盖
+    Titles(Vec<(u64,u8)>),
 }
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Stage {Map,Travel,Combat,Fighting,Service,Reward,Stopped}
@@ -213,6 +219,16 @@ impl Gate {
     pub fn defeat(&mut self)->Option<Order> {
         if matches!(self.stage,Stage::Travel|Stage::Combat|Stage::Fighting|Stage::Service)&&self.all(|r|!r.alive){self.stage=Stage::Stopped;Some(Order::Defeat{epoch:self.epoch})}else{None}
     }
+    pub fn members(&self)->Vec<u64> {self.peers.iter().map(|p|p.0).collect()}
+    /// 全队当前汇报的称号（没汇报过的队员不列出）
+    pub fn titles(&self)->Vec<(u64,u8)> {
+        self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present).map(|r|(*id,r.title))).collect()
+    }
+    /// 奖励传送门：每个活着的队员都交互过才发奖励（倒下的队员不用等），至少一人进入
+    pub fn rewards(&self)->Option<Order> {
+        (self.stage==Stage::Reward&&self.all(|r|r.bound&&(!r.alive||r.portal))
+            &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.portal))).then_some(Order::Rewards{epoch:self.epoch})
+    }
     pub fn engage(&mut self)->Option<Order> {
         if self.stage==Stage::Combat&&self.all(|r|r.bound) {self.stage=Stage::Fighting;Some(Order::Engage{epoch:self.epoch})}else{None}
     }
@@ -222,6 +238,39 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn titles_are_collected_from_every_present_member() {
+        let run=Run::new(42,crate::Class::Samurai);
+        let mut gate=Gate::new(vec![3,1,2]);
+        assert!(gate.titles().is_empty());
+        let mut a=Report::new(&run,0,false,false,true);a.title=2;gate.report(1,a).unwrap();
+        let mut b=Report::at_hub(0);b.title=7;gate.report(3,b).unwrap();
+        gate.report(2,Report::unavailable(0)).unwrap();
+        assert_eq!(gate.titles(),vec![(3,7),(1,2)],"members that are loading are left out");
+        assert_eq!(gate.members(),vec![3,1,2]);
+    }
+    #[test]
+    fn reward_portal_waits_for_every_living_member_two_to_eight_players() {
+        for count in 2..=crate::party_roster::MAX_PLAYERS as u64 {
+            let run=Run::new(42,crate::Class::Samurai);
+            let mut gate=Gate::new((1..=count).collect());gate.stage=Stage::Fighting;
+            for id in 1..=count {gate.report(id,Report::new(&run,0,true,true,true)).unwrap();}
+            gate.victory().unwrap();
+            assert!(gate.rewards().is_none());
+            let mut touched=Report::new(&run,0,true,true,true);touched.portal=true;
+            for id in 1..count {gate.report(id,touched.clone()).unwrap();assert!(gate.rewards().is_none());}
+            let mut dead=Report::new(&run,0,true,true,false);
+            gate.report(count,dead.clone()).unwrap();
+            assert!(matches!(gate.rewards(),Some(Order::Rewards{epoch:0})));
+            gate.report(count,touched.clone()).unwrap();assert!(gate.rewards().is_some());
+            gate.disconnect(count);assert!(gate.rewards().is_none());
+            for id in 1..=count {gate.report(id,dead.clone()).unwrap();}
+            assert!(gate.rewards().is_none());
+            dead.portal=true;gate.stage=Stage::Fighting;
+            for id in 1..=count {gate.report(id,touched.clone()).unwrap();}
+            assert!(gate.rewards().is_none(),"rewards only after victory");
+        }
+    }
     #[test]
     fn key_eligibility_is_committed_from_any_current_member() {
         for count in 2..=8 {for holder in 0..=count {
@@ -434,7 +483,7 @@ mod tests {
                 let mut run=Run::new(seed,crate::Class::Samurai);
                 for _ in 0..15 {
                     let available=run.available();
-                    if let Some(&id)=available.iter().find(|&&id|run.nodes[id].kind==kind){return Some((run,id));}
+                    if let Some(&id)=available.iter().find(|&&id|run.nodes[id].kind==kind&&(kind!=crate::NodeKind::Event||run.event_draw(id)!=crate::events::Draw::Trial)){return Some((run,id));}
                     run.finish(available[0]);
                 }
                 None

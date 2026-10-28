@@ -11,6 +11,8 @@ pub enum ResultState {
 #[derive(Default)]
 pub struct Completion { armed:bool }
 impl Completion {
+    /// 传送门已经亮起：此后的交互才算数
+    pub fn armed(&self)->bool {self.armed}
     pub fn poll(&mut self,elapsed:Duration,dead:bool,interacted:bool)->ResultState {
         match poll(elapsed,dead,interacted&&self.armed) {
             ResultState::PortalReady if !self.armed=>{self.armed=true;ResultState::PortalReady},

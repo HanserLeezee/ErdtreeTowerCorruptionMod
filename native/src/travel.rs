@@ -108,7 +108,7 @@ mod tests {
         assert_eq!(combat_fp(Class::Astrologer, 10, 95), 57);
         assert_eq!(combat_fp(Class::Astrologer, 0, 0), 0);
         assert_eq!(combat_fp(Class::Astrologer, i32::MAX, i32::MAX), i32::MAX);
-        for class in Class::ALL {
+        for class in Class::PLAYABLE {
             if class != Class::Astrologer {
                 assert_eq!(combat_fp(class, 0, 100), 0);
                 assert_eq!(combat_fp(class, 20, 100), 20);

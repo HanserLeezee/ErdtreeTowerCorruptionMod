@@ -27,6 +27,7 @@ pub mod law;
 pub mod debug;
 pub mod journal;
 pub mod legacy;
+pub mod titles;
 
 pub mod music;
 pub mod options;
@@ -35,33 +36,29 @@ pub mod stat_summary;
 
 pub type RuleResult<T> = Result<T, String>;
 
+/// 六个职业，沿用原版出身的名字与编号（存档里按名字记录）：
+/// 流浪骑士→守誓骑士、勇者→狂战士、武士→影刃、观星者→星辉术士、预言家→祷誓者、密使→召唤师。
+/// 职业重做前的剑士、盗贼、囚犯、一贫如洗已经移除，它们的旧存档不再继续（见 Run::retired_save）
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Class {
     Vagabond,
     Samurai,
     Astrologer,
     Prophet,
-    Warrior,
     Hero,
-    Bandit,
-    Prisoner,
     Confessor,
-    Wretch,
 }
 
 impl Class {
-    pub const ALL: [Self; 10] = [Self::Vagabond,Self::Warrior,Self::Hero,Self::Bandit,Self::Astrologer,Self::Prophet,Self::Prisoner,Self::Samurai,Self::Confessor,Self::Wretch];
-    pub fn sorcerer(self)->bool {matches!(self,Self::Astrologer|Self::Prisoner)}
-    pub fn cleric(self)->bool {matches!(self,Self::Prophet|Self::Confessor)}
-    /// 职业重做后可选的六个职业，沿用原版出身的编号以便旧存档读取：
-    /// 流浪骑士→守誓骑士、勇者→狂战士、武士→影刃、观星者→星辉术士、预言家→祷誓者、密使→召唤师
+    /// 选职业界面的顺序
     pub const PLAYABLE:[Self;6]=[Self::Vagabond,Self::Hero,Self::Samurai,Self::Astrologer,Self::Prophet,Self::Confessor];
-    pub fn playable(self)->bool {Self::PLAYABLE.contains(&self)}
+    pub fn sorcerer(self)->bool {self==Self::Astrologer}
+    pub fn cleric(self)->bool {matches!(self,Self::Prophet|Self::Confessor)}
     /// 原版出身编号（CharaInitParam 3000+编号）
     pub fn archetype(self)->u8 {match self {
-        Self::Vagabond=>0,Self::Warrior=>1,Self::Hero=>2,Self::Bandit=>3,Self::Astrologer=>4,
-        Self::Prophet=>5,Self::Confessor=>6,Self::Samurai=>7,Self::Prisoner=>8,Self::Wretch=>9,
+        Self::Vagabond=>0,Self::Hero=>2,Self::Astrologer=>4,Self::Prophet=>5,Self::Confessor=>6,Self::Samurai=>7,
     }}
+    pub fn from_archetype(archetype:u8)->Option<Self> {Self::PLAYABLE.into_iter().find(|c|c.archetype()==archetype)}
     /// 职业擅长的武器类型（武器编号 ÷ 1000000）：武器奖励约七成从这些类型里出
     pub fn weapon_types(self)->&'static [u32] {match self {
         Self::Vagabond=>&[2,3,18,31,32],          // 直剑、大剑、斧枪、中盾、大盾
@@ -70,7 +67,6 @@ impl Class {
         Self::Astrologer=>&[33,1,5],              // 法杖、匕首、刺剑
         Self::Prophet=>&[34,16,17],               // 圣印记、矛、大矛
         Self::Confessor=>&[1,2,30,31],            // 匕首、直剑、小盾、中盾
-        _=>&[],
     }}
 }
 
@@ -194,6 +190,8 @@ struct CombatCheckpoint {
     flasks: u8,
 }
 
+/// 商店价格在第三幕最后一层的百分比（见 Run::shop_position_percent）
+pub const SHOP_PRICE_END:u32=200;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
@@ -202,7 +200,7 @@ pub struct Run {
     pub affix_equipment: bool,
     #[serde(default)]
     pub affix_rules: u8,
-    /// 职业规则：1 起为职业重做后的六个职业（奖励偏向、职业机制）；旧存档为 0，保持原来的职业被动
+    /// 职业规则：固定为 1（职业重做后的六个职业）。职业重做前的旧存档为 0，已不再支持，见 Run::retired_save
     #[serde(default)]
     pub class_rules: u8,
     #[serde(default)]
@@ -230,6 +228,7 @@ pub struct Run {
     #[serde(default,skip_serializing_if="std::ops::Not::not")]
     pub debug: bool,
     /// 2：问号房的每个事件按权重单独抽取，加入骰子赌徒、盲盒商人与词条重铸台三个房间事件（0、1 为旧分配）
+    /// 3：九个问号房事件权重相同（2 为试炼 4、其余 2）
     #[serde(default)]
     pub event_rules: u8,
     #[serde(default="first_act")]
@@ -247,6 +246,9 @@ pub struct Run {
     personal_reward_seed: Option<u64>,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub casting_tools: Option<[bool;2]>,
+    /// 上一场战斗胜利时背包里武器的最高强化（0–50，与铁匠同一换算）：决定奖励里骨灰的最高等级
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub weapon_peak: Option<u8>,
     pub class: Class,
     pub nodes: Vec<Node>,
     pub phase: Phase,
@@ -512,7 +514,7 @@ impl Run {
         Self {
             schema: 6,
             affix_equipment: true,
-            affix_rules: 4,
+            affix_rules: 5,
             class_rules: 1,
             talisman_affixes: true,
             ruby_spells: false,
@@ -524,7 +526,7 @@ impl Run {
             ember_rewards: true,
             embers: vec![],
             debug: false,
-            event_rules: 2,
+            event_rules: 3,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -533,6 +535,7 @@ impl Run {
             reached_layer: 0,
             personal_reward_seed: None,
             casting_tools: None,
+            weapon_peak: None,
             class,
             nodes: camp_graph(seed),
             phase: Phase::Map,
@@ -576,7 +579,24 @@ impl Run {
         Ok(())
     }
     /// 职业重做后的召唤师（群灵：胜利时召唤物还活着就不消耗骨灰；骨灰奖励更多）
-    pub fn summoner(&self)->bool {self.class_rules>=1&&self.class==Class::Confessor}
+    /// 旅程进度：(当前是第几层，从 0 起, 最后一层的序号)；三幕连续计数，还没进入节点时按本幕第 1 层算
+    pub fn journey_progress(&self)->(u32,u32) {
+        let per_act=self.nodes.iter().map(|n|n.layer+1).max().unwrap_or(1) as u32;
+        let step=(u32::from(self.act.clamp(1,3))-1)*per_act+(self.reached_layer as u32).saturating_sub(1).min(per_act-1);
+        (step,(3*per_act-1).max(1))
+    }
+    /// 商店价格随旅程位置浮动的百分比：第一幕第 1 层 100%，按层线性涨到第三幕最后一层 SHOP_PRICE_END
+    pub fn shop_position_percent(&self)->u32 {
+        let (step,total)=self.journey_progress();
+        (100*(total-step)+SHOP_PRICE_END*step+total/2)/total
+    }
+    /// 职业重做前的旧存档（旧职业，或 class_rules 为 0）：不再继续，由大赐福备份后按没有存档处理
+    pub fn retired_save(text:&str)->bool {
+        let Ok(value)=serde_json::from_str::<serde_json::Value>(text) else{return false;};
+        let class=value.get("class").cloned().map(serde_json::from_value::<Class>);
+        matches!(class,Some(Err(_)))||value.get("class_rules").and_then(|v|v.as_u64()).unwrap_or(0)==0
+    }
+    pub fn summoner(&self)->bool {self.class==Class::Confessor}
     pub fn full_flask_limit(&self)->u8 {let cut=self.law.flask_cut();10+self.flask_bonus*2-cut[0]-cut[1]}
 
     pub fn reward_seed(&self)->u64 {
@@ -962,7 +982,7 @@ impl Run {
 
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>4||self.class_rules>1||self.boss_affix_rules>1||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.class_rules!=1||self.boss_affix_rules>1||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
@@ -976,12 +996,13 @@ impl Run {
             || self.flask_bonus>4 || self.memory_bonus>6
             || !self.law.valid()
             || !self.valid_start_talisman()
-            || self.event_rules>2
+            || self.event_rules>3
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()
             || self.flasks > self.flask_limit
             || self.weapon_level > 25
+            || self.weapon_peak.is_some_and(|peak|peak>50)
             || self.shop_purchased > 7
             || self.blessings.len() > 8
             || self.delivered_talismans.len() > 24

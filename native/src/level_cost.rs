@@ -7,8 +7,13 @@ static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
 static CURVE:AtomicU64=AtomicU64::new(0);
 type Cost=unsafe extern "C" fn(i32)->u64;
 
+/// 阶梯式升级价格：按本局已经升了几级分档（不看角色的绝对等级，各职业初始等级不同）
+/// (本局第几级起, 每级卢恩)
+pub const STEPS:[(u32,u64);4]=[(1,1000),(11,2000),(21,3500),(31,5000)];
 fn fixed_cost(next:i32,start:u32)->Option<u64> {
-    (start>0&&next>start as i32).then_some(1000)
+    if start==0||next<=start as i32 {return None;}
+    let bought=(next-start as i32) as u32;
+    STEPS.iter().rev().find(|(from,_)|bought>=*from).map(|(_,cost)|*cost)
 }
 unsafe extern "C" fn calculate(next:i32)->u64 {
     let curve=CURVE.load(Ordering::Acquire);
@@ -28,7 +33,7 @@ pub fn configure(archetype:u8)->Result<(),String> {
     let first=unsafe {original(start as i32+1)};
     if start==0||start>713||first==0||first>1_000_000 {return Err("初始升级价格无效".into());}
     CURVE.store((u64::from(start)<<32)|first,Ordering::Release);
-    super::log(format!("Fixed level cost: class={archetype}, starting level={start}, cost=1000"));
+    super::log(format!("Stepped level cost: class={archetype}, starting level={start}, steps={STEPS:?}"));
     Ok(())
 }
 pub unsafe fn install()->Result<(),String> {
@@ -46,12 +51,16 @@ pub unsafe fn install()->Result<(),String> {
 mod tests {
     use super::*;
     #[test]
-    fn native_menu_single_and_multi_level_cost_is_fixed() {
+    fn native_menu_single_and_multi_level_cost_follows_the_steps() {
         assert_eq!(fixed_cost(20,0),None);
         for start in [1,5,6,7,8,9,10] {
             assert_eq!(fixed_cost(start,start as u32),None);
-            for next in start+1..=713 {assert_eq!(fixed_cost(next,start as u32),Some(1000));}
-            assert_eq!((1..=4).map(|step|fixed_cost(start+step,start as u32).unwrap()).sum::<u64>(),4000);
+            let cost=|bought:i32|fixed_cost(start+bought,start as u32).unwrap();
+            assert_eq!([1,10,11,20,21,30,31,200].map(cost),[1000,1000,2000,2000,3500,3500,5000,5000]);
+            for next in start+1..=713 {assert!(fixed_cost(next,start as u32).is_some());}
+            // 一次升多级的合计：第 9～12 级跨过一个档位
+            assert_eq!((9..=12).map(cost).sum::<u64>(),1000*2+2000*2);
+            assert_eq!((1..=30).map(cost).sum::<u64>(),10_000+20_000+35_000);
         }
     }
 }

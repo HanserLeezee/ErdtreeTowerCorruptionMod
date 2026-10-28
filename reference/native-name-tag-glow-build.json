@@ -1,0 +1,16 @@
+{
+  "experimental": true,
+  "gameVerified": false,
+  "class": "_01_000_FE_fla.EnemyTag_ColorText_14",
+  "field": "RemotePCTagN.Name.Text_0.Text",
+  "effect": "title before the first \"·\" coloured per title style (breathing, glint, wave, flicker or rainbow) with a tinted glow; the name keeps its colour",
+  "files": [
+    {
+      "file": "menu/01_000_fe.gfx",
+      "baseSha256": "a9fa84d1a1fa34f84fd3c0ac49dd9c94cb4870053ee1ccc731a3dc9b56ca097f",
+      "patchedSha256": "2cbb3af8c1c83f0f359c5c0c0386ecadad2983dc5df1ce8622d2edea5688d30f",
+      "tagsVerified": 694,
+      "changedTag": "DoABC"
+    }
+  ]
+}

@@ -16,7 +16,9 @@ const GOLD:[f32;4]=[0.86,0.74,0.48,1.0];const WHITE:[f32;4]=[0.93,0.9,0.81,1.0];
 const DIM:[f32;4]=[0.45,0.43,0.38,1.0];const RED:[f32;4]=[0.92,0.47,0.38,1.0];const BOON:[f32;4]=[0.86,0.8,0.64,1.0];
 pub struct Archive {records:Vec<Record>,codex:Codex,bosses:Vec<(u8,String)>,affixes:Vec<String>,tab:usize,selected:usize,focus:usize,follow:bool,opened:Option<f64>,now:u64,
     /// 职业传承：角色存档与读到的数据；class 是选中的职业，talent 是选中的开局护符，column 0 为职业列表、1 为护符列表
-    legacy:Option<((u32,i32),Legacy)>,class:usize,talent:usize,column:usize,notice:Option<(String,f64)>}
+    legacy:Option<((u32,i32),Legacy)>,class:usize,talent:usize,column:usize,notice:Option<(String,f64)>,
+    /// 称号页：已解锁的称号编号（按全部旅程档案算）、选中的行
+    titles:Vec<u8>,title_row:usize}
 impl Archive {
     pub fn progression(records:Vec<Record>)->Self {
         let mut archive=Self::new(records);
@@ -26,6 +28,7 @@ impl Archive {
     }
     pub fn new(records:Vec<Record>)->Self {
         let codex=journal::codex(&records);
+        let titles=erdtree_tower::titles::TITLES.iter().map(|t|t.id).filter(|id|erdtree_tower::titles::unlocked(*id,&records)).collect();
         let recent:Vec<Record>=records.into_iter().rev().take(LIMIT).collect();
         let mut bosses:Vec<(u8,String)>=Vec::new();
         for group in crate::enemies::debug_encounters() {
@@ -37,7 +40,7 @@ impl Archive {
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|t|t.as_secs());
         let legacy=crate::legacy::owner().map(|owner|(owner,crate::legacy::load(owner)));
         let class=recent_class(&recent).and_then(|c|Class::PLAYABLE.iter().position(|x|*x==c)).unwrap_or(0);
-        Self{records:recent,codex,bosses,affixes,tab:0,selected:0,focus:0,follow:true,opened:None,now,legacy,class,talent:0,column:1,notice:None}
+        Self{records:recent,codex,bosses,affixes,tab:0,selected:0,focus:0,follow:true,opened:None,now,legacy,class,talent:0,column:1,notice:None,titles,title_row:0}
     }
     fn unlocked(&self,item:Item)->bool {
         match item {
@@ -91,8 +94,8 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
     let pressed=|keys:&[Key]|ready&&keys.iter().any(|k|ui.is_key_pressed(*k));
     let mut action=None;
     if pressed(&[Key::Escape,Key::GamepadFaceRight,crate::options::key(erdtree_tower::options::Hotkey::Archive),Key::GamepadBack]) {action=Some(ArchiveAction::Close);}
-    if pressed(&[Key::E,Key::GamepadR1]) {archive.tab=(archive.tab+1)%3;archive.follow=true;}
-    if pressed(&[Key::Q,Key::GamepadL1]) {archive.tab=(archive.tab+2)%3;archive.follow=true;}
+    if pressed(&[Key::E,Key::GamepadR1]) {archive.tab=(archive.tab+1)%TABS.len();archive.follow=true;}
+    if pressed(&[Key::Q,Key::GamepadL1]) {archive.tab=(archive.tab+TABS.len()-1)%TABS.len();archive.follow=true;}
     let layout=layout(archive);
     if archive.tab==0 {
         let count=archive.records.len();
@@ -103,6 +106,11 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
         }
     } else if archive.tab==2 {
         legacy_keys(archive,&pressed,ui.time());
+    } else if archive.tab==3 {
+        let count=erdtree_tower::titles::TITLES.len();
+        if pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]) {archive.title_row=archive.title_row.saturating_sub(1);}
+        if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {archive.title_row=(archive.title_row+1).min(count-1);}
+        if pressed(&[Key::Enter,Key::GamepadFaceDown]) {wear(archive,archive.title_row,ui.time());}
     } else {
         for (keys,dx,dy) in [(&[Key::LeftArrow,Key::A,Key::GamepadDpadLeft][..],-1.0,0.0),(&[Key::RightArrow,Key::D,Key::GamepadDpadRight][..],1.0,0.0),
             (&[Key::UpArrow,Key::W,Key::GamepadDpadUp][..],0.0,-1.0),(&[Key::DownArrow,Key::S,Key::GamepadDpadDown][..],0.0,1.0)] {
@@ -117,8 +125,8 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
         };
         text(800.0,26.0,"旅 程 档 案",GOLD,1.9,0.5);
         // 分页标签
-        for (i,label) in ["往期旅程","图鉴","传承"].into_iter().enumerate() {
-            let x=640.0+i as f32*160.0;let active=archive.tab==i;
+        for (i,label) in TABS.into_iter().enumerate() {
+            let x=560.0+i as f32*160.0;let active=archive.tab==i;
             ui.set_cursor_screen_pos(p(x-80.0,92.0));ui.set_window_font_scale(s);
             if ui.invisible_button(format!("tab-{i}"),[160.0*s,40.0*s])&&ready {archive.tab=i;archive.follow=true;}
             let hover=ui.is_item_hovered();
@@ -126,11 +134,12 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
             if active {ui.get_window_draw_list().add_rect(p(x-46.0,130.0),p(x+46.0,132.0),ImColor32::from_rgba(214,180,112,230)).filled(true).build();}
         }
         let draw=ui.get_window_draw_list();ornament(&draw,p(800.0,150.0),420.0*s,s);drop(draw);
-        match archive.tab {0=>history(ui,archive,icon,&mut action,moved,ready,s,ox,oy),1=>codex(ui,archive,&layout,icon,moved,s,ox,oy),_=>legacy(ui,archive,icon,moved,ready,s,ox,oy)}
+        match archive.tab {0=>history(ui,archive,icon,&mut action,moved,ready,s,ox,oy),1=>codex(ui,archive,&layout,icon,moved,s,ox,oy),2=>legacy(ui,archive,icon,moved,ready,s,ox,oy),_=>titles(ui,archive,moved,ready,s,ox,oy)}
         archive.follow=false;
         // 底部：操作提示与返回
         let hint=match archive.tab {0=>"上下键选择 · Enter / A 查看结算 · Q / E 或 LB / RB 切换分页",1=>"方向键选择 · 鼠标悬停查看 · Q / E 或 LB / RB 切换分页",
-            _=>"上下键选择 · 右键进入护符列表 · Enter / A 或点击选用 · 每个职业单独计算，从下一局开始生效"};
+            2=>"上下键选择 · 右键进入护符列表 · Enter / A 或点击选用 · 每个职业单独计算，从下一局开始生效",
+            _=>"上下键选择 · Enter / A 或点击佩戴，再选一次摘下 · 联机时队友头顶的名牌会显示你的称号"};
         text(60.0,846.0,hint,DIM,0.8,0.0);
         let pos=p(1220.0,822.0);let extent=[320.0*s,60.0*s];
         ui.set_cursor_screen_pos(pos);ui.set_window_font_scale(s);
@@ -333,6 +342,48 @@ fn codex(ui:&Ui,archive:&mut Archive,layout:&Layout,icon:&mut dyn FnMut(u32)->Op
     text(p(1130.0,764.0),"只统计非调试旅程，整局结束后计入",DIM,0.76,0.0);
 }
 
+const TABS:[&str;4]=["往期旅程","图鉴","传承","称号"];
+/// 称号在自绘界面里的样子（与原版名牌上的 HUD 特效同色）
+pub fn title_style(style:erdtree_tower::titles::Style)->crate::fancy_text::Style {
+    use crate::fancy_text::Effect;use erdtree_tower::titles::Style as T;
+    let (color,accent)=style.colors();let rgb=|c:u32|[(c>>16) as u8,(c>>8) as u8,c as u8];
+    let effect=match style {T::Ash|T::Frost=>Effect::Pulse,T::Gold|T::Moon=>Effect::Shimmer,T::Ember=>Effect::Wave,T::Blood=>Effect::Jitter,T::Star=>Effect::Gradient};
+    crate::fancy_text::Style{color:rgb(color),accent:rgb(accent),effect,glow:style!=T::Ash}
+}
+/// 戴上第 row 个称号；已经戴着时摘下
+fn wear(archive:&mut Archive,row:usize,now:f64) {
+    let title=&erdtree_tower::titles::TITLES[row];
+    let Some((owner,_))=archive.legacy else{archive.notice=Some(("载入角色后才能佩戴称号".into(),now));return;};
+    if !archive.titles.contains(&title.id) {archive.notice=Some((format!("尚未解锁：{}",title.unlock),now));return;}
+    let id=if crate::name_tags::worn()==title.id {0}else{title.id};
+    archive.notice=Some((match crate::name_tags::choose(owner,id) {Ok(())=>if id==0 {"已摘下称号".into()}else{format!("已佩戴「{}」",title.text)},Err(error)=>error},now));
+}
+#[allow(clippy::too_many_arguments)]
+fn titles(ui:&Ui,archive:&mut Archive,moved:bool,ready:bool,s:f32,ox:f32,oy:f32) {
+    let p=|x:f32,y:f32|[ox+x*s,oy+y*s];
+    let text=|x:f32,y:f32,value:&str,color:[f32;4],scale:f32,align:f32| {
+        ui.set_window_font_scale(scale*s);ui.set_cursor_screen_pos([ox+x*s-ui.calc_text_size(value)[0]*align,oy+y*s]);ui.text_colored(color,value);
+    };
+    let worn=crate::name_tags::worn();
+    text(800.0,176.0,&format!("已解锁 {} / {}",archive.titles.len(),erdtree_tower::titles::TITLES.len()),MUTED,0.9,0.5);
+    for (row,title) in erdtree_tower::titles::TITLES.iter().enumerate() {
+        let (x,y)=(400.0,220.0+row as f32*78.0);let lit=archive.titles.contains(&title.id);
+        ui.set_cursor_screen_pos(p(x,y));ui.set_window_font_scale(s);
+        if ui.invisible_button(format!("title-{row}"),[800.0*s,68.0*s])&&ready {archive.title_row=row;wear(archive,row,ui.time());}
+        if ui.is_item_hovered()&&moved {archive.title_row=row;}
+        let focus=archive.title_row==row;
+        let draw=ui.get_window_draw_list();
+        draw.add_rect(p(x,y),p(x+800.0,y+68.0),ImColor32::from_rgba(24,20,16,if focus{220}else{150})).filled(true).rounding(6.0*s).build();
+        if focus||worn==title.id {draw.add_rect(p(x,y),p(x+800.0,y+68.0),ImColor32::from_rgba(214,180,112,if worn==title.id{240}else{140})).rounding(6.0*s).thickness(if worn==title.id{2.5}else{1.5}*s).build();}
+        drop(draw);
+        if lit {crate::fancy_text::draw(crate::fancy_text::Layer::Window,p(x+28.0,y+12.0),30.0*s,title.text,&title_style(title.style),ui.time() as f32,1.0);}
+        else {text(x+28.0,y+14.0,"？？？",DIM,1.2,0.0);}
+        text(x+260.0,y+12.0,if lit{title.style.name()}else{"未解锁"},if lit{WHITE}else{DIM},0.9,0.0);
+        text(x+260.0,y+38.0,title.unlock,MUTED,0.8,0.0);
+        if worn==title.id {text(x+770.0,y+22.0,"佩戴中",GOLD,0.95,1.0);}
+    }
+    if let Some((notice,at))=&archive.notice {if ui.time()-at<3.0 {text(800.0,780.0,notice,GOLD,0.9,0.5);}}
+}
 /// 传承页的按键：职业列表上下切换职业，右移进入护符列表，上下选择、A 选用
 fn legacy_keys(archive:&mut Archive,pressed:&dyn Fn(&[Key])->bool,now:f64) {
     if archive.legacy.is_none() {return;}

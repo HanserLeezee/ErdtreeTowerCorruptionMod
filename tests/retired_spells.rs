@@ -10,7 +10,7 @@ fn legacy(run:&Run)->String {
 fn retired_spells_are_not_offered_anywhere() {
     assert_eq!(retired().len(),101);
     assert!(rewards::CATALOG.iter().all(|i|!rewards::RETIRED_SPELLS.contains(&i.id)));
-    for class in [Class::Astrologer,Class::Prisoner] {for seed in 0..100 {
+    for class in [Class::Astrologer,Class::Prophet] {for seed in 0..100 {
         let run=Run::new(seed,class);assert!(!run.ruby_spells);
         for node in 0..run.nodes.len() {assert!(rewards::offers(&run,node).iter().all(|r|!matches!(r,Reward::Item(id) if rewards::RETIRED_SPELLS.contains(id))));}
     }}

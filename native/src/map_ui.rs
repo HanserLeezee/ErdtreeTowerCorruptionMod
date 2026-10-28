@@ -53,6 +53,12 @@ fn enter_node(id:usize) {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn legend_names_each_voter_and_marks_the_local_player() {
+        assert_eq!(super::legend_line(0,Some("Tarnished".into()),true,false),"1  Tarnished（你）  ·  未选");
+        assert_eq!(super::legend_line(2,None,false,true),"3  队员 3  ·  已选");
+        assert_eq!(super::VOTER_COLORS.len(),erdtree_tower::party_roster::MAX_PLAYERS);
+    }
+    #[test]
     fn map_drag_suppresses_release_but_preserves_clicks() {
         let mut s = super::MapScroll::default();
         assert!(!s.gesture([50.0,50.0],true,true,100.0,500.0));
@@ -182,18 +188,12 @@ mod tests {
 
 pub fn class_name(class: Class) -> &'static str {
     match class {
-        // 职业重做后的六个职业（沿用原版出身的编号）
         Class::Vagabond => "守誓骑士",
         Class::Hero => "狂战士",
         Class::Samurai => "影刃",
         Class::Astrologer => "星辉术士",
         Class::Prophet => "祷誓者",
         Class::Confessor => "召唤师",
-        // 不再可选的旧职业（旧存档）
-        Class::Warrior => "剑士",
-        Class::Bandit => "盗贼",
-        Class::Prisoner => "囚犯",
-        Class::Wretch => "一贫如洗",
     }
 }
 
@@ -240,7 +240,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
                     Phase::Reward { .. } => { ui.text("选择战利品以继续旅程。"); }
                     Phase::Dead => { ui.text("旅程结束"); crate::fancy_text::text_wrapped(ui,"角色死亡。重新启动游戏可开始新一局。"); }
                     Phase::Won => { ui.text("登顶 · 本局通关"); }
-                    Phase::Map => route(ui, run, view.ready && !view.busy,&view.ballots),
+                    Phase::Map => {route(ui, run, view.ready && !view.busy,&view.ballots);party_legend(ui,&view.ballots);},
                     Phase::Node { id } => {
                         match run.nodes[*id].kind {
                             NodeKind::Camp | NodeKind::Chest | NodeKind::Shop => { ui.text("使用房间内的原生交互继续。"); }
@@ -281,6 +281,30 @@ pub(crate) fn reward_description(run: &Run, reward: &Reward) -> String {
     }
 }
 
+/// 投票标记的颜色，按队伍名单（Steam ID 排序）的序号取
+const VOTER_COLORS:[[u8;3];8]=[[62,114,185],[173,67,68],[53,135,86],[154,102,179],[180,126,42],[52,139,142],[171,91,129],[99,103,114]];
+/// 图例里一行的文字：序号、名字（没有 Steam 名字时写“队员 N”）、“你”、是否已选路线
+fn legend_line(index:usize,name:Option<String>,local:bool,voted:bool)->String {
+    format!("{}  {}{}  ·  {}",index+1,name.unwrap_or_else(||format!("队员 {}",index+1)),if local{"（你）"}else{""},if voted{"已选"}else{"未选"})
+}
+/// 联机时路线图右上角的队员图例：投票标记上的序号对应谁
+fn party_legend(ui:&Ui,ballots:&[erdtree_tower::party_vote::Ballot]) {
+    if ballots.len()<2 {return;}
+    let local=crate::seamless::local_player();
+    let lines:Vec<_>=ballots.iter().enumerate().map(|(i,b)|legend_line(i,crate::seamless::player_name(b.player),local==Some(b.player),b.node.is_some())).collect();
+    let row=ui.text_line_height()+6.0;
+    let width=lines.iter().map(|l|ui.calc_text_size(l)[0]).fold(0.0f32,f32::max)+46.0;
+    let (pos,size)=(ui.window_pos(),ui.window_size());
+    let (x,y)=(pos[0]+size[0]-width-10.0,pos[1]+10.0);
+    let draw=ui.get_window_draw_list();
+    draw.add_rect([x,y],[x+width,y+row*lines.len() as f32+10.0],ImColor32::from_rgba(233,222,196,230)).filled(true).rounding(5.0).build();
+    draw.add_rect([x,y],[x+width,y+row*lines.len() as f32+10.0],ImColor32::from_rgb(143,95,22)).rounding(5.0).build();
+    for (i,line) in lines.iter().enumerate() {
+        let cy=y+5.0+row*i as f32+row*0.5;let c=VOTER_COLORS[i%VOTER_COLORS.len()];
+        draw.add_circle([x+16.0,cy],7.0,ImColor32::from_rgb(c[0],c[1],c[2])).filled(true).build();
+        draw.add_text([x+30.0,cy-ui.text_line_height()*0.5],ImColor32::from_rgb(64,54,38),line);
+    }
+}
 fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ballot]) {
     let selecting=crate::map_ink::selecting();
     let available = run.available();
@@ -453,8 +477,7 @@ fn route(ui: &Ui, run: &Run, ready: bool,ballots:&[erdtree_tower::party_vote::Ba
         for (offset,(index,_)) in voters.iter().enumerate() {
             let x=pos[0]+(offset as f32-(voters.len()-1) as f32*0.5)*23.0;
             let y=pos[1]-radius-17.0;
-            let colors=[[62,114,185],[173,67,68],[53,135,86],[154,102,179],[180,126,42],[52,139,142],[171,91,129],[99,103,114]];
-            let c=colors[*index%colors.len()];
+            let c=VOTER_COLORS[*index%VOTER_COLORS.len()];
             draw.add_circle([x,y],10.0,ImColor32::from_rgb(c[0],c[1],c[2])).filled(true).build();
             draw.add_text([x-5.0,y-10.0],ImColor32::WHITE,(index+1).to_string());
         }

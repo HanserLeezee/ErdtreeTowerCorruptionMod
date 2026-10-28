@@ -3,7 +3,7 @@ use erdtree_tower::{Class,NodeKind,Phase,Reward,Run,elite,rewards};
 #[test]
 fn boss_always_offers_three_distinct_legendaries_for_every_class() {
     let mut seen=std::collections::HashSet::new();
-    for class in Class::ALL {for seed in 0..100 {
+    for class in Class::PLAYABLE {for seed in 0..100 {
         let run=Run::new(seed,class);
         let node=run.nodes.iter().position(|n|n.kind==NodeKind::Boss).unwrap();
         let offers=rewards::offers(&run,node);

@@ -12,6 +12,11 @@ static class BossAffixAssets {
         (First+10,"Tower boss affix bulwark",0,[..All(Cuts,0.75f),("vfxId",8510)]),
         (First+20,"Tower boss affix frenzied",0,[..All(Attacks,1.25f),..All(Cuts,1.1f),("vfxId",1605000)]),
         (First+30,"Tower boss affix regenerating",0,[("motionInterval",1f),("changeHpRate",-0.3f),("vfxId",1643000)]),
+        // 苦难律法「词条强化」：编号 +1 的强化版，光效相同（削韧 ×0.35、受到伤害 -35%、攻击 +35%、每秒回复 0.45%）
+        (First+1,"Tower boss affix stalwart empowered",0,[("toughnessDamageCutRate",0.35f),("vfxId",8570)]),
+        (First+11,"Tower boss affix bulwark empowered",0,[..All(Cuts,0.65f),("vfxId",8510)]),
+        (First+21,"Tower boss affix frenzied empowered",0,[..All(Attacks,1.35f),..All(Cuts,1.1f),("vfxId",1605000)]),
+        (First+31,"Tower boss affix regenerating empowered",0,[("motionInterval",1f),("changeHpRate",-0.45f),("vfxId",1643000)]),
         (First+40,"Tower boss affix rot aura",0,[("vfxId",5)]),
         (First+41,"Tower boss affix rot buildup",1,[("diseaseAttackPower",20)]),
         // 迅猛、荆棘整场挂着；吸血在每次回血时闪一下。每个词条叠 2～3 个原版的全身光效，颜色互相区分：
@@ -22,6 +27,9 @@ static class BossAffixAssets {
         // 嫉妒用黑焰（黑焰庇佑 + 黑焰缠身），傲慢用白金圣光（王之神圣加护 + 神圣加护），与狂暴的红光、黄金律法的金光区分开
         (First+70,"Tower boss affix envious rage",0,[("effectEndurance",10f),..All(Attacks,1.3f),("vfxId",1627000),("vfxId1",9010)]),
         (First+80,"Tower boss affix proud",0,[..All(Attacks,1.2f),("vfxId",1649000),("vfxId1",1648000)]),
+        // 词条强化：嫉妒攻击 +45%、傲慢攻击 +30%
+        (First+71,"Tower boss affix envious rage empowered",0,[("effectEndurance",10f),..All(Attacks,1.45f),("vfxId",1627000),("vfxId1",9010)]),
+        (First+81,"Tower boss affix proud empowered",0,[..All(Attacks,1.3f),("vfxId",1649000),("vfxId1",1648000)]),
         // 黄金律法的护盾：同时挂三个原版金色护体光效（黄金壁垒、黄金雷电附加、黄金誓言），比单个黄金誓言醒目
         (First+90,"Tower boss affix golden shield",0,[("effectEndurance",5f),..All(Cuts,0.3f),("vfxId",1633000),("vfxId1",1790300),("vfxId2",1660000)]),
         (First+95,"Tower boss affix reborn",0,[("effectEndurance",3f),("vfxId",1643000)]),

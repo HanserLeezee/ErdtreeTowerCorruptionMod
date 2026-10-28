@@ -2,7 +2,7 @@ use erdtree_tower::{Class,Run,Reward,Phase,NodeKind};
 
 #[test]
 fn old_flask_limits_migrate_without_free_refills_or_lost_bonuses() {
-    for class in Class::ALL {for bonus in 0..=4 {
+    for class in Class::PLAYABLE {for bonus in 0..=4 {
         let mut run=Run::new(42,class);run.flask_bonus=bonus;run.flask_limit=10+bonus*2;run.flasks=2;
         let mut json=serde_json::to_value(&run).unwrap();json["flask_limit"]=(5+bonus*2).into();
         let restored=Run::decode(&json.to_string()).unwrap();

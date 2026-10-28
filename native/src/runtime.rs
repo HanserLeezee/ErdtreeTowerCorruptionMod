@@ -37,6 +37,22 @@ fn victory_healing_allowed(player:&eldenring::cs::PlayerIns)->bool {
     player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag()
         &&!super::seamless_revival::finished(player as *const _ as usize)
 }
+/// 战斗胜利的回复（狂战士 8% 生命、祷誓者 25% 专注、苦修之誓）：写日志，返回给玩家看的提示（没有回复时为空）
+fn heal_victory(world:&mut WorldChrMan,run:&Run)->String {
+    let Some(player)=world.main_player.as_mut() else{return String::new();};
+    let data=&player.chr_ins.modules.data;let (hp,fp)=(data.hp,data.fp);
+    if !victory_healing_allowed(player) {
+        super::log(format!("VICTORY_HEAL skipped hp={hp} dead={} revived={}",player.chr_ins.chr_flags1c5.death_flag(),super::seamless_revival::finished(&**player as *const _ as usize)));
+        return String::new();
+    }
+    super::passives::heal_victory(&mut player.chr_ins,run);super::contracts::heal_victory(&mut player.chr_ins,run);
+    let data=&player.chr_ins.modules.data;
+    super::log(format!("VICTORY_HEAL class={:?} hp={hp}->{}/{} fp={fp}->{}/{}",run.class,data.hp,data.max_hp,data.fp,data.max_fp));
+    let mut parts=vec![];
+    if data.hp>hp {parts.push(format!("生命 +{}",data.hp-hp));}
+    if data.fp>fp {parts.push(format!("专注 +{}",data.fp-fp));}
+    if parts.is_empty() {String::new()}else{format!("胜利回复：{}。",parts.join("，"))}
+}
 
 #[derive(Default)]
 struct HostDeath {epoch:Option<u64>,block:Option<i32>}
@@ -150,9 +166,7 @@ fn tick_party_scene(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Re
             if matches!(link.event.request,Some(Kind::Guards(_))){link.event.request=None;}
         }
         if let Some(guards)=scene.guards.take(){guards.retire();}
-        if let Some(player)=world.main_player.as_mut(){
-            if victory_healing_allowed(player) {super::passives::heal_victory(&mut player.chr_ins,&scene.run);super::contracts::heal_victory(&mut player.chr_ins,&scene.run);}
-        }
+        let healed=heal_victory(world,&scene.run);if !healed.is_empty(){super::log(&healed);state.view.status=healed;state.view.prompt=state.view.prompt.wrapping_add(1);}
         link.event.applied=Some(job.wave);state.view.shared_event=false;return Ok(());
     }
     if game.warp_requested||world.main_player.as_ref().is_none_or(|p|i32::from(p.current_block_id)!=scene.block){return Ok(());}
@@ -746,7 +760,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
                 for entity in super::enemies::map_entities(&super::enemies::node_roster(run,id))? {super::enemies::request_map_entity(entity,false)?;}
                 state.reward_wait=Some((Instant::now(),run.clone()));state.view.busy=true;
                 state.reward_portal=Default::default();
-                if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run);super::contracts::heal_victory(&mut player.chr_ins,run);}
+                let healed=heal_victory(world,run);if !healed.is_empty(){super::log(&healed);state.view.status=healed;state.view.prompt=state.view.prompt.wrapping_add(1);}
                 give_elite_tear(world,run,id);
                 super::log(format!("Party victory received epoch={}",link.epoch));
             }
@@ -865,7 +879,7 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
     let data=unsafe {player.player_game_data.as_ref()};
     let owner=(data.character_id,game.save_slot);
     if game.save_slot<0{return Ok(false);}
-    if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,data.archetype)?);}
+    if state.hub.is_none(){state.hub=Some(super::hub::Hub::new(owner,data.archetype)?);super::name_tags::load(owner);}
     super::legacy::set_owner(owner);
     if let Some(run)=state.view.run.as_ref() {
         let run=ended_progress(run);
@@ -1113,12 +1127,16 @@ fn tick_locked() {
         let texts=super::enemies::preview_texts(&roster);
         if let Some(room)=state.attendant.as_mut() {room.set_enemies(&texts);if let Err(e)=room.poll(world,game){super::log_repeating(format!("Arena attendant: {e}"));}}
     } else if let Some(room)=state.attendant.take() {room.retire(world);}
+    // 称号：本机选用的称号随汇报发给房主；原版友方名牌按全队称号显示“称号·名字”（单人时恢复原名）
+    if let Some(link)=state.party.as_mut() {link.title=super::name_tags::worn();}
+    super::name_tags::sync(world,state.party.as_ref().map_or(&[][..],|l|&l.titles));
     // 篝火营地的测伤假人（单人）：营地布置好后生成，离开营地撤下
     let camp=state.party.is_none()&&!game.warp_requested&&state.room.as_ref().is_some_and(|r|r.kind==erdtree_tower::NodeKind::Camp&&!r.view.loading);
     if camp {
         let clock=super::weapon_glow::clock();
+        let act=state.view.run.as_ref().map_or(1,|r|r.act);
         let dummy=state.dummy.get_or_insert_with(Default::default);
-        if let Err(error)=dummy.tick(world,clock){super::log_repeating(format!("Damage dummy: {error}"));}
+        if let Err(error)=dummy.tick(world,clock,act){super::log_repeating(format!("Damage dummy: {error}"));}
         state.view.dummy=Some(dummy.view(clock));
     } else if let Some(dummy)=state.dummy.take() {dummy.retire(world);state.view.dummy=None;}
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
@@ -1221,7 +1239,7 @@ fn tick_locked() {
         match super::hub::Hub::new(identity,player_data.archetype) {
             Ok(hub)=>{
                 if let Ok(mut path)=SESSION_PATH.lock(){*path=Some(super::hub::path(identity,"json"));}
-                state.hub=Some(hub);state.hub_failed=None;
+                state.hub=Some(hub);state.hub_failed=None;super::name_tags::load(identity);
             },
             Err(error)=>{state.hub_failed=Some((identity,Instant::now()));report(&mut state,format!("旅程存档加载失败，未重置角色：{error}"));return;},
         }
@@ -1561,7 +1579,11 @@ fn tick_locked() {
     if state.party.is_some()&&player_dead&&state.reward_wait.is_some(){return;}
     if let Some((started, mut next)) = state.reward_wait.take() {
         use super::reward_delay::ResultState;
-        let portal_used=state.party.as_ref().map_or_else(||super::native_talk::flag(45020971).unwrap_or(false),|p|p.rewards||(p.host()&&super::native_talk::flag(45020971).unwrap_or(false)));
+        // 联机时摸传送门只登记“已进入”，等全员（倒下的除外）都进入后由房主发奖励
+        let touched=state.reward_portal.armed()&&super::native_talk::flag(45020971).unwrap_or(false);
+        let entered=state.party.as_mut().is_some_and(|p|touched&&!p.rewards&&!std::mem::replace(&mut p.portal,true));
+        let portal_used=state.party.as_ref().map_or(touched,|p|p.rewards);
+        if entered {report(&mut state,"已进入传送门，等待全部队友进入后一起领取奖励。");}
         match state.reward_portal.poll(started.elapsed(), player_dead, portal_used) {
             ResultState::Waiting => {
                 state.reward_wait = Some((started, next));
@@ -1586,6 +1608,7 @@ fn tick_locked() {
                 let _ = super::native_talk::set_flag(45020971, false);
                 next.flasks = state.flasks.as_ref().map_or(next.flasks, |f| f.total());
                 next.casting_tools=Some(super::loot::casting_tools(player_data));
+                if let Ok(params)=unsafe {SoloParamRepository::instance()} {next.weapon_peak=Some(super::smith::inventory_peak(player_data,params).clamp(0,50) as u8);}
                 let result = next
                     .observe_hp(normalized_hp(hp, max_hp))
                     .and_then(|_| next.win_combat());
@@ -1714,7 +1737,7 @@ fn tick_locked() {
         let runtime=&mut *state;
         if let Some(pending)=runtime.pending.as_ref().filter(|_|bound)&&let Phase::Combat{id}=pending.next_run.phase {
             let run=&pending.next_run;
-            runtime.boss_fight.begin((run.seed,run.act,id),erdtree_tower::boss_affixes::roll(run,id));
+            runtime.boss_fight.begin((run.seed,run.act,id),erdtree_tower::boss_affixes::roll(run,id),run.law.empowered_affixes());
             let handles:Vec<_>=pending.foes.iter().filter_map(|f|f.fight.handle()).collect();
             let authority=runtime.party.as_ref().is_none_or(|p|p.host());
             let flasks=runtime.flasks.as_ref().map(|f|f.total());
@@ -1791,13 +1814,13 @@ fn tick_locked() {
                 }
             }
             state.view.run=Some(next.clone());
-            if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,&next);super::contracts::heal_victory(&mut player.chr_ins,&next);}
+            let healed=heal_victory(world,&next);
             if keep_summoned_ash(world,&next,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
             world.summon_buddy_manager.disappear_requested=true;
             state.reward_wait = Some((Instant::now(), next));
             state.reward_portal=Default::default();
             state.view.busy = true;
-            report(&mut state, "敌人已击败，3 秒后激活传送门。");
+            report(&mut state, format!("敌人已击败，3 秒后激活传送门。{healed}"));
         }
         (Outcome::PlayerDied, Ok(())) => {
             record(&next);
@@ -2357,7 +2380,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         if bound&&!run.law.lone_wolf() {pending.spirits.poll(world,room.block,true)?;}
         match outcome {
             Outcome::Victory => {
-                if let Some(player)=world.main_player.as_mut().filter(|p|victory_healing_allowed(p)){super::passives::heal_victory(&mut player.chr_ins,run);super::contracts::heal_victory(&mut player.chr_ins,run);}
+                let healed=heal_victory(world,run);if !healed.is_empty(){super::log(&healed);state.view.status=healed;state.view.prompt=state.view.prompt.wrapping_add(1);}
                 if keep_summoned_ash(world,run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
                 state.pending=None;state.event_start=None;state.view.enemy_hp=None;
                 let run=state.view.run.as_mut().unwrap();run.regional_event.guards=false;run.regional_event.guard_slot=None;record(run);

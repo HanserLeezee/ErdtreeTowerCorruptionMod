@@ -33,11 +33,16 @@ pub const STORIES: [Story; 3] = [
         ],
     },
 ];
-/// 问号房抽到的事件。event_rules 2 起每个事件按 EVENT_WEIGHTS 单独抽取；更早的旅程沿用 8 格分配，没有赌运事件
+/// 问号房抽到的事件。event_rules 2 起每个事件按权重表单独抽取（3 起用 EVENT_WEIGHTS）；更早的旅程沿用 8 格分配，没有赌运事件
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
 pub enum Draw {Trial,Chests,Altar,Locked,Scarabs,Spring,Dice,Mystery,Reforge}
-/// 问号房事件权重，合计 20（每 1 点 5%）
+/// 问号房事件权重（event_rules 3 起）：九个事件相同，各 1/9
 pub const EVENT_WEIGHTS:[(Draw,u32);9]=[
+    (Draw::Trial,1),(Draw::Chests,1),(Draw::Altar,1),(Draw::Locked,1),(Draw::Scarabs,1),(Draw::Spring,1),
+    (Draw::Dice,1),(Draw::Mystery,1),(Draw::Reforge,1),
+];
+/// event_rules 2 的权重，合计 20（试炼 4，其余 2）：旧旅程读档沿用，房间不变
+pub const EVENT_WEIGHTS_V2:[(Draw,u32);9]=[
     (Draw::Trial,4),(Draw::Chests,2),(Draw::Altar,2),(Draw::Locked,2),(Draw::Scarabs,2),(Draw::Spring,2),
     (Draw::Dice,2),(Draw::Mystery,2),(Draw::Reforge,2),
 ];
@@ -50,9 +55,10 @@ impl Run {
                 _=>if crate::regional_events::kind(self.seed,id)==1 {Draw::Altar}else{Draw::Chests},
             };
         }
-        let total:u32=EVENT_WEIGHTS.iter().map(|(_,w)|w).sum();
+        let weights=if self.event_rules<3 {EVENT_WEIGHTS_V2}else{EVENT_WEIGHTS};
+        let total:u32=weights.iter().map(|(_,w)|w).sum();
         let mut roll=(crate::mix(self.seed^(id as u64).wrapping_mul(0x9e37)^0xe7e27)%total as u64) as u32;
-        for (draw,weight) in EVENT_WEIGHTS {if roll<weight {return draw;} roll-=weight;}
+        for (draw,weight) in weights {if roll<weight {return draw;} roll-=weight;}
         unreachable!()
     }
     /// 问号房里的赌运事件（STORIES 下标）
@@ -131,12 +137,13 @@ mod gamble_tests {
     use crate::{Class,NodeKind,Run,affixes,events::*};
     #[test]
     fn every_event_has_its_own_weight_and_gambles_happen_in_the_room() {
-        let total:u32=EVENT_WEIGHTS.iter().map(|(_,w)|w).sum();
-        let mut counts=std::collections::HashMap::new();let mut nodes=0u32;
+        let total:u32=EVENT_WEIGHTS.iter().map(|(_,w)|w).sum();let total_v2:u32=EVENT_WEIGHTS_V2.iter().map(|(_,w)|w).sum();
+        let mut counts=std::collections::HashMap::new();let mut counts_v2=std::collections::HashMap::new();let mut nodes=0u32;
         for seed in 0..3000 {
             let run=Run::new(seed,Class::Samurai);
             for id in (0..run.nodes.len()).filter(|id|run.nodes[*id].kind==NodeKind::Event) {
                 nodes+=1;let draw=run.event_draw(id);*counts.entry(draw).or_insert(0u32)+=1;
+                let mut v2=run.clone();v2.event_rules=2;*counts_v2.entry(v2.event_draw(id)).or_insert(0u32)+=1;
                 let mut entered=run.clone();entered.debug_jump(id).unwrap();entered.enter(id).unwrap();
                 let p=&entered.regional_event;
                 assert_eq!((p.trial,p.locked,p.scarabs,p.recovery),(draw==Draw::Trial,draw==Draw::Locked,draw==Draw::Scarabs,draw==Draw::Spring));
@@ -159,11 +166,12 @@ mod gamble_tests {
                 let mut old=run.clone();old.event_rules=1;assert_eq!(old.gamble(id),None);
             }
         }
-        // 每个事件的实际出现率接近各自权重（误差在 ±15% 以内）
-        for (draw,weight) in EVENT_WEIGHTS {
+        // 每个事件的实际出现率接近各自权重（误差在 ±15% 以内）；event_rules 2 的旧旅程仍按旧权重
+        for (weights,total,counts) in [(EVENT_WEIGHTS,total,&counts),(EVENT_WEIGHTS_V2,total_v2,&counts_v2)] {for (draw,weight) in weights {
             let expected=nodes as f64*weight as f64/total as f64;let seen=*counts.get(&draw).unwrap_or(&0) as f64;
             assert!((seen-expected).abs()<expected*0.15,"{draw:?}: {seen} vs {expected}");
-        }
+        }}
+        assert!(EVENT_WEIGHTS.iter().all(|(_,w)|*w==EVENT_WEIGHTS[0].1));
         let mut json:serde_json::Value=serde_json::from_str(&Run::new(1,Class::Samurai).encode().unwrap()).unwrap();
         json.as_object_mut().unwrap().remove("event_rules");
         assert_eq!(Run::decode(&json.to_string()).unwrap().event_rules,0);

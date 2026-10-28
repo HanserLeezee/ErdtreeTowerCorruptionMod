@@ -68,6 +68,10 @@ pub struct Link {
     pub ballots:Vec<erdtree_tower::party_vote::Ballot>,
     pub config:Config,pub gate:Gate,pub epoch:u64,pub arrived:bool,pub bound:bool,
     pub spawn:bool,pub fighting:bool,pub victory:bool,pub rewards:bool,pub defeated:bool,pub stopped:Option<String>,
+    /// 本机已交互奖励传送门（等全员进入后房主发奖励）
+    pub portal:bool,
+    /// 本机选用的称号（titles::TITLES 的编号，0 为不戴）与全队的称号（房主汇总广播，Steam ID → 编号）
+    pub title:u8,pub titles:Vec<(u64,u8)>,
     tx:SyncSender<Send>,rx:Receiver<Receive>,running:Arc<AtomicBool>,
     last_report:Instant,last_seen:Vec<(u64,Instant)>,pub encounter:Option<Instant>,
 }
@@ -114,7 +118,7 @@ impl Link {
             if let Err(e)=worker(c,commands,&events,flag){let _=events.try_send(Receive::Fault(e));}
         }).map_err(|_|"无法启动队伍同步线程")?;
         let ids=std::iter::once(config.player).chain(config.peers.iter().map(|p|p.player)).collect();
-        Ok(Some(Self{config,gate:Gate::new(ids),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,
+        Ok(Some(Self{config,gate:Gate::new(ids),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),selected:None,ballots:vec![],tx,rx,running,last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None}))
     }
     pub fn from_steam(pending:super::steam_messages::Pending,session:u64,seed:u64)->Result<Self,String> {
@@ -124,7 +128,7 @@ impl Link {
         let peers=if roster.local==roster.host {roster.members.iter().filter(|&&id|id!=roster.local).map(|&player|erdtree_tower::party_game::Peer{player,token:String::new()}).collect()}else{vec![]};
         let config=Config{session,seed,player:roster.local,host:roster.host,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers};
         let (tx,_commands)=mpsc::sync_channel(1);let (_events,rx)=mpsc::sync_channel(1);
-        let mut link=Self{gate:Gate::new(roster.members.clone()),config,epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,
+        let mut link=Self{gate:Gate::new(roster.members.clone()),config,epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:Some(Steam{transport,handshake,roster}),queued:Default::default(),selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None};
         for (peer,packet) in packets {match steam_event(&link.config,peer,packet){Ok(Some(event))=>link.queued.push_back(event),Ok(None)=>{},Err(e)=>ignored(peer,&e)}}
         Ok(link)
@@ -198,12 +202,13 @@ impl Link {
     }
     pub fn open_rewards(&mut self)->Result<(),String>{
         if let Some(error)=&self.stopped{return Err(error.clone());}
-        if self.host()&&!self.rewards {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
+        if self.host()&&!self.rewards&&self.gate.rewards().is_some() {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
     }
     pub fn accept(&mut self,order:&Order)->Result<bool,String> {
         if let Order::MapDrawing(canvas)=order {return Ok(!self.host()&&self.drawing.receive(canvas.clone(),self.config.player));}
         if matches!(order,Order::ForceEnd){return Ok(!self.host());}
         if let Some(error)=&self.stopped {return Err(error.clone());}
+        if let Order::Titles(list)=order {if !self.host(){self.titles=list.iter().take(erdtree_tower::party_roster::MAX_PLAYERS).copied().collect();}return Ok(false);}
         if self.defeated&&!matches!(order,Order::NewRun{..}|Order::Stop(_)){return Ok(false);}
         match order {
             Order::Law{epoch,seed,law}=>{
@@ -235,7 +240,7 @@ impl Link {
                 if self.epoch.checked_add(1)!=Some(*epoch)||*seed==0||*seed==self.config.seed{return Err("新局同步序号或种子无效".into());}
                 self.config.seed=*seed;self.epoch=*epoch;
                 self.event=Default::default();self.ballots.clear();self.selected=None;
-                self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.defeated=false;self.encounter=None;
+                self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;self.defeated=false;self.encounter=None;
                 super::log(format!("Party new run committed: epoch={epoch} seed={seed}"));
             },
             Order::Votes{epoch,ballots} if *epoch==self.epoch=>{
@@ -245,7 +250,7 @@ impl Link {
             Order::Enter{epoch,has_stonesword_key,..}=>{
                 if *epoch==self.epoch{return Ok(false);}
                 if *epoch!=self.epoch+1{return Err("节点同步序号不连续，请重新组队".into());}
-                self.event=Default::default();self.ballots.clear();self.selected=None;self.event.has_stonesword_key=*has_stonesword_key;self.epoch=*epoch;self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.defeated=false;self.encounter=Some(Instant::now());
+                self.event=Default::default();self.ballots.clear();self.selected=None;self.event.has_stonesword_key=*has_stonesword_key;self.epoch=*epoch;self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;self.defeated=false;self.encounter=Some(Instant::now());
             }
             Order::EventStart(job) if job.epoch==self.epoch=>{
                 if self.event.job==Some(*job){return Ok(false);}
@@ -276,7 +281,7 @@ impl Link {
             Order::Rewards{epoch} if *epoch==self.epoch&&self.victory=>self.rewards=true,
             Order::Defeat{epoch} if *epoch==self.epoch=>{
                 self.defeated=true;self.gate.stop();self.event=Default::default();
-                self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;
+                self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;
                 self.selected=None;self.ballots.clear();
             },
             Order::Stop(error)=>{self.stopped=Some(error.clone());self.gate.stop();},
@@ -348,7 +353,7 @@ impl Link {
                 report.drawing=self.drawing.request();
                 report.flask_uses=self.law_flasks.uses;
                 report.has_stonesword_key=unsafe {eldenring::cs::PlayerIns::local_player()}.is_ok_and(|p|super::loot::count(unsafe {p.player_game_data.as_ref()},0x40001f40)>0);
-                report.rest_end=rest_end;
+                report.rest_end=rest_end;report.portal=self.portal&&self.victory;report.title=self.title;
                 report.event_request=self.event.request;report.event_bound=self.event.bound;report.event_applied=self.event.applied;
                 report.trial_choice=self.event.trial_choice;report.storm_choice=self.event.storm_choice;report.storm_finish=self.event.storm_finish;
                 report.chariot_ready=self.event.chariot_ready;
@@ -359,7 +364,7 @@ impl Link {
             }else {
                 self.selected=None;
                 let mut report=if at_hub&&alive {Report::at_hub(self.epoch)}else{Report::unavailable(self.epoch)};
-                report.rest_end=rest_end;
+                report.rest_end=rest_end;report.title=self.title;
                 if self.host(){let _=self.gate.report(self.config.player,report);}else if let Err(e)=self.send(Send::Report(report)){self.stop(e);}
             }
         }
@@ -378,6 +383,14 @@ impl Link {
                 }
             }
 
+            // 称号：汇总全队（含房主自己）的称号，有变化就广播
+            let mut titles=self.gate.titles();
+            // 进新节点时队员汇报会清空：还没重新汇报的人沿用上一次的称号，名牌不会闪
+            for &(id,title) in &self.titles {if !titles.iter().any(|(p,_)|*p==id)&&self.gate.members().contains(&id){titles.push((id,title));}}
+            titles.sort_unstable();
+            if titles!=self.titles {
+                match self.send(Send::Broadcast(Order::Titles(titles.clone()))) {Ok(())=>self.titles=titles,Err(e)=>ignored(0,&format!("称号同步发送失败，稍后重试：{e}"))}
+            }
             if let Some(order)=self.gate.rest_end() {
                 super::log(format!("PARTY_REST_END epoch={}; settling all players",self.epoch));
                 if let Err(error)=self.send(Send::Broadcast(order.clone())){self.stop(error);return vec![Order::Stop(self.stopped.clone().unwrap())];}
@@ -421,6 +434,10 @@ impl Link {
                 match self.gate.event_start() {
                     Ok(Some(order))=>if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{orders.push(order);},
                     Ok(None)=>{},Err(e)=>self.stop(e),
+                }
+                if self.victory&&!self.rewards&&let Some(order)=self.gate.rewards() {
+                    super::log(format!("PARTY_REWARD_PORTAL epoch={}; every living member entered",self.epoch));
+                    if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{self.rewards=true;orders.push(order);}
                 }
                 for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.spawn(),self.gate.engage()].into_iter().flatten() {
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{orders.push(order);}
@@ -551,7 +568,7 @@ mod tests {
         use super::*;
         let config=Config{session:17,seed:42,player,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,commands)=mpsc::sync_channel(64);let (events,rx)=mpsc::sync_channel(64);
-        (Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,
+        (Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(true)),last_report:Instant::now(),last_seen:vec![],encounter:None},events,commands)
     }
     #[test]
@@ -635,7 +652,7 @@ mod tests {
     fn defeat_clears_event_and_ignores_late_same_epoch_orders() {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,_commands)=mpsc::sync_channel(64);let (_events,rx)=mpsc::sync_channel(64);
-        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,
+        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now(),last_seen:vec![],encounter:None};
         let job=erdtree_tower::party_events::Job{epoch:4,wave:1,player:2,kind:erdtree_tower::party_events::Kind::Guards(0)};
         link.accept(&Order::EventStart(job)).unwrap();link.event.bound=Some(1);
@@ -653,11 +670,11 @@ mod tests {
     fn new_run_clears_previous_vote_combat_and_event_state_once() {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,_commands)=mpsc::sync_channel(64);let (_events,rx)=mpsc::sync_channel(64);
-        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:true,rewards:true,defeated:true,stopped:None,
+        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:4,arrived:true,bound:true,spawn:true,fighting:true,victory:true,rewards:true,defeated:true,stopped:None,portal:true,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),selected:Some(3),ballots:vec![erdtree_tower::party_vote::Ballot{player:2,node:Some(3)}],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now(),last_seen:vec![],encounter:Some(Instant::now())};
         link.event.job=Some(erdtree_tower::party_events::Job{epoch:4,wave:2,player:2,kind:erdtree_tower::party_events::Kind::Guards(1)});
         let next=Order::NewRun{epoch:5,seed:99};assert!(link.accept(&next).unwrap());
-        assert_eq!((link.epoch,link.config.seed),(5,99));assert!(!link.needs_new_run());
+        assert_eq!((link.epoch,link.config.seed),(5,99));assert!(!link.needs_new_run());assert!(!link.portal);
         assert!(!link.arrived&&!link.bound&&!link.spawn&&!link.fighting&&!link.victory&&!link.rewards&&!link.defeated);
         assert!(link.event.job.is_none()&&link.selected.is_none()&&link.ballots.is_empty()&&link.encounter.is_none());
         link.selected=Some(1);assert!(!link.accept(&next).unwrap());assert_eq!(link.selected,Some(1));
@@ -681,7 +698,7 @@ mod tests {
         for signal in 0..3 {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
         let (tx,_commands)=mpsc::sync_channel(64);let (events,rx)=mpsc::sync_channel(64);
-        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,
+        let mut link=Link{config,gate:Gate::new(vec![1,2]),epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
             law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:None,queued:Default::default(),selected:Some(0),ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now(),last_seen:vec![],encounter:None};
         let job=erdtree_tower::party_events::Job{epoch:0,wave:1,player:2,kind:erdtree_tower::party_events::Kind::Scarabs(1)};
         use erdtree_tower::stormveil::Decision;

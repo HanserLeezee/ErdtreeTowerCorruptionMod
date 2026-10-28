@@ -21,8 +21,29 @@ pub fn lookup(id:u32)->Option<&'static Item>{BY_ID.get(&id).map(|i|&CATALOG[*i])
 pub fn base(id:u32)->u32 {BY_ID.get(&id).map_or(id,|i|VARIANTS[*i].base)}
 pub fn tier(id:u32)->Option<u8>{BY_ID.get(&id).map(|i|VARIANTS[*i].tier)}
 pub fn profile(id:u32)->Option<u8>{BY_ID.get(&id).and_then(|i|VARIANTS[*i].profile)}
-/// 规则 4 起的前缀概率（0..100 的掷骰值）：普通 25%、稀有 35%、史诗 28%、传说 12%
+/// 规则 4 的前缀概率（0..100 的掷骰值）：普通 25%、稀有 35%、史诗 28%、传说 12%
 pub fn prefix_tier(value:u64)->u8 {match value {0..=24=>0,25..=59=>1,60..=87=>2,_=>3}}
+/// 规则 5 起品质随旅程进度变化：第一幕第 1 层为 QUALITY_START，第三幕最后一层为 QUALITY_END，中间按层线性过渡（普通、稀有、史诗、传说，合计 100）
+pub const QUALITY_START:[u32;4]=[45,35,17,3];
+pub const QUALITY_END:[u32;4]=[20,34,33,13];
+/// 当前所在层的品质概率（百分比，合计 100）
+pub fn quality_odds(run:&Run)->[u32;4] {
+    let (step,total)=run.journey_progress();
+    // 对累计概率插值再取整，各档逐层单调变化
+    let cumulative=|table:&[u32;4],tier:usize|table[..=tier].iter().sum::<u32>();
+    let mut odds=[0;4];let mut below=0;
+    for tier in 0..3 {
+        let at=(cumulative(&QUALITY_START,tier)*(total-step)+cumulative(&QUALITY_END,tier)*step+total/2)/total;
+        odds[tier]=at-below;below=at;
+    }
+    odds[3]=100-below;
+    odds
+}
+fn layered_tier(run:&Run,value:u64)->u8 {
+    let mut roll=value as u32;
+    for (tier,odds) in quality_odds(run).into_iter().enumerate() {if roll<odds {return tier as u8;} roll-=odds;}
+    3
+}
 pub fn roll(run:&Run,id:u32,entropy:u64,repeat:bool)->Option<u32> {roll_min(run,id,entropy,repeat,0)}
 /// 规则 3 起品质只看前缀：不再按原版稀有度托底，改由来源决定保底（Boss 与试炼为传说、精英与上锁宝箱至少史诗）。
 /// 旧规则（affix_rules < 3）仍以原版稀有度为最低品质，忽略 min
@@ -34,7 +55,7 @@ pub fn roll_min(run:&Run,id:u32,entropy:u64,repeat:bool,min:u8)->Option<u32> {
     let start=if run.affix_rules>=2{crate::mix(run.reward_seed()^entropy^u64::from(id)^0xa4c4_7e99) as usize%groups.len()}else{0};
     let floor=if run.affix_rules>=3 {min.min(3)}else{BASE_RARITY.get(&id).copied().unwrap_or(0).min(3)};
     let value=crate::mix(run.reward_seed()^entropy^u64::from(id)^0xaff1_600d)%100;
-    let selected=(if run.affix_rules>=4 {prefix_tier(value)}else{match value {0..=44=>0,45..=74=>1,75..=92=>2,_=>3}}).max(floor);
+    let selected=(if run.affix_rules>=5 {layered_tier(run,value)}else if run.affix_rules>=4 {prefix_tier(value)}else{match value {0..=44=>0,45..=74=>1,75..=92=>2,_=>3}}).max(floor);
     for n in 0..groups.len() {
         let variants=&groups[(start+n)%groups.len()];
         if let Some(id)=(0..4).map(|offset|(selected+offset)%4).filter(|t|*t>=floor).map(|t|variants[t as usize]).find(|variant|*variant!=0&&!run.claimed_items.contains(variant)){return Some(id);}
@@ -92,4 +113,26 @@ pub fn reforge(run:&Run,node:usize,current:u32,guaranteed:bool)->Option<u32> {
     options.dedup();
     (!options.is_empty()).then(||options[((roll>>8)%options.len() as u64) as usize])
 }
-
+#[test]
+    fn quality_rises_gently_from_the_first_layer_to_the_last() {
+        let mut run=Run::new(42,crate::Class::Samurai);
+        let per_act=run.nodes.iter().map(|n|n.layer+1).max().unwrap();
+        let mut previous=[0u32;4];
+        for act in 1..=3u8 {for layer in 1..=per_act {
+            run.act=act;run.reached_layer=layer;let odds=quality_odds(&run);
+            assert_eq!(odds.iter().sum::<u32>(),100);
+            if act==1&&layer==1 {assert_eq!(odds,QUALITY_START);}
+            if act==3&&layer==per_act {assert_eq!(odds,QUALITY_END);}
+            if previous!=[0;4] {assert!(odds[0]<=previous[0]&&odds[3]>=previous[3],"{odds:?} after {previous:?}");}
+            previous=odds;
+        }}
+        run.act=1;run.reached_layer=0;assert_eq!(quality_odds(&run),QUALITY_START,"before entering a node");
+        // 实际掷出的品质接近当前层的概率
+        for (act,layer) in [(1u8,1usize),(3,per_act)] {
+            run.act=act;run.reached_layer=layer;let odds=quality_odds(&run);
+            let mut counts=[0u32;4];
+            for value in 0..100u64 {counts[usize::from(layered_tier(&run,value))]+=1;}
+            assert_eq!(counts,odds);
+        }
+    }
+    

@@ -12,18 +12,12 @@ pub const UNLOCKS:[u8;4]=[1,3,6,10];
 /// 都是原版的基础护符，按职业的打法挑选，强度与祖灵角同档
 pub fn talismans(class:Class)->[u32;5] {
     let unlocks=match class {
-        // 职业重做后的六个职业
         Class::Vagabond=>[4000,2200,4100,1150],   // 守誓骑士：龙徽盾护符、曲剑护符、大盾护符、绿龟护符
-        Class::Warrior=>[2080,1150,2090,2050],    // 带翼剑徽章、绿龟护符、短剑护符、献斗剑护符
         Class::Hero=>[2130,2070,2190,2040],       // 狂战士：斧护符、大槌护符、咆哮链坠、红羽七刃剑
-        Class::Bandit=>[2090,2150,6000,5050],     // 短剑护符、硬箭护符、克雷普的小瓶子、染红凶刀
         Class::Samurai=>[2090,2150,5050,2080],    // 影刃：短剑护符、硬箭护符、染红凶刀、带翼剑徽章
         Class::Astrologer=>[3000,6020,2110,5060], // 星辉术士：魔法师球护符、卡利亚徽章、蓝色舞娘、染蓝凶刀
         Class::Prophet=>[3040,3060,6020,4090],    // 祷誓者：信徒的立誓布、古王护符、卡利亚徽章、献斗盾护符
         Class::Confessor=>[1150,6010,3040,4000],  // 召唤师：绿龟护符、隐身面纱、信徒的立誓布、龙徽盾护符
-        // 不再可选的旧职业（旧存档）
-        Class::Prisoner=>[2060,3000,4090,6020],   // 矛护符、魔法师球护符、献斗盾护符、卡利亚徽章
-        Class::Wretch=>[2070,1030,2040,6050],     // 大槌护符、众武护符、红羽七刃剑、夏玻利利之祸
     };
     [DEFAULT_TALISMAN,unlocks[0],unlocks[1],unlocks[2],unlocks[3]]
 }
@@ -65,7 +59,13 @@ impl Legacy {
         self.classes.push((class,ClassLegacy::default()));&mut self.classes.last_mut().unwrap().1
     }
     pub fn encode(&self)->String {serde_json::to_string(self).unwrap_or_default()}
-    pub fn decode(text:&str)->Self {serde_json::from_str(text).unwrap_or_default()}
+    /// 逐条读取：职业重做前的旧职业（已移除）跳过，其余职业的熟练度保留
+    pub fn decode(text:&str)->Self {
+        let Ok(value)=serde_json::from_str::<serde_json::Value>(text) else{return Self::default();};
+        let classes=value.get("classes").and_then(|v|v.as_array()).map_or_else(Vec::new,|entries|entries.iter()
+            .filter_map(|entry|serde_json::from_value::<(Class,ClassLegacy)>(entry.clone()).ok()).collect());
+        Self{classes}
+    }
     /// 记一局结算：给这一局的职业加经验，返回变化（调试旅程不计）
     pub fn award(&mut self,record:&Record)->Option<Gain> {
         let xp=earned(record);
@@ -125,7 +125,7 @@ mod tests {
     }
     #[test]
     fn talismans_unlock_by_level_per_class() {
-        for class in Class::ALL {
+        for class in Class::PLAYABLE {
             let list=talismans(class);
             assert_eq!(list[0],DEFAULT_TALISMAN);
             assert!(list.iter().enumerate().all(|(i,id)|!list[..i].contains(id)),"{class:?} has duplicates");

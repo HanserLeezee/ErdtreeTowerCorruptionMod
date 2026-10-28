@@ -2,7 +2,7 @@
 pub struct Node {pub name:&'static str,pub branch:usize,pub parent:Option<usize>,pub points:u32,pub effect:&'static str,pub icon:u32,pub col:u8,pub row:u8}
 pub const BRANCHES:[&str;4]=["敌人","我方","经济","规则"];
 const fn n(name:&'static str,branch:usize,parent:Option<usize>,points:u32,effect:&'static str,icon:u32,col:u8,row:u8)->Node {Node{name,branch,parent,points,effect,icon,col,row}}
-pub const NODES:[Node;31]=[
+pub const NODES:[Node;32]=[
     n("强敌 I",0,None,10,"敌人强度 +1 档：生命 +10%，攻击 +6%",10125,1,0),
     n("强敌 II",0,Some(0),20,"再 +1 档：累计生命 +21%，攻击 +13%",10125,2,0),
     n("强敌 III",0,Some(1),30,"再 +2 档：累计生命 +45%，攻击 +28%",10125,3,0),
@@ -34,6 +34,8 @@ pub const NODES:[Node;31]=[
     n("元素庇护 II",0,Some(27),10,"敌人受到魔力、火、雷、圣伤害累计 -20%",12084,2,9),
     n("异常耐性 I",0,None,10,"敌人中毒、腐败、出血、冻伤、睡眠、发狂、死亡耐性 +15%，原有免疫不变",12084,1,10),
     n("异常耐性 II",0,Some(29),10,"敌人异常耐性累计 +30%，原有免疫不变",12084,2,10),
+    // 律法以 32 位记录，这是最后一个空位
+    n("词条强化",0,Some(5),20,"Boss 与精英的词条数值约提高一半：减伤、攻击、回复、吸血、反弹、加速都更强",10094,4,1),
 ];pub const GRADES:[(u32,&str);4]=[(70,"老练"),(140,"艰难"),(210,"噩梦"),(280,"危机")];
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
@@ -48,6 +50,8 @@ impl Law {
     /// 词条蔓延：Boss 词条预算（不超过组合表上限）
     pub fn affix_budget(self,base:u8,max:u8)->u8 {match self.chain(&[3,4]) {0=>base,1=>(base+2).min(max),_=>max}}
     pub fn elite_affixes(self)->bool {self.has(5)}
+    /// 词条强化：Boss 词条使用强化后的数值
+    pub fn empowered_affixes(self)->bool {self.has(31)}
     pub fn toughness(self)->u8 {self.chain(&[6,7])}
     pub fn elemental_resistance(self)->u8 {self.chain(&[27,28])}
     pub fn status_resistance(self)->u8 {self.chain(&[29,30])}
@@ -69,7 +73,7 @@ impl Law {
     pub fn envy_world(self)->bool {self.has(26)}
     pub fn has(self,id:usize)->bool {id<NODES.len()&&self.0&(1<<id)!=0}
     pub fn available(self,id:usize)->bool {id<NODES.len()&&NODES[id].parent.is_none_or(|p|self.has(p))}
-    pub fn valid(self)->bool {self.0>>NODES.len()==0&&(0..NODES.len()).all(|id|!self.has(id)||self.available(id))}
+    pub fn valid(self)->bool {u64::from(self.0)>>NODES.len()==0&&(0..NODES.len()).all(|id|!self.has(id)||self.available(id))}
     /// 选择需要上一节点已选；取消会连带取消其后的节点
     pub fn toggle(self,id:usize)->Self {
         if self.has(id) {
@@ -111,7 +115,7 @@ mod tests {
             else {assert_eq!(node.col,1,"{}",node.name);}
             assert!(NODES.iter().enumerate().all(|(o,other)|o==id||(other.col,other.row)!=(node.col,node.row)));
         }
-        assert_eq!(Law((1<<NODES.len())-1).score(),460);
+        assert_eq!(Law(((1u64<<NODES.len())-1) as u32).score(),480);
     }
     #[test]
     fn selection_follows_paths_and_cascades() {
@@ -119,7 +123,7 @@ mod tests {
         let law=Law::default().toggle(0).toggle(1).toggle(2);assert_eq!(law.score(),60);
         assert_eq!(law.toggle(1),Law::default().toggle(0),"removing a node removes its successors");
         let all=(0..NODES.len()).fold(Law::default(),|l,id|l.toggle(id));
-        assert_eq!(all.score(),460);assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
+        assert_eq!(all.score(),480);assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
         assert_eq!(Law::default().grade(),None);assert_eq!(Law::default().toggle(24).toggle(25).toggle(26).toggle(0).grade(),Some("老练"));
         assert!(!Law(1<<1).valid());
     }
@@ -133,7 +137,8 @@ mod tests {
         assert_eq!((law(&[19,20,21]).price_percent(),law(&[19,20,21,22]).price_percent()),(115,130));
         assert_eq!((law(&[24]).time_limit(),law(&[24,25]).time_limit(),law(&[]).time_limit()),(Some(180),Some(120),None));
         let all=law(&(0..NODES.len()).collect::<Vec<_>>());
-        assert!(all.lone_wolf()&&all.stingy()&&all.envy_world()&&all.elite_affixes());
+        assert!(all.lone_wolf()&&all.stingy()&&all.envy_world()&&all.elite_affixes()&&all.empowered_affixes());
+        assert!(!law(&[3,4]).empowered_affixes()&&law(&[3,4,5,31]).empowered_affixes());
         assert_eq!((all.fragile(),all.fatigue(),all.focus(),all.toughness()),(3,2,2,2));
     }
     #[test]

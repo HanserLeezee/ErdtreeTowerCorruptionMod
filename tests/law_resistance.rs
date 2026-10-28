@@ -2,7 +2,7 @@ use erdtree_tower::law::{Law,NODES};
 
 #[test]
 fn resistance_paths_are_independent_and_preserve_old_codes() {
-    assert_eq!(NODES.len(),31);
+    assert_eq!(NODES.len(),32);
     let elements=Law::default().toggle(27).toggle(28);
     let status=Law::default().toggle(29).toggle(30);
     assert_eq!(elements.selected(),vec![27,28]);
@@ -10,12 +10,19 @@ fn resistance_paths_are_independent_and_preserve_old_codes() {
     assert_eq!(elements.toggle(27),Law::default());
     assert_eq!(status.toggle(29),Law::default());
     assert_eq!(Law::default().toggle(30),Law::default());
-    for mask in [0,(1<<27)-1,elements.0,status.0,(1<<31)-1] {
+    for mask in [0,(1<<27)-1,elements.0,status.0,(1<<31)-1,u32::MAX] {
         let law=Law(mask);assert!(law.valid());
         assert_eq!(Law::parse(&law.code()),Some(law));
     }
     assert_eq!(Law((1<<27)-1).code().len(),7);
     assert_eq!(status.code().len(),8);
+    // 第 32 个节点「词条强化」接在精英词条之后，占用最高位，旧律法码不变
+    assert_eq!(Law::default().toggle(31),Law::default());
+    let empowered=Law::default().toggle(3).toggle(4).toggle(5).toggle(31);
+    assert!(empowered.empowered_affixes()&&empowered.valid());
+    assert_eq!(Law::parse(&empowered.code()),Some(empowered));
+    assert_eq!(empowered.toggle(5),Law::default().toggle(3).toggle(4));
+    assert!(!Law(1<<31).valid());
 }
 
 #[test]

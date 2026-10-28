@@ -64,25 +64,37 @@ static class BossAssets {
     }
     // 之后追加的 Boss（boss-pool.txt 末尾）：为还没有参数行的部件补上 950000000 + 序号×2（精英 +1），
     // 做法与 Build + BalanceAssets 相同（复制原版行、去掉掉落、允许重复遭遇、按幕给卢恩、生命与卢恩按爬塔倍率）。已有行不动，可重复运行；
-    // 之后要再运行 tower-scaling-patch，把原版（含 DLC）的区域强度换成爬塔档位
+    // 换了来源行的（例如蕾娜菈从一阶段 20300124 换成二阶段 20310124）重建。之后要再运行 tower-scaling-patch，把原版（含 DLC）的区域强度换成爬塔档位
+    static readonly string[] Managed={"hp","itemLotId_enemy","itemLotId_map","isSoulGetByBoss","getSoul","disableRespawn"};
+    static bool SourceChanged(PARAM.Row row,PARAM.Row source)=>row.Cells.Any(c=>{
+        var name=c.Def.InternalName;var value=source[name].Value;
+        if(Managed.Contains(name))return false;
+        if(name.StartsWith("spEffectID")&&(TowerScalingAssets.AreaScaling(Convert.ToInt32(c.Value))||TowerScalingAssets.AreaScaling(Convert.ToInt32(value))))return false;
+        return !System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,value);
+    });
     public static void Append(string input,string output) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
         BinderFile File_(string name)=>reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))==name);
         PARAM Read(string name) {var p=PARAM.Read(File_(name).Bytes);p.ApplyParamdef(PARAMDEF.XmlDeserialize($"work/SoulsRandomizers/diste/Defs/{name}.xml"));return p;}
         var npcs=Read("NpcParam");var ai=Read("NpcThinkParam");var before=npcs.Rows.Count;var original=npcs.Rows.ToDictionary(r=>r.ID,r=>new PARAM.Row(r));
-        var parts=Parts(input);var added=new List<int>();
+        var parts=Parts(input);var added=new List<int>();var rebuilt=new List<int>();
         foreach(var p in parts) {
             if(!ai.Rows.Any(r=>r.ID==p.Think))throw new Exception($"Missing boss AI: {p.Name}");
             var source=npcs.Rows.SingleOrDefault(r=>r.ID==p.Source)??throw new Exception($"Missing boss source parameters: {p.Name}");
             foreach(bool elite in new[]{false,true}) {
-                int id=Npc(p,elite);if(npcs.Rows.Any(r=>r.ID==id))continue;
+                int id=Npc(p,elite);var existing=npcs.Rows.SingleOrDefault(r=>r.ID==id);
+                if(existing!=null) {
+                    if(!SourceChanged(existing,source))continue;
+                    if(p.Index<140)throw new Exception($"Only appended bosses may change their source: {p.Name}");
+                    npcs.Rows.Remove(existing);rebuilt.Add(id);
+                }
                 if(p.Label.StartsWith("tower_champion_"))throw new Exception("Champion bosses must come from the full build");
                 var row=new PARAM.Row(source){ID=id,Name=p.Name};
                 int runes=(elite?p.Runes/3:p.Runes)/parts.Count(member=>member.Encounter==p.Encounter);
                 foreach(var (field,value) in new (string,object)[]{("itemLotId_enemy",-1),("itemLotId_map",-1),("isSoulGetByBoss",0),("disableRespawn",0),
                     ("getSoul",BalanceAssets.Scale(runes)),("hp",BalanceAssets.ScaleHp(Convert.ToInt64(source["hp"].Value)))})row[field].Value=Convert.ChangeType(value,row[field].Value.GetType());
-                npcs.Rows.Add(row);added.Add(id);
+                npcs.Rows.Add(row);if(existing==null)added.Add(id);
             }
         }
         npcs.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));File_("NpcParam").Bytes=npcs.Write();
@@ -94,9 +106,9 @@ static class BossAssets {
         foreach(var f in check.Files.Where(f=>others.ContainsKey(f.Name)))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
         var after=PARAM.Read(check.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="NpcParam").Bytes);after.ApplyParamdef(npcs.AppliedParamdef);
         if(after.Rows.Count!=before+added.Count)throw new Exception("Unexpected NpcParam row count");
-        foreach(var row in after.Rows.Where(r=>original.ContainsKey(r.ID)))foreach(var cell in row.Cells)
+        foreach(var row in after.Rows.Where(r=>original.ContainsKey(r.ID)&&!rebuilt.Contains(r.ID)))foreach(var cell in row.Cells)
             if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,original[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing NpcParam changed: {row.ID}");
-        Console.WriteLine($"Added {added.Count} late boss parameter rows ({string.Join(",",added)}); existing rows and other params unchanged");
+        Console.WriteLine($"Added {added.Count} late boss parameter rows ({string.Join(",",added)}), rebuilt {rebuilt.Count} with a new source ({string.Join(",",rebuilt)}); other rows and params unchanged");
     }
     public static void Verify(string output,Func<string,PARAM> read) {
         var parts=Parts(output);var npcs=read("NpcParam");var ai=read("NpcThinkParam");

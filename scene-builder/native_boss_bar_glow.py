@@ -4,7 +4,8 @@ The bar name field is BossList.Item_N_0.Name.Text; the HUD has no document class
 red fill (Current, _01_000_FE_fla.BossFE_Bar_Ani_40) and reaches the name two levels up. Bar names written by text-update look like
 "狂暴的·黄金律法的 “恶兆妖鬼”玛尔基特": affix words joined by "·", one space, then the boss name. Only a prefix whose every word is a known affix
 (src/boss_affixes.rs Affix::name) is coloured; colours follow native/src/fancy_text.rs affix_style. Usage:
-python scene-builder/native_boss_bar_glow.py --ffdec <ffdec.jar> --original <dir with 01_000_fe.gfx> --output <new dir> [--java <java>]
+python scene-builder/native_boss_bar_glow.py --ffdec <ffdec.jar> --original <dir with 01_000_fe.gfx> --output <new dir> [--java <java>] [--rebase]
+--rebase: --original 里是已经打过这个补丁的 HUD（例如仓库里的 scene-assets/menu），只替换效果代码（词条名改了之后用）
 """
 import argparse
 import hashlib
@@ -24,7 +25,7 @@ CLASS = 'BossFE_Bar_Ani_40'
 AFFIXES = [
     ('坚毅的', 0xC4B696, 0xF4E2B2), ('铁壁的', 0x8CACCC, 0xE4F0FF), ('狂暴的', 0xE84834, 0xFFAA5A),
     ('再生的', 0x70CC7C, 0xCCFFC4), ('腐败的', 0xCE523E, 0xF49260), ('嫉妒的', 0xA060D6, 0xD2AAF0),
-    ('傲慢的', 0xF4EEE0, 0xFFD68C), ('黄金律法的', 0xF2C85C, 0xFFF8D2), ('涅槃的', 0xF4963E, 0xFFE080),
+    ('傲慢的', 0xF4EEE0, 0xFFD68C), ('黄金律法的', 0xF2C85C, 0xFFF8D2), ('不屈的', 0xF4963E, 0xFFE080),
     ('吸血的', 0xCC2036, 0xFF6074), ('荆棘的', 0xAC2A2A, 0xE86054), ('迅猛的', 0x5CDECC, 0xCCFFF6),
 ]
 
@@ -170,16 +171,28 @@ def members():
 '''
 
 
-def patch_source(source):
+def patch_source(source, rebase=False):
     anchor = f'      public function {CLASS}()'
     frame = 'addFrameScript(0,this.frame1);'
+    if rebase:
+        # 已打过补丁：效果代码保持原样，只按当前词条表替换名字、主色与亮色三张表（词条改名、调色后用）
+        import re
+        tables = {'towerAffixNames': '[' + ','.join(escape(name) for name, _, _ in AFFIXES) + ']',
+                  'towerAffixColors': '[' + ','.join(str(color) for _, color, _ in AFFIXES) + ']',
+                  'towerAffixAccents': '[' + ','.join(str(accent) for _, _, accent in AFFIXES) + ']'}
+        for name, value in tables.items():
+            pattern = re.compile(r'(private var ' + name + r':Array = )\[[^\]]*\];')
+            if len(pattern.findall(source)) != 1:
+                raise ValueError('Rebase expects a menu patched by this script')
+            source = pattern.sub(lambda m: m.group(1) + value + ';', source)
+        return source
     if source.count(anchor) != 1 or source.count(frame) != 1 or 'towerBarUpdate' in source:
         raise ValueError('Unexpected boss bar class; refusing to patch')
     source = source.replace(anchor, members() + '\n' + anchor)
     return source.replace(frame, frame + '\n         addEventListener(flash.events.Event.ENTER_FRAME,this.towerBarUpdate);')
 
 
-def build(ffdec, original, output, java='java'):
+def build(ffdec, original, output, java='java', rebase=False):
     output.mkdir(parents=True, exist_ok=False)
     (output / 'menu').mkdir()
 
@@ -199,7 +212,7 @@ def build(ffdec, original, output, java='java'):
         script = tmp / 'before' / 'scripts' / relative
         changed = tmp / 'changed' / relative
         changed.parent.mkdir(parents=True)
-        changed.write_text(patch_source(script.read_text(encoding='utf-8-sig')), encoding='utf-8')
+        changed.write_text(patch_source(script.read_text(encoding='utf-8-sig'), rebase), encoding='utf-8')
         run('-importScript', src, dst, tmp / 'changed')
         count = glow.verify_tags(src.read_bytes(), dst.read_bytes())
         run('-export', 'script', tmp / 'after', dst)
@@ -212,7 +225,7 @@ def build(ffdec, original, output, java='java'):
         if 'towerBarUpdate' not in actual or 'GlowFilter' not in actual or 'towerAffixNames' not in actual:
             raise ValueError('Compiled boss bar effect missing')
         (output / (STEM + '.as')).write_text(actual, encoding='utf-8')
-    manifest = {'experimental': True, 'gameVerified': False, 'clock': 'ENTER_FRAME / 30; avoids GFx getTimer ReferenceError #1065', 'class': f'{PACKAGE}.{CLASS}', 'field': 'BossList.Item_N_0.Name.Text',
+    manifest = {'experimental': True, 'rebasedFromPatched': rebase, 'gameVerified': False, 'clock': 'ENTER_FRAME / 30; avoids GFx getTimer ReferenceError #1065', 'class': f'{PACKAGE}.{CLASS}', 'field': 'BossList.Item_N_0.Name.Text',
                 'effect': 'affix words coloured per affix and flowing towards a lighter tone; boss name flows between its colour and gold with a bright white-gold glint; thin gold rim, upward flickering plume and breathing outer glow tinted by the first affix',
                 'files': [{'file': 'menu/' + src.name, 'originalSha256': hashlib.sha256(src.read_bytes()).hexdigest(),
                            'patchedSha256': hashlib.sha256(dst.read_bytes()).hexdigest(), 'tagsVerified': count, 'changedTag': 'DoABC'}]}
@@ -226,5 +239,6 @@ if __name__ == '__main__':
     parser.add_argument('--original', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--java', default='java')
+    parser.add_argument('--rebase', action='store_true', help='--original holds a HUD already patched by this script')
     args = parser.parse_args()
-    build(args.ffdec.resolve(), args.original.resolve(), args.output.resolve(), args.java)
+    build(args.ffdec.resolve(), args.original.resolve(), args.output.resolve(), args.java, args.rebase)

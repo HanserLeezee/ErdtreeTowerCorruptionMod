@@ -5,8 +5,8 @@ fn spirit_levels_are_valid_stable_and_cover_zero_to_ten() {
     for (min,max) in [(0,10)] {
         let mut seen=std::collections::BTreeSet::new();
         for seed in 0..1000 {
-            let id=rewards::random_spirit_level(base,seed);
-            assert_eq!(id,rewards::random_spirit_level(base,seed));
+            let id=rewards::random_spirit_level(base,seed,10);
+            assert_eq!(id,rewards::random_spirit_level(base,seed,10));
             assert!((min..=max).contains(&(id-base)));seen.insert(id-base);
             assert_eq!(rewards::lookup(id).unwrap().kind,ItemKind::Spirit);
         }

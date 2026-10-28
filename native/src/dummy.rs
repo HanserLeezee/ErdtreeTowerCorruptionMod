@@ -1,5 +1,6 @@
 // 营地侧边的测伤假人：落地后固定姿态，保留伤害结算；停手时隐藏统计面板。
 // 按它每帧掉的生命统计伤害（出血、中毒等状态伤害也算）：从第一击开始一轮，停手 4 秒后结算；万一一击打空血条，按满血计并在 1 秒后重新生成。
+// 出血、中毒、腐败、冻伤按最大生命的百分比扣血，所以假人的生命取本幕 Boss 的典型生命（health），每帧补满，DPS 与实战一致。
 use eldenring::cs::{ChrDebugSpawnRequest,ChrIns,ChrLoadStatus,FieldInsHandle,NpcParam,NpcThinkParam,SoloParamRepository,WorldChrMan};
 use fromsoftware_shared::{F32Vector4,FromStatic};
 use std::time::{Duration,Instant};
@@ -10,8 +11,9 @@ const NPC:i32=900000000+MODEL*10000;
 const THINK:i32=MODEL*10000;
 /// 停手多久结算一轮（秒）
 const IDLE:f64=4.0;
-// 游戏会将过高的生命值压回 524287，保持在该上限以内。
-const HEALTH:i32=500_000;
+/// 假人的生命：各幕单体 Boss 打到幕末的典型生命（中位数约 3100 / 8100 / 22800，取宽一些，避免一击打空）
+pub const HEALTH:[i32;3]=[5_000,12_000,30_000];
+pub fn health(act:u8)->i32 {HEALTH[usize::from(act.clamp(1,3)-1)]}
 
 fn damage_since_refill(previous:i32,hp:i32,max:i32)->u32 {
     previous.min(max.max(0)).saturating_sub(hp.max(0)).max(0) as u32
@@ -21,9 +23,9 @@ fn placement(me:[f32;3],yaw:f32)->[f32;3] {
     let (sin,cos)=yaw.sin_cos();
     [me[0]-sin*2.0+cos*8.0,me[1]+0.1,me[2]-cos*2.0-sin*8.0]
 }
-fn refill(chr:&mut ChrIns) {
+fn refill(chr:&mut ChrIns,health:i32) {
     let data=&mut chr.modules.data;
-    data.base_hp=HEALTH;data.max_uncapped_hp=HEALTH;data.max_hp=HEALTH;data.hp=HEALTH;
+    data.base_hp=health;data.max_uncapped_hp=health;data.max_hp=health;data.hp=health;
 }
 
 /// 一轮的统计
@@ -56,7 +58,7 @@ impl Meter {
 
 /// 界面上显示的内容
 #[derive(Clone,Copy,Debug,Default)]
-pub struct View {pub active:Option<Round>,pub last_hit:u32,pub overflow:bool}
+pub struct View {pub active:Option<Round>,pub last_hit:u32,pub overflow:bool,pub health:i32,pub act:u8}
 
 #[derive(Default)]
 pub struct Dummy {
@@ -66,6 +68,8 @@ pub struct Dummy {
     failed:bool,
     last_hp:i32,
     overflow:bool,
+    /// 当前所在幕（决定假人的生命）
+    act:u8,
     meter:Meter,
     spot:Option<([f32;3],f32)>,
     anchor:Option<[f32;3]>,
@@ -78,7 +82,7 @@ impl Dummy {
         if let Some((start,at,view))=self.display {
             if start==first&&now>=at&&now-at<0.5 {return view;}
         }
-        let view=View{active:self.meter.active(now),last_hit:self.meter.last_hit,overflow:self.overflow};
+        let view=View{active:self.meter.active(now),last_hit:self.meter.last_hit,overflow:self.overflow,health:health(self.act),act:self.act.clamp(1,3)};
         self.display=Some((first,now,view));view
     }
     fn hold(&mut self,chr:&mut ChrIns,origin:[f32;3]) {
@@ -103,8 +107,8 @@ impl Dummy {
         chr.modules.super_armor.sa_durability=chr.modules.super_armor.sa_durability_max;
         chr.modules.super_armor.poise_broken_state=false;
     }
-    pub fn tick(&mut self,world:&mut WorldChrMan,now:f64)->Result<(),String> {
-        self.meter.tick(now);
+    pub fn tick(&mut self,world:&mut WorldChrMan,now:f64,act:u8)->Result<(),String> {
+        self.meter.tick(now);self.act=act;let health=health(act);
         let Some(player)=world.main_player.as_ref() else{return Ok(());};
         let p=player.chr_ins.modules.physics.position;
         let origin=[p.0-player.block_position.x,p.1-player.block_position.y,p.2-player.block_position.z];
@@ -125,7 +129,7 @@ impl Dummy {
                 self.bound=None;self.anchor=None;self.respawn_at=Some(Instant::now()+Duration::from_secs(1));
                 return Ok(());
             }
-            refill(chr);self.last_hp=HEALTH;
+            refill(chr,health);self.last_hp=health;
             self.hold(chr,origin);
             return Ok(());
         }
@@ -136,7 +140,7 @@ impl Dummy {
                 if chr.npc_param_id==NPC&&chr.modules.data.hp>0
                     &&matches!(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status,ChrLoadStatus::Active|ChrLoadStatus::ReadyForActivation)
                     &&let Some(chr)=world.chr_ins_by_handle_mut(&handle).filter(|c|std::ptr::from_ref(*c) as usize==address) {
-                    refill(chr);self.last_hp=HEALTH;
+                    refill(chr,health);self.last_hp=health;
                     self.hold(chr,origin);
                     self.bound=Some((handle,address));self.requested=None;world.debug_chr_creator.last_created_chr=None;
                     super::log(format!("Damage dummy bound: handle={handle}"));
@@ -200,6 +204,7 @@ pub fn draw_hud(ui:&hudhook::imgui::Ui,view:&View) {
             lines.push((format!("DPS  {:.1}",round.dps()),white,30.0));
             lines.push((format!("本轮 {} 伤害 · {} 击 · {:.1} 秒",number(round.total),round.hits,round.seconds),white,19.0));
             lines.push((format!("最近一击 {} · 最高 {}",number(u64::from(view.last_hit)),number(u64::from(round.biggest))),dim,19.0));
+            lines.push((format!("生命 {}（第 {} 幕 Boss 典型值，出血等按比例结算）",number(view.health as u64),view.act),dim,17.0));
             lines.push(("停手 4 秒后隐藏".into(),dim,17.0));
     if view.overflow {lines.push(("有一击超过假人生命上限，按满血计".into(),warn,17.0));}
     let height:f32=lines.iter().map(|(_,_,k)|k*s+6.0*s).sum::<f32>()+20.0*s;
@@ -235,15 +240,18 @@ mod tests {
     use super::*;
     #[test]
     fn health_cap_adjustments_do_not_count_as_damage() {
-        assert!(HEALTH<=524_287);
+        assert!(HEALTH.iter().all(|h|*h<=524_287)&&HEALTH.windows(2).all(|w|w[0]<w[1]));
+        assert_eq!((health(0),health(1),health(3),health(9)),(HEALTH[0],HEALTH[0],HEALTH[2],HEALTH[2]));
         let mut meter=Meter::default();
         for frame in 0..626 {meter.hit(damage_since_refill(10_000_000,524_287,524_287),frame as f64/60.0);}
         assert_eq!(meter,Meter::default());
-        assert_eq!(damage_since_refill(HEALTH,HEALTH,524_287),0);
-        assert_eq!(damage_since_refill(HEALTH,HEALTH-1234,524_287),1234);
-        assert_eq!(damage_since_refill(HEALTH,900,1000),100);
-        assert_eq!(damage_since_refill(HEALTH,0,HEALTH),HEALTH as u32);
-        assert_eq!(damage_since_refill(HEALTH,0,0),0);
+        for full in HEALTH {
+            assert_eq!(damage_since_refill(full,full,full),0);
+            assert_eq!(damage_since_refill(full,full-1234,full),1234);
+            assert_eq!(damage_since_refill(full,0,full),full as u32);
+        }
+        assert_eq!(damage_since_refill(HEALTH[0],900,1000),100);
+        assert_eq!(damage_since_refill(HEALTH[0],0,0),0);
     }
     #[test]
     fn hud_only_shows_during_damage_rounds() {
