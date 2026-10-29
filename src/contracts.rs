@@ -94,14 +94,14 @@ pub const MAX_LEVEL:u8=3;
 pub const LIFELINE_SECONDS:[u8;3]=[10,15,20];
 /// 新规则每幕的新誓约数量（新誓约补丁开启时）
 pub const OFFERS:usize=3;
-/// [HansFix] 新誓约补丁开关：开启时新规则从全部 16 种里给 3 张，关闭时与官方版一致（最初 10 种里给 2 张）。
-/// 核心库默认开启（测试按新规则写）；DLL 启动时按补丁标记文件设置。
+/// [HansFix] 新誓约的效果行是否在 regulation 里（堕落模式补丁带的 regulation 才有）。核心库默认开启；DLL 按补丁标记设置。
 static EXTENDED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(true);
 pub fn set_extended(on:bool) {EXTENDED.store(on,std::sync::atomic::Ordering::Relaxed);}
 pub fn extended()->bool {EXTENDED.load(std::sync::atomic::Ordering::Relaxed)}
 /// 当前可出现的誓约
-pub fn pool()->&'static [Kind] {if extended() {&Kind::ALL} else {&Kind::LEGACY}}
-fn offer_count()->usize {if extended() {OFFERS} else {2}}
+/// 每幕誓约界面的誓约池：始终与官方相同（新誓约只在堕落首领处出现，见 fallen_oaths）
+pub fn pool()->&'static [Kind] {&Kind::LEGACY}
+fn offer_count()->usize {2}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct Oath {pub kind:Kind,pub level:u8}
 /// 誓约界面上的一张卡

@@ -402,7 +402,8 @@ impl ImguiRenderLoop for TowerPreview {
                             format!("生命 {}/{}    专注 {}/{}", s.hp, s.max_hp, s.fp, s.max_fp)
                         })
                         .unwrap_or_default();
-                    if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
+                    if run.fallen_oath_pending() {self.rewards.draw_fallen_oaths(ui,run,view);}
+                    else if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
                     else if run.contract_pending()||matches!(run.phase,Phase::Reward{..}) {self.rewards.draw(ui,run,view);}
                     else {
                         map_ui::draw(ui, run, view, &vitals);

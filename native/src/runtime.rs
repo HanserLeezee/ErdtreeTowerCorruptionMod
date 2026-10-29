@@ -63,6 +63,8 @@ pub enum Action {
     Gear(usize),
     SkipGear,
     SkipContract,
+    /// [HansFix] 堕落首领第三页：立一份堕落誓约（None 为不立）
+    FallenOath(Option<usize>),
     /// 开局前切换堕落模式
     ToggleWander,
 }
@@ -1683,7 +1685,7 @@ fn tick_locked() {
         super::log(format!("DEBUG_MENU {message}"));report(&mut state,message);
     }
     if let Some(action) = state.command.take() {
-        let journaled=state.party.is_some()&&matches!(action,Action::KeepCurrency|Action::Story(_)|Action::Claim(_)|Action::Camp(_));
+        let journaled=state.party.is_some()&&matches!(action,Action::KeepCurrency|Action::Story(_)|Action::Claim(_)|Action::Camp(_)|Action::FallenOath(_));
         let story_message=if let Action::Story(choice)=action {
             state.view.run.as_ref().filter(|r|r.story_index().is_ok()).map(|r|erdtree_tower::events::story_outcome(r,choice))
         }else{None};
@@ -1697,7 +1699,7 @@ fn tick_locked() {
             Action::ToggleWander => toggle_wander(&mut state),
             Action::KeepCurrency => transact(&mut state, world, action, journaled),
             Action::Contract(_) | Action::Gear(_) | Action::SkipGear | Action::SkipContract => contract_action(&mut state,world,action),
-            Action::Story(_) | Action::Claim(_) | Action::Camp(_) => {
+            Action::Story(_) | Action::Claim(_) | Action::Camp(_) | Action::FallenOath(_) => {
                 transact(&mut state, world, action, journaled)
             }
         };
@@ -1956,6 +1958,8 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         },
         Action::Story(choice) => {effect = next.resolve_story(choice)?;item_reward=item_reward.or(effect.item);},
         Action::KeepCurrency => next.decline_reward()?,
+        Action::FallenOath(Some(index)) => next.choose_fallen_oath(index)?,
+        Action::FallenOath(None) => {if !next.fallen_oath_pending() {return Err("现在不是选择堕落誓约的时候".into());}next.decline_reward()?},
         _ => return Err("无效节点行动".into()),
     }
     let (mut next_hp, mut next_fp) =

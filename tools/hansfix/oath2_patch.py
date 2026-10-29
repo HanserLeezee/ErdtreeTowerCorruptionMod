@@ -52,6 +52,22 @@ for lvl, seconds in zip((3, 4, 5), LIFELINE_SECONDS):
     plain(LIFELINE, lvl + 3, dict({'noDead': 1, 'consumeStaminaRate': 0.10, 'effectEndurance': seconds},
                                   **{f'{c}DamageCutRate': 0.0 for c in CUTS}))
 plain(LIFELINE, 1, {'maxHpRate': 0.90})
+# r13 fallen-oath curses: 9600200 + kind*10 + (level-1) negative, +5 positive (the same effect reversed).
+# kinds: 0 max HP, 1 magic/fire/lightning/holy damage taken, 2 max stamina, 3 stamina cost, 4 FP cost, 5 skill damage
+CURSE_FIRST = 9600200
+SKILL_TEMPLATE = 9600001   # Steel oath drawback: attack rates limited to weapon skills via magicSubCategoryChange 112/111
+LOW, HIGH = (0.08, 0.10, 0.12), (0.10, 0.12, 0.15)
+for lvl in range(3):
+    for positive in (False, True):
+        off = lvl + (5 if positive else 0)
+        lo, hi = LOW[lvl], HIGH[lvl]
+        sign = -1 if positive else 1      # positive = the curse reversed
+        SPEC[CURSE_FIRST + 0 + off] = (TEMPLATE, {'maxHpRate': 1 - sign * lo, 'changeHpEstusFlaskCorrectRate': 1.0})
+        SPEC[CURSE_FIRST + 10 + off] = (TEMPLATE, dict({f'{c}DamageCutRate': 1 + sign * hi for c in ('magic', 'fire', 'thunder', 'dark')}, changeHpEstusFlaskCorrectRate=1.0))
+        SPEC[CURSE_FIRST + 20 + off] = (TEMPLATE, {'maxStaminaRate': 1 - sign * lo, 'changeHpEstusFlaskCorrectRate': 1.0})
+        SPEC[CURSE_FIRST + 30 + off] = (TEMPLATE, {'consumeStaminaRate': 1 + sign * lo, 'changeHpEstusFlaskCorrectRate': 1.0})
+        SPEC[CURSE_FIRST + 40 + off] = (TEMPLATE, {f'{c}ConsumptionRate': 1 + sign * lo for c in ('magic', 'miracle', 'arts')} | {'changeHpEstusFlaskCorrectRate': 1.0})
+        SPEC[CURSE_FIRST + 50 + off] = (SKILL_TEMPLATE, {f'{e}AttackRate': 1 - sign * hi for e in ('physics', 'magic', 'fire', 'thunder', 'dark')})
 
 reg = Regulation(SRC)
 fields, size = load_def(DEF)
@@ -73,7 +89,7 @@ def build(rid):
 
 if not existing:
     for rid in SPEC:
-        param.rows.append([rid, build(rid), 'Tower oath HansFix6'])
+        param.rows.append([rid, build(rid), 'Tower fallen oath curse' if rid >= CURSE_FIRST else 'Tower oath HansFix6'])
     param.rows.sort(key=lambda r: r[0])
     reg.bnd.replace(entry, param.write())
     reg.save(OUT)

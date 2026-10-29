@@ -139,6 +139,10 @@ fn card_summary(detail:&Detail)->String {
     }
     detail.caption.split("\n\n").next().unwrap_or("").replace('\n',"")
 }
+const OATH_LEVELS:[&str;4]=["","I","II","III"];
+/// 誓约界面上的一张卡：插画、标题、角标说明、逐段说明（文字, 颜色）、描边颜色
+struct OathCard {art:usize,title:String,label:Option<String>,lines:Vec<(String,[f32;4])>,accent:Option<(u8,u8,u8)>}
+struct OathScreen {key:String,heading:String,title:&'static str,subtitle:String,held:Option<String>,cards:Vec<OathCard>,confirm:&'static str,skip:&'static str,dense:bool,choose:fn(usize)->Action,skip_action:Action}
 /// [HansFix] 堕落装备词条说明的浅红色（与游戏内文字 #FF9C8C 相同）
 pub const LIGHT_RED:[f32;4]=[1.0,0.612,0.549,1.0];
 fn curse_detail(detail:&mut Detail,cursed:&erdtree_tower::descent::Cursed) {
@@ -185,33 +189,64 @@ impl Panel {
     }
     pub fn draw_contract(&mut self,ui:&Ui,run:&Run,view:&View) {
         let Some(contract)=run.contract.as_ref().filter(|c|c.selection_pending())else{return;};
+        let fresh=contract.rules==1;
+        use erdtree_tower::contracts::Card;
+        let green=[0.64,0.83,0.58,1.0];let red=[0.91,0.49,0.40,1.0];
+        let cards:Vec<OathCard>=contract.cards().into_iter().map(|card|match card {
+            Card::Oath(kind) if fresh=>OathCard{art:kind.art(),title:format!("{} I",kind.name()),label:None,lines:vec![(kind.boon_at(1),green),(kind.bane_at().to_owned(),red)],accent:None},
+            Card::Oath(kind)=>OathCard{art:kind.art(),title:kind.name().to_owned(),label:None,lines:vec![(kind.boon().to_owned(),green),(kind.bane().to_owned(),red)],accent:None},
+            Card::Deepen(kind)=>{
+                let level=(contract.level(kind).unwrap_or(1)+1).min(3);
+                OathCard{art:kind.art(),title:format!("{} {}",kind.name(),OATH_LEVELS[usize::from(level)]),label:Some(format!("深化 · {} 升至 {}",OATH_LEVELS[usize::from(level-1)],OATH_LEVELS[usize::from(level)])),
+                    lines:vec![(kind.boon_at(level),green),("代价不变 · 获得圣杯滴露 ×1".to_owned(),red)],accent:Some((236,196,104))}
+            },
+        }).collect();
+        let count=cards.len();
+        let number=["","一","二","三","四","五"].get(count).copied().unwrap_or("多");
+        let subtitle=if !fresh {format!("{number}选一 · 本幕生效")}else if contract.deepen.is_some() {format!("{number}选一 · 誓约整局保留，可以深化")}else{format!("{number}选一 · 誓约整局保留")};
+        let held=(fresh&&!contract.held.is_empty()).then(||format!("已立誓约：{}",contract.held.iter().map(|o|format!("{} {}",o.kind.name(),OATH_LEVELS[usize::from(o.level.min(3))])).collect::<Vec<_>>().join(" · ")));
+        let screen=OathScreen{key:format!("contract:{}:{}:{:?}",run.seed,run.act,contract.cards()),heading:format!("第 {} 幕",run.act),title:"立 下 誓 约",subtitle,held,
+            cards,confirm:"确认誓约   Enter / A",skip:"跳过誓约   Esc / B",dense:false,choose:Action::Contract,skip_action:Action::SkipContract};
+        self.draw_oath_screen(ui,view,screen);
+    }
+    /// [HansFix] 堕落首领的第三页：新誓约（带随机词条）三选一，已立的未满级时多一张深化卡；可以跳过
+    pub fn draw_fallen_oaths(&mut self,ui:&Ui,run:&Run,view:&View) {
+        if !run.fallen_oath_pending() {return;}
+        use erdtree_tower::fallen_oaths::Card;
+        let green=[0.64,0.83,0.58,1.0];let red=[0.91,0.49,0.40,1.0];
+        let lines=|oath:&erdtree_tower::fallen_oaths::FallenOath|oath.lines().into_iter().map(|(t,good)|(t,if good{green}else{red})).collect::<Vec<_>>();
+        let cards:Vec<OathCard>=run.fallen_oath_cards().into_iter().map(|card|match card {
+            Card::New(oath)=>OathCard{art:oath.kind.art(),title:format!("{} I",oath.kind.name()),label:None,lines:lines(&oath),accent:Some((200,60,52))},
+            Card::Deepen(i)=>{
+                let mut oath=run.fallen_oaths[i];oath.level=(oath.level+1).min(3);
+                OathCard{art:oath.kind.art(),title:format!("{} {}",oath.kind.name(),OATH_LEVELS[usize::from(oath.level)]),
+                    label:Some(format!("深化 · {} 升至 {}",OATH_LEVELS[usize::from(oath.level-1)],OATH_LEVELS[usize::from(oath.level)])),lines:lines(&oath),accent:Some((236,196,104))}
+            },
+        }).collect();
+        let count=cards.len();
+        let number=["","一","二","三","四","五"].get(count).copied().unwrap_or("多");
+        let held=(!run.fallen_oaths.is_empty()).then(||format!("已立堕落誓约：{}",run.fallen_oaths.iter().map(|o|format!("{} {}",o.kind.name(),OATH_LEVELS[usize::from(o.level.min(3))])).collect::<Vec<_>>().join(" · ")));
+        let screen=OathScreen{key:format!("fallen-oath:{}:{}:{:?}",run.seed,run.act,run.fallen_oath_cards()),heading:"堕落首领 · 第三份奖励".to_owned(),title:"堕 落 誓 约",
+            subtitle:format!("{number}选一 · 整局保留，可在之后的堕落首领处深化 · 词条随誓约等级变强"),held,cards,
+            confirm:"立下誓约   Enter / A",skip:"不立誓约   Esc / B",dense:true,choose:|i|Action::FallenOath(Some(i)),skip_action:Action::FallenOath(None)};
+        self.draw_oath_screen(ui,view,screen);
+    }
+    fn draw_oath_screen(&mut self,ui:&Ui,view:&View,screen:OathScreen) {
         let now=ui.time();
-        self.selection.sync(format!("contract:{}:{}:{:?}",run.seed,run.act,contract.cards()),now);
+        self.selection.sync(screen.key.clone(),now);
         let ready=view.ready&&!view.busy&&now>=self.selection.armed_at;
         let key=|keys:&[Key]|keys.iter().any(|k|ui.is_key_pressed_no_repeat(*k));
-        let count=contract.options();
+        let count=screen.cards.len();
         if ready {
             if key(&[Key::A,Key::LeftArrow,Key::GamepadDpadLeft]){self.selection.step(-1,count);}
             if key(&[Key::D,Key::RightArrow,Key::GamepadDpadRight]){self.selection.step(1,count);}
         }
-        const LEVELS:[&str;4]=["","I","II","III"];
-        let fresh=contract.rules==1;
-        use erdtree_tower::contracts::Card;
-        // (贴图, 标题, 角标说明, 增益, 代价, 描边颜色)
-        let cards:Vec<(usize,String,Option<String>,String,String,Option<(u8,u8,u8)>)>=contract.cards().into_iter().map(|card|match card {
-            Card::Oath(kind) if fresh=>(kind.art(),format!("{} I",kind.name()),None,kind.boon_at(1),kind.bane_at().to_owned(),None),
-            Card::Oath(kind)=>(kind.art(),kind.name().to_owned(),None,kind.boon().to_owned(),kind.bane().to_owned(),None),
-            Card::Deepen(kind)=>{
-                let level=(contract.level(kind).unwrap_or(1)+1).min(3);
-                (kind.art(),format!("{} {}",kind.name(),LEVELS[usize::from(level)]),Some(format!("深化 · {} 升至 {}",LEVELS[usize::from(level-1)],LEVELS[usize::from(level)])),kind.boon_at(level),"代价不变 · 获得圣杯滴露 ×1".to_owned(),Some((236,196,104)))
-            },
-        }).collect();
         // [HansFix] 原十种誓约共用 6 张插画：同一次选择里不重复；新誓约有各自的封面（6–11）
-        let mut cards=cards;let mut used=Vec::new();
+        let mut cards=screen.cards;let mut used=Vec::new();
         for card in cards.iter_mut() {
-            let mut art=card.0;
+            let mut art=card.art;
             while art<6&&used.contains(&art)&&used.iter().filter(|a|**a<6).count()<6 {art=(art+1)%6;}
-            used.push(art);card.0=art;
+            used.push(art);card.art=art;
         }
         let size=ui.io().display_size;let s=(size[0]/1600.0).min(size[1]/900.0);
         let oy=(size[1]-900.0*s)*0.5;let mid=size[0]*0.5;
@@ -221,31 +256,26 @@ impl Panel {
         ui.window("幕间契约").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
             .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
             crate::oath_art::background(&ui.get_window_draw_list(),size);
-            ui.set_window_font_scale(s*0.95);center(ui,mid,oy+32.0*s,&format!("第 {} 幕",run.act),gold);
-            ui.set_window_font_scale(s*1.85);center(ui,mid,oy+73.0*s,"立 下 誓 约",gold);
-            let number=["","一","二","三","四","五"].get(count).copied().unwrap_or("多");
-            let subtitle=if !fresh {format!("{number}选一 · 本幕生效")}else if contract.deepen.is_some() {format!("{number}选一 · 誓约整局保留，可以深化")}else{format!("{number}选一 · 誓约整局保留")};
-            ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s,&subtitle,[0.63,0.58,0.46,1.0]);
-            if fresh&&!contract.held.is_empty() {
-                let held=contract.held.iter().map(|o|format!("{} {}",o.kind.name(),LEVELS[usize::from(o.level.min(3))])).collect::<Vec<_>>().join(" · ");
-                ui.set_window_font_scale(s*0.8);center(ui,mid,oy+155.0*s,&format!("已立誓约：{held}"),[0.80,0.70,0.50,1.0]);
-            }
+            ui.set_window_font_scale(s*0.95);center(ui,mid,oy+32.0*s,&screen.heading,gold);
+            ui.set_window_font_scale(s*1.85);center(ui,mid,oy+73.0*s,screen.title,gold);
+            ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s,&screen.subtitle,[0.63,0.58,0.46,1.0]);
+            if let Some(held)=&screen.held {ui.set_window_font_scale(s*0.8);center(ui,mid,oy+155.0*s,held,[0.80,0.70,0.50,1.0]);}
             // [HansFix6] Up to four cards (three new oaths + deepen): shrink cards and gaps so they fit the 1600-unit layout.
             let (width,gap)=match count {0..=2=>(366.0*s,72.0*s),3=>(352.0*s,44.0*s),_=>(334.0*s,28.0*s)};
             let top=oy+187.0*s;let height=width*549.0/366.0;let k=width/(366.0*s);
-            for (i,(art,title,label,boon,bane,accent)) in cards.iter().enumerate() {
+            for (i,card) in cards.iter().enumerate() {
                 let x=mid-(width*count as f32+gap*(count as f32-1.0))*0.5+i as f32*(width+gap);
                 ui.set_cursor_pos([x,top-7.0*s]);
                 {let _disabled=ui.begin_disabled(!ready);if ui.invisible_button(format!("contract-{i}"),[width,height+7.0*s]){self.selection.selected=i;}}
                 let hovered=ui.is_item_hovered();let selected=self.selection.selected==i;
                 let y=top-if selected{7.0*s}else if hovered{3.0*s}else{0.0};
-                crate::oath_art::card(&ui.get_window_draw_list(),*art,[x,y],[x+width,y+height],if selected{255}else if hovered{225}else{165});
-                let tall=crate::oath_art::tall_art(*art);
-                if let Some((r,g,b))=accent {
-                    ui.get_window_draw_list().add_rect([x-4.0*s,y-4.0*s],[x+width+4.0*s,y+height+4.0*s],ImColor32::from_rgba(*r,*g,*b,if selected{230}else{150})).rounding(6.0*s).thickness(2.5*s).build();
+                crate::oath_art::card(&ui.get_window_draw_list(),card.art,[x,y],[x+width,y+height],if selected{255}else if hovered{225}else{165});
+                let tall=crate::oath_art::tall_art(card.art);
+                if let Some((r,g,b))=card.accent {
+                    ui.get_window_draw_list().add_rect([x-4.0*s,y-4.0*s],[x+width+4.0*s,y+height+4.0*s],ImColor32::from_rgba(r,g,b,if selected{230}else{150})).rounding(6.0*s).thickness(2.5*s).build();
                 }
-                if let Some(label)=label {
-                    let (r,g,b)=accent.unwrap_or((236,196,104));
+                if let Some(label)=&card.label {
+                    let (r,g,b)=card.accent.unwrap_or((236,196,104));
                     ui.set_window_font_scale(s*0.85);
                     let half=ui.calc_text_size(label)[0]*0.5+14.0*s;let (cx,cy)=(x+width*0.5,y+(if tall{338.0}else{300.0})*s*k);
                     let draw=ui.get_window_draw_list();
@@ -254,12 +284,24 @@ impl Panel {
                     drop(draw);
                     center(ui,cx,cy,label,[f32::from(r)/255.0*0.6+0.4,f32::from(g)/255.0*0.6+0.4,f32::from(b)/255.0*0.6+0.4,1.0]);
                 }
-                ui.set_window_font_scale(s*1.35);center(ui,x+width*0.5,y+(if tall{375.0}else{333.0})*s*k,title,gold);
-                ui.set_window_font_scale(s*0.95);
-                let boon_y=if tall{428.0}else{401.0};
-                let bane_y=(boon_y+boon.lines().count() as f32*24.0+14.0).max(if tall{482.0}else{462.0});
-                for (offset,text,color) in [(boon_y,boon.as_str(),[0.64,0.83,0.58,1.0]),(bane_y,bane.as_str(),[0.91,0.49,0.40,1.0])] {
-                    center(ui,x+width*0.5,y+offset*s*k,text,color);
+                ui.set_window_font_scale(s*1.35);center(ui,x+width*0.5,y+(if tall{375.0}else{333.0})*s*k,&card.title,gold);
+                if screen.dense {
+                    // 堕落誓约：增益 + 正面词条 + 两个负面词条，用小一号的字逐行排
+                    ui.set_window_font_scale(s*0.82);
+                    let mut offset:f32=if tall{418.0}else{392.0};
+                    for (n,(text,color)) in card.lines.iter().enumerate() {
+                        if n==1 {offset+=6.0;}
+                        center(ui,x+width*0.5,y+offset*s*k,text,*color);
+                        offset+=text.lines().count() as f32*21.0;
+                    }
+                } else {
+                    ui.set_window_font_scale(s*0.95);
+                    let mut offset:f32=if tall{428.0}else{401.0};
+                    for (n,(text,color)) in card.lines.iter().enumerate() {
+                        if n==1 {offset=offset.max(if tall{482.0}else{462.0});}
+                        center(ui,x+width*0.5,y+offset*s*k,text,*color);
+                        offset+=text.lines().count() as f32*24.0+14.0;
+                    }
                 }
             }
             let min=[mid-210.0*s,oy+786.0*s];let max=[mid+210.0*s,oy+852.0*s];
@@ -267,11 +309,11 @@ impl Panel {
             let confirm={let _disabled=ui.begin_disabled(!ready);ui.invisible_button("confirm-oath",[420.0*s,66.0*s])};
             let hovered=ui.is_item_hovered();
             crate::oath_art::button(&ui.get_window_draw_list(),min,max,if !ready{130}else if hovered{255}else{220});
-            ui.set_window_font_scale(s);center(ui,mid,oy+808.0*s,"确认誓约   Enter / A",gold);
-            if confirm||key(&[Key::Enter,Key::GamepadFaceDown]) {if let Some(index)=self.selection.claim(now,ready){runtime::submit(Action::Contract(index));}}
+            ui.set_window_font_scale(s);center(ui,mid,oy+808.0*s,screen.confirm,gold);
+            if confirm||key(&[Key::Enter,Key::GamepadFaceDown]) {if let Some(index)=self.selection.claim(now,ready){runtime::submit((screen.choose)(index));}}
             ui.set_cursor_pos([32.0*s,oy+844.0*s]);
-            let skip={let _disabled=ui.begin_disabled(!ready);ui.button("跳过誓约   Esc / B")};
-            if (skip||key(&[Key::Escape,Key::GamepadFaceRight]))&&self.selection.claim(now,ready).is_some() {runtime::submit(Action::SkipContract);}
+            let skip={let _disabled=ui.begin_disabled(!ready);ui.button(screen.skip)};
+            if (skip||key(&[Key::Escape,Key::GamepadFaceRight]))&&self.selection.claim(now,ready).is_some() {runtime::submit(screen.skip_action.clone());}
             if !crate::oath_art::ready(){ui.set_window_font_scale(s*0.8);center(ui,mid,oy+866.0*s,"誓约贴图缺失，请重启更新后的启动器",[0.91,0.49,0.40,1.0]);}
         });
     }
@@ -615,12 +657,22 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
         use erdtree_tower::contracts::{Kind,Oath,State};
         let mut deepen=Run::new(42,erdtree_tower::Class::Samurai);
         deepen.contract=Some(State::start(deepen.reward_seed(),deepen.class,2,vec![Oath{kind:Kind::Steel,level:1},Oath{kind:Kind::Blood,level:2}],0));
-        assert_eq!(deepen.contract.as_ref().unwrap().options(),4);
+        assert_eq!(deepen.contract.as_ref().unwrap().options(),3);
         for _ in 0..3 {panel.draw_contract(context.frame(),&deepen,&view);context.render();}
         panel.draw_contract(context.frame(),&deepen,&view);let data=context.render();assert!(data.total_vtx_count>0);
         if let Some(path)=&output {write_frame(&path.join(format!("oath-deepen-{width}.draw")),data,width,height);}
-        let seed=deepen.reward_seed();deepen.contract.as_mut().unwrap().choose(3,seed,deepen.class).unwrap();
+        let seed=deepen.reward_seed();deepen.contract.as_mut().unwrap().choose(2,seed,deepen.class).unwrap();
         panel.draw(context.frame(),&deepen,&view);context.render();
+        // [HansFix] 堕落首领第三页：三份新誓约 + 一张深化卡
+        let mut fallen=Run::new(7,erdtree_tower::Class::Samurai);fallen.set_wander(true).unwrap();
+        fallen.debug_fallen_start().unwrap();let boss=fallen.fallen_id().unwrap();
+        fallen.debug_jump(boss).unwrap();fallen.enter(boss).unwrap();fallen.win_combat().unwrap();
+        fallen.claim_reward(0).unwrap();fallen.decline_reward().unwrap();
+        fallen.fallen_oaths.push(erdtree_tower::fallen_oaths::FallenOath{kind:erdtree_tower::contracts::Kind::Lifeline,level:1,minus:[1,4],plus:0});
+        assert!(fallen.fallen_oath_pending());
+        for _ in 0..3 {panel.draw_fallen_oaths(context.frame(),&fallen,&view);context.render();}
+        panel.draw_fallen_oaths(context.frame(),&fallen,&view);let data=context.render();assert!(data.total_vtx_count>0);
+        if let Some(path)=&output {write_frame(&path.join(format!("fallen-oath-{width}.draw")),data,width,height);}
     }
     run.phase=Phase::Reward{id:0,offers:vec![Reward::Item(1000000),Reward::Item(erdtree_tower::elite::EPIC[0]),Reward::Item(2140000)]};
     for (width,height,details) in [(1280,720,false),(1280,720,true),(1920,1080,false),(1920,1080,true),(3440,1440,false),(3440,1440,true)] {

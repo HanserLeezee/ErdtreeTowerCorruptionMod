@@ -14,6 +14,7 @@ pub mod contracts;
 pub mod act_gifts;
 pub mod elite;
 pub mod descent;
+pub mod fallen_oaths;
 pub mod encounter;
 pub mod events;
 pub mod regional_events;
@@ -242,6 +243,9 @@ pub struct Run {
     /// [HansFix] 在红色关卡领取、词条被扭曲的装备
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub cursed: Vec<descent::Cursed>,
+    /// [HansFix] 在堕落首领处立下的新誓约（各自带随机词条）
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub fallen_oaths: Vec<fallen_oaths::FallenOath>,
     /// [HansFix] 堕落模式：红篝火、堕落挑战与堕落首领（开启堕落模式的旅程才有）
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub fallen: Option<descent::Fallen>,
@@ -350,6 +354,48 @@ fn legacy_graph(seed: u64) -> Vec<Node> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod fallen_oath_page {
+    use crate::{Class,Phase,Run,fallen_oaths::{Card,FallenOath,NEW}};
+    fn at_third_page(seed:u64)->Run {
+        let mut run=Run::new(seed,Class::Samurai);run.set_wander(true).unwrap();
+        run.debug_fallen_start().unwrap();let boss=run.fallen_id().unwrap();
+        run.debug_jump(boss).unwrap();run.enter(boss).unwrap();run.win_combat().unwrap();
+        run.claim_reward(0).unwrap();run.decline_reward().unwrap();assert!(run.fallen_oath_pending());run
+    }
+    #[test]
+    fn third_page_offers_new_oaths_with_two_curses_and_one_blessing_and_can_be_skipped() {
+        for seed in 0..40u64 {
+            let run=at_third_page(seed);
+            let cards=run.fallen_oath_cards();assert_eq!(cards.len(),3);
+            for card in &cards {
+                let Card::New(o)=card else{panic!("no deepen card before holding one")};
+                assert!(NEW.contains(&o.kind)&&o.valid()&&o.level==1);
+                let lines=o.lines();assert_eq!(lines.len(),4);assert_eq!(lines.iter().filter(|(_,good)|!good).count(),2);
+                assert_eq!(o.curse_effects().len(),3);
+            }
+            let mut skipped=run.clone();skipped.decline_reward().unwrap();
+            assert_eq!(skipped.act,2);assert!(skipped.fallen_oaths.is_empty());assert!(!skipped.fallen_oath_pending());
+            // 深化：已有一份时多一张深化卡，选它等级 +1，词条不变
+            let mut run=run;run.fallen_oaths.push(FallenOath::roll(NEW[0],seed));
+            let cards=run.fallen_oath_cards();assert!(matches!(cards.last(),Some(Card::Deepen(0))));
+            assert!(cards[..cards.len()-1].iter().all(|c|matches!(c,Card::New(o) if o.kind!=NEW[0])));
+            let before=run.fallen_oaths[0];run.choose_fallen_oath(cards.len()-1).unwrap();
+            assert_eq!(run.fallen_oaths[0].level,2);assert_eq!((run.fallen_oaths[0].minus,run.fallen_oaths[0].plus),(before.minus,before.plus));
+            assert_eq!(run.phase,Phase::Map);assert_eq!(run.act,2);
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+        }
+    }
+    #[test]
+    fn curse_texts_and_rows_follow_the_level() {
+        use crate::fallen_oaths::{effect,text};
+        assert_eq!(text(0,1,false),"最大生命 -8%");assert_eq!(text(0,3,true),"最大生命 +12%");
+        assert_eq!(text(1,2,false),"受到魔力／火／雷／圣伤害 +12%");assert_eq!(text(1,1,true),"受到魔力／火／雷／圣伤害 -10%");
+        assert_eq!(text(3,1,false),"精力消耗 +8%");assert_eq!(text(5,3,false),"战技伤害 -15%");
+        assert_eq!(effect(0,1,false),9600200);assert_eq!(effect(5,3,true),9600257);
+    }
 }
 
 #[cfg(test)]
@@ -537,6 +583,16 @@ mod wander_mode {
                         run.claim_reward(0).unwrap();
                         if page==0 {assert!(matches!(run.phase,Phase::Reward{..}));assert_eq!(run.fallen.as_ref().unwrap().page,1);}
                     }
+                    // 第三页：堕落誓约
+                    assert!(run.fallen_oath_pending());assert_eq!(run.act,1);
+                    let cards=run.fallen_oath_cards();assert_eq!(cards.len(),3);
+                    assert!(matches!(run.phase,Phase::Reward{ref offers,..} if offers.is_empty()));
+                    assert!(run.claim_reward(0).is_err());
+                    assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+                    let erdtree_tower_card=cards[0];
+                    run.choose_fallen_oath(0).unwrap();
+                    let fallen_oaths::Card::New(chosen)=erdtree_tower_card else{panic!()};
+                    assert_eq!(run.fallen_oaths,vec![chosen]);assert!(chosen.valid());
                     assert_eq!(run.act,2,"the fallen boss clears the act");assert!(run.cursed.len()>=2);
                     assert!(run.fallen.as_ref().is_some_and(|f|!f.active&&f.page==0));
                     assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
@@ -774,6 +830,7 @@ impl Run {
             wander: false,
             descents_before: 0,
             cursed: Vec::new(),
+            fallen_oaths: Vec::new(),
             fallen: None,
             act:1,
             seed,
@@ -1064,7 +1121,7 @@ impl Run {
 
     fn offers(&self, id: usize) -> Vec<Reward> {
         // [HansFix] 堕落首领：两页三件“两个词条 ×2、一个 ×(-2)”的传说装备
-        if Some(id)==self.fallen_id() {return descent::fallen_offers(self,id,self.fallen.as_ref().map_or(0,|f|f.page));}
+        if Some(id)==self.fallen_id() {let page=self.fallen.as_ref().map_or(0,|f|f.page);return if page>=2 {vec![]} else {descent::fallen_offers(self,id,page)};}
         // [HansFix] 红色战斗关卡：精英结算，选项数量随向下次数增加
         if let Some(level)=self.red_combat(id) {return self.descent_offers(id,level);}
         let mut offers=rewards::offers(self,id);
@@ -1244,10 +1301,37 @@ impl Run {
     }
     /// 堕落首领的第一页奖励领完：换到第二页，而不是结束关卡
     fn fallen_second_page(&mut self,id:usize)->bool {
-        if Some(id)!=self.fallen_id()||self.fallen.as_ref().is_none_or(|f|f.page>0) {return false;}
-        if let Some(f)=self.fallen.as_mut() {f.page=1;}
+        if Some(id)!=self.fallen_id() {return false;}
+        let page=self.fallen.as_ref().map_or(9,|f|f.page);
+        // 第三页：新誓约（没有可选的就直接结束）
+        if page>1||page==1&&self.fallen_oath_cards().is_empty() {return false;}
+        if let Some(f)=self.fallen.as_mut() {f.page=page+1;}
         self.phase=Phase::Reward{id,offers:self.offers(id)};
         true
+    }
+    /// [HansFix] 堕落首领的第三页（新誓约）是否正在等待选择
+    pub fn fallen_oath_pending(&self)->bool {
+        matches!(self.phase,Phase::Reward{id,..} if Some(id)==self.fallen_id())&&self.fallen.as_ref().is_some_and(|f|f.page==2)
+    }
+    /// 第三页的卡：最多三份没立过的新誓约，已立的新誓约未满级时再加一张深化卡
+    pub fn fallen_oath_cards(&self)->Vec<fallen_oaths::Card> {
+        let seed=mix(self.reward_seed()^u64::from(self.act)^0x0a7f_a11e);
+        let mut pool:Vec<_>=fallen_oaths::NEW.into_iter().filter(|k|!self.fallen_oaths.iter().any(|o|o.kind==*k)).collect();
+        pool.sort_by_key(|k|mix(seed^k.index() as u64));
+        let mut cards:Vec<_>=pool.into_iter().take(3).map(|k|fallen_oaths::Card::New(fallen_oaths::FallenOath::roll(k,seed^(k.index() as u64)<<16))).collect();
+        if let Some((i,_))=self.fallen_oaths.iter().enumerate().filter(|(_,o)|o.level<3).max_by_key(|(i,o)|(o.level,*i)) {cards.push(fallen_oaths::Card::Deepen(i));}
+        cards
+    }
+    /// 第三页选一张卡（新誓约或深化），然后结束堕落首领关卡
+    pub fn choose_fallen_oath(&mut self,index:usize)->RuleResult<()> {
+        if !self.fallen_oath_pending() {return Err("现在不是选择堕落誓约的时候".into());}
+        let card=*self.fallen_oath_cards().get(index).ok_or("无效誓约选项")?;
+        match card {
+            fallen_oaths::Card::New(oath)=>self.fallen_oaths.push(oath),
+            fallen_oaths::Card::Deepen(i)=>{let o=self.fallen_oaths.get_mut(i).ok_or("誓约不存在")?;o.level=(o.level+1).min(3);},
+        }
+        let Phase::Reward{id,..}=self.phase else {return Err("当前没有待领取奖励".into());};
+        self.finish(id);Ok(())
     }
 
     pub fn finish_chest(&mut self) -> RuleResult<()> {
@@ -1405,7 +1489,8 @@ impl Run {
         if self.cursed.len()>self.claimed_items.len()||self.cursed.iter().any(|c|!self.claimed_items.contains(&c.item)||c.swaps.is_empty()
             ||c.swaps.len()>3||c.swaps.iter().any(|&(from,to)|!descent::effects(c.item).contains(&from)||(to!=descent::doubled(from)&&to!=descent::negated(from)&&to!=descent::negated2(from)))) {return fail();}
         // 旧版（r4 及以前）的堕落存档没有 fallen，照旧继续，只是这局没有红篝火与堕落首领
-        if (self.fallen.is_some()&&!(self.wander&&self.schema==6))||self.fallen.as_ref().is_some_and(|f|f.page>1) {return fail();}
+        if (self.fallen.is_some()&&!(self.wander&&self.schema==6))||self.fallen.as_ref().is_some_and(|f|f.page>2) {return fail();}
+        if self.fallen_oaths.iter().enumerate().any(|(i,o)|!o.valid()||self.fallen_oaths[..i].iter().any(|p|p.kind==o.kind)) {return fail();}
         for (i,id) in self.claimed_items.iter().enumerate() {
             if !(rewards::lookup(*id).is_some_and(|item|item.kind.allowed(self.class)||elite::LEGENDARY.contains(&affixes::base(*id)))||rewards::RETIRED_SPELLS.contains(id))||self.claimed_items[..i].contains(id) {return fail();}
         }

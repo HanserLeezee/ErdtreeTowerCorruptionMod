@@ -14,7 +14,13 @@ fn oath_effects(kind:Kind,level:u8)->Vec<i32> {
     ids.push(match kind {Kind::Combo|Kind::Guard=>base+9,Kind::Mystic=>base+2,Kind::Ascetic=>base,_=>base+1});
     ids
 }
-fn all_effects()->Vec<i32> {effects_for(erdtree_tower::contracts::pool())}
+fn kinds()->&'static [Kind] {if erdtree_tower::contracts::extended() {&Kind::ALL} else {&Kind::LEGACY}}
+/// [HansFix] 堕落誓约的词条行（6 种 × 3 档 × 负/正）
+fn curse_rows()->Vec<i32> {
+    if !erdtree_tower::contracts::extended() {return vec![];}
+    (0..erdtree_tower::fallen_oaths::CURSES).flat_map(|c|(1..=3).flat_map(move|l|[false,true].map(|p|erdtree_tower::fallen_oaths::effect(c,l,p)))).collect()
+}
+fn all_effects()->Vec<i32> {let mut ids=effects_for(kinds());ids.extend(curse_rows());ids.sort_unstable();ids.dedup();ids}
 /// [HansFix] 新誓约的参数行只在新誓约补丁的 regulation.bin 里；没装补丁时只检查、只管理官方的十种
 fn effects_for(kinds:&[Kind])->Vec<i32> {
     // Old-rule (level 0) rows exist only for the original ten oaths.
@@ -23,7 +29,7 @@ fn effects_for(kinds:&[Kind])->Vec<i32> {
     ids.sort_unstable();ids.dedup();ids
 }
 /// [HansFix6] Timed buffs the Plague oath's resident trigger rows start; the game owns them, so sync never removes them.
-fn triggered_effects()->Vec<i32> {triggered_for(erdtree_tower::contracts::pool())}
+fn triggered_effects()->Vec<i32> {triggered_for(kinds())}
 fn triggered_for(kinds:&[Kind])->Vec<i32> {
     [Kind::Plague,Kind::Lifeline].into_iter().filter(|k|kinds.contains(k)).into_iter().flat_map(|kind|{let base=FIRST+kind.index() as i32*10;(6..=8).map(move|o|base+o)}).collect()
 }
@@ -37,8 +43,9 @@ pub mod lifeline {
     static GUARD:Mutex<Guard>=Mutex::new(Guard{run:None,armed:true,until:None,flask_empty:None});
     pub fn armed()->bool {GUARD.lock().map(|g|g.armed).unwrap_or(true)}
     fn level(run:Option<&Run>)->Option<u8> {
-        run.filter(|r|erdtree_tower::contracts::extended()&&!matches!(r.phase,Phase::Dead|Phase::Won)).and_then(|r|r.contract.as_ref())
-            .and_then(|c|c.active().into_iter().find(|o|o.kind==Kind::Lifeline&&o.level>0).map(|o|o.level.clamp(1,3)))
+        let run=run.filter(|r|erdtree_tower::contracts::extended()&&!matches!(r.phase,Phase::Dead|Phase::Won))?;
+        run.fallen_oaths.iter().find(|o|o.kind==Kind::Lifeline).map(|o|o.level.clamp(1,3))
+            .or_else(||run.contract.as_ref().and_then(|c|c.active().into_iter().find(|o|o.kind==Kind::Lifeline&&o.level>0).map(|o|o.level.clamp(1,3))))
     }
     pub fn tick(chr:&mut ChrIns,data:&PlayerGameData,run:Option<&Run>) {
         let Ok(mut g)=GUARD.lock() else{return;};
@@ -119,8 +126,15 @@ pub fn heal_victory(chr:&mut ChrIns,run:&Run) {
     (data.hp,data.fp)=victory_resources(rates,data.hp,data.max_hp,data.fp,data.max_fp);
 }
 fn desired(run:Option<&Run>)->Vec<i32> {
-    run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)).and_then(|r|r.contract.as_ref())
-        .map(|c|c.active().into_iter().flat_map(|o|if o.level==0 {effects(o.kind)}else{oath_effects(o.kind,o.level)}).collect()).unwrap_or_default()
+    let Some(run)=run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)) else{return vec![]};
+    let mut ids:Vec<i32>=run.contract.as_ref()
+        .map(|c|c.active().into_iter().flat_map(|o|if o.level==0 {effects(o.kind)}else{oath_effects(o.kind,o.level)}).collect()).unwrap_or_default();
+    // [HansFix] 堕落誓约：只有增益行（不带原来的固定代价），再加各自的随机词条
+    for oath in &run.fallen_oaths {
+        let mut boon=oath_effects(oath.kind,oath.level);boon.pop();
+        ids.extend(boon);ids.extend(oath.curse_effects());
+    }
+    ids
 }
 pub fn validate()->Result<(),String> {
     let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"契约参数尚未就绪")?;
@@ -221,6 +235,17 @@ mod tests {
         assert!(triggered_for(&Kind::ALL).iter().all(|id|!ids.contains(id)),"game-timed buffs are never force-removed");
         assert_eq!(oath_effects(Kind::Radiant,2),vec![FIRST+104,FIRST+101]);assert_eq!(oath_effects(Kind::Plague,3),vec![FIRST+145,FIRST+141]);
         for kind in Kind::ALL {for level in 1..=3 {assert!(oath_effects(kind,level).iter().all(|id|ids.contains(id)));}}
+    }
+    #[test]
+    fn fallen_oaths_apply_their_boon_and_three_curse_rows_but_no_old_drawback() {
+        use erdtree_tower::fallen_oaths::{FallenOath,effect};
+        let mut run=Run::new(42,erdtree_tower::Class::Samurai);
+        run.fallen_oaths=vec![FallenOath{kind:Kind::Radiant,level:2,minus:[0,3],plus:5}];
+        let ids=desired(Some(&run));
+        assert_eq!(ids,vec![FIRST+104,effect(0,2,false),effect(3,2,false),effect(5,2,true)]);
+        assert!(!ids.contains(&(FIRST+101)),"no fixed drawback");
+        assert!(ids.iter().all(|id|all_effects().contains(id)),"every applied row is managed (and validated)");
+        assert_eq!(curse_rows().len(),36);
     }
     #[test]
     fn effects_replace_previous_act_and_clear_on_death_win_or_hub() {
