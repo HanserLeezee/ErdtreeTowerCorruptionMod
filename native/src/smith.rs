@@ -128,7 +128,8 @@ pub fn talisman_offers(data:&PlayerGameData)->Result<Vec<TalismanOffer>,String> 
 }
 pub fn upgrade_talisman(data:&mut PlayerGameData,offer:TalismanOffer)->Result<(),String> {
     use eldenring::cs::{ItemId,EquipInventoryData};
-    if remaining(data)!=1||!talisman_offers(data)?.contains(&offer){return Err("护符或强化凭证已变化，请重新选择".into());}
+    let before=remaining(data);
+    if before==0||!talisman_offers(data)?.contains(&offer){return Err("护符或强化石已变化，请重新选择".into());}
     let remove_fn=super::items::checked_function(0x24d1e0,&[0x48,0x89,0x5c,0x24,0x20,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x41,0x56,0x41,0x57])?;
     let equip_fn=super::items::checked_function(0x249160,&[0x40,0x53,0x55,0x56,0x57,0x41,0x56,0x48,0x81,0xec,0x90,0,0,0])?;
     let source=ItemId::new(ItemCategory::Accessory,offer.source).map_err(|e|e.to_string())?;
@@ -144,8 +145,8 @@ pub fn upgrade_talisman(data:&mut PlayerGameData,offer:TalismanOffer)->Result<()
         let index=inventory.items_data.find_item_idx(item).ok_or("护符兑换材料发生变化")?;
         unsafe {remove(inventory,index,1);}
     }
-    if remaining(data)!=0{return Err("强化凭证消耗未确认，请停止操作".into());}
-    super::log(format!("Talisman upgraded: {} -> {}, voucher consumed",offer.source,offer.target));Ok(())
+    if remaining(data)+1!=before{return Err("强化石消耗未确认，请停止操作".into());}
+    super::log(format!("Talisman upgraded: {} -> {}, one upgrade stone consumed",offer.source,offer.target));Ok(())
 }
 pub fn configure_menu()->Result<(),String> {
     if ORIGINAL.load(Ordering::Acquire)==0 {return Err("强化接口未加载，请检查日志".into());}
@@ -173,15 +174,16 @@ fn enable_categories(menu:&mut [u8])->Result<[i32;4],String> {
     for field in fields.chunks_exact_mut(4){field.copy_from_slice(&1i32.to_le_bytes());}
     Ok(previous)
 }
+/// 营地发放一块强化石：记下发放前的数量，数量变多才算到账（身上可能本来就有强化石）
 #[derive(Default)]
-pub struct Grant {requested:Option<std::time::Duration>,confirmed:bool}
+pub struct Grant {requested:Option<std::time::Duration>,base:u32,confirmed:bool}
 #[derive(Debug,PartialEq)]
 pub enum GrantStep {Request,Waiting,Ready,Failed}
 impl Grant {
     pub fn poll(&mut self,now:std::time::Duration,quantity:u32)->GrantStep {
         if self.confirmed {return GrantStep::Ready;}
-        let Some(start)=self.requested else {self.requested=Some(now);return GrantStep::Request;};
-        if quantity>0 {self.confirmed=true;return GrantStep::Ready;}
+        let Some(start)=self.requested else {self.requested=Some(now);self.base=quantity;return GrantStep::Request;};
+        if quantity>self.base {self.confirmed=true;return GrantStep::Ready;}
         if now.saturating_sub(start)>=std::time::Duration::from_secs(5) {GrantStep::Failed}else{GrantStep::Waiting}
     }
 }
@@ -201,22 +203,35 @@ fn clear_checked(data:&mut PlayerGameData)->Result<(),String> {
         let items=&inventory.items_data;
         let slots:Vec<_>=items.current_key_entries().iter().enumerate().map(|(i,e)|(i as u32,e))
             .chain(items.normal_entries().iter().enumerate().map(|(i,e)|(items.key_items_capacity+i as u32,e)))
-            .filter_map(|(i,e)|e.as_option().filter(|e|e.item_id.category()==ItemCategory::Goods&&[VOUCHER,OLD_VOUCHER,OLD_VOUCHER&0x7fffff].contains(&e.item_id.param_id())).map(|_|i)).collect();
-        for slot in slots.into_iter().rev() {
-            unsafe {remove(inventory,slot,1);}
+            .filter_map(|(i,e)|e.as_option().filter(|e|e.item_id.category()==ItemCategory::Goods&&[VOUCHER,OLD_VOUCHER,OLD_VOUCHER&0x7fffff].contains(&e.item_id.param_id())).map(|e|(i,e.quantity.max(1) as i32))).collect();
+        // 强化石可以叠放：整叠移除
+        for (slot,quantity) in slots.into_iter().rev() {
+            unsafe {remove(inventory,slot,quantity);}
         }
     }
     Ok(())
 }
+/// 营地发放一块强化石（营地强化凭证）：不再清掉身上已有的强化石，离开营地也保留；只清掉更早版本的旧凭证
 pub fn prepare(data:&mut PlayerGameData)->Result<(),String> {
     let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"铁匠参数未就绪")?;
-    if params.get::<EquipParamGoods>(VOUCHER).is_none(){return Err("缺少营地强化凭证参数，请更新完整启动包".into());}
-    clear_checked(data)?;
+    if params.get::<EquipParamGoods>(VOUCHER).is_none(){return Err("缺少强化石参数，请更新完整启动包".into());}
+    let _=OLD_VOUCHER;
     super::items::give(&[((0x40000000|VOUCHER) as i32,1,-1)])?;
     Ok(())
 }
+/// 用掉一块强化石（营地补瓶代替强化时）
+pub fn consume_one(data:&mut PlayerGameData)->Result<(),String> {
+    let function=super::items::checked_function(0x24d1e0,&[0x48,0x89,0x5c,0x24,0x20,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x41,0x56,0x41,0x57])?;
+    let remove:unsafe extern "C" fn(*mut eldenring::cs::EquipInventoryData,u32,i32)->usize=unsafe {std::mem::transmute(function)};
+    let voucher=eldenring::cs::ItemId::new(ItemCategory::Goods,VOUCHER).map_err(|e|e.to_string())?;
+    let inventory=&mut data.equipment.equip_inventory_data;
+    let index=inventory.items_data.find_item_idx(voucher).ok_or("身上没有强化石")?;
+    unsafe {remove(inventory,index,1);}
+    Ok(())
+}
 
-pub fn spent(issued:bool,completed:bool,remaining:u32)->bool {issued&&!completed&&remaining==0}
+/// 营地的一次服务用掉了：发放到账后强化石少于到账时的数量（强化、护符升阶、调灵各用一块）
+pub fn spent(issued:bool,completed:bool,remaining:u32,target:u32)->bool {issued&&!completed&&remaining<target}
 #[cfg(test)]
 mod tests {
     #[test]
@@ -328,12 +343,19 @@ mod tests {
         let mut missing=Grant::default();missing.poll(Duration::ZERO,0);
         for seconds in 6..60 {assert_eq!(missing.poll(Duration::from_secs(seconds),0),GrantStep::Failed);}
         assert_eq!(missing.poll(Duration::from_secs(60),1),GrantStep::Ready);
+        // 身上本来就有两块强化石：数量变成 3 才算到账
+        let mut held=Grant::default();
+        assert_eq!(held.poll(Duration::ZERO,2),GrantStep::Request);
+        assert_eq!(held.poll(Duration::from_millis(10),2),GrantStep::Waiting);
+        assert_eq!(held.poll(Duration::from_millis(20),3),GrantStep::Ready);
     }
     #[test]
     fn cancellation_keeps_allowance_and_consumption_completes_only_once() {
-        assert!(!super::spent(false,false,0));
-        assert!(!super::spent(true,false,1));
-        assert!(super::spent(true,false,0));
-        assert!(!super::spent(true,true,0));
+        assert!(!super::spent(false,false,0,1));
+        assert!(!super::spent(true,false,1,1));
+        assert!(super::spent(true,false,0,1));
+        assert!(!super::spent(true,true,0,1));
+        assert!(super::spent(true,false,2,3),"any stone used at the camp spends its service");
+        assert!(!super::spent(true,false,4,3),"stones gained elsewhere do not");
     }
 }

@@ -151,6 +151,8 @@ pub struct Blessing {
     pub level: u8,
 }
 
+/// 强化石出现在普通战、精英战奖励里的概率（百分比）
+pub const STONE_CHANCE:u64=15;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Reward {
     Blessing(BlessingKind),
@@ -163,6 +165,8 @@ pub enum Reward {
     MemorySlot,
     StarStream,
     Ember(embers::Ember),
+    /// 强化石（营地强化凭证 7500100）：在营地铁匠或商店强化一次武器（也可升阶护符、调灵骨灰）
+    UpgradeStone,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -231,6 +235,9 @@ pub struct Run {
     /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；旧存档为 0，等概率
     #[serde(default)]
     pub ember_rules: u8,
+    /// 新旅程：普通战与精英战的奖励里会出现强化石
+    #[serde(default)]
+    pub stone_rewards: bool,
     /// 用过调试菜单的旅程：不计入律法纪录，誓约进度不再校验
     #[serde(default,skip_serializing_if="std::ops::Not::not")]
     pub debug: bool,
@@ -537,6 +544,7 @@ impl Run {
             start_talisman: 0,
             ember_rewards: true,
             ember_rules: 1,
+            stone_rewards: true,
             embers: vec![],
             debug: false,
             event_rules: 3,
@@ -759,6 +767,8 @@ impl Run {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn offers_for_test(&self,id:usize)->Vec<Reward> {self.offers(id)}
     fn offers(&self, id: usize) -> Vec<Reward> {
         let mut offers=rewards::offers(self,id);
         if !self.law.is_empty() {
@@ -767,6 +777,11 @@ impl Run {
                 if let Reward::Gold(amount)=reward {*amount=self.law.runes(*amount);}
             }
             if self.law.stingy()&&self.nodes.get(id).is_some_and(|n|n.kind.combat()) {offers.truncate(2);}
+        }
+        // 强化石：普通战与精英战有 STONE_CHANCE% 的概率把中间那个奖励换成强化石（余烬占最后一个）
+        if self.stone_rewards&&self.nodes.get(id).is_some_and(|n|matches!(n.kind,NodeKind::Monster|NodeKind::Elite))
+            &&mix(self.reward_seed()^(id as u64).wrapping_mul(7919)^0x5701_e5a1)%100<STONE_CHANCE {
+            let middle=offers.len()/2;if let Some(slot)=offers.get_mut(middle) {*slot=Reward::UpgradeStone;}
         }
         if let Some(ember)=embers::reward(self,id) {if let Some(last)=offers.last_mut() {*last=Reward::Ember(ember);}}
         offers
@@ -828,7 +843,7 @@ impl Run {
                 if self.star_stream{return Err("已获得星流引导".into());}
                 self.star_stream=true;
             },
-            Reward::SacredTear=>{},
+            Reward::SacredTear|Reward::UpgradeStone=>{},
             Reward::Ember(ember)=>{
                 if !self.ember_rewards||self.embers.contains(&ember){return Err("余烬已获得或无效".into());}
                 self.embers.push(ember);

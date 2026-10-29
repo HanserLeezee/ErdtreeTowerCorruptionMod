@@ -1,5 +1,5 @@
 // 营地调灵：小红帽（补瓶 NPC）的菜单里选“调灵”后弹出骨灰列表，选一个骨灰升到 max(自身, 持有过的最高等级) + 1（最多 +10），
-// 低级的好骨灰一次追上来。与补瓶、铁匠共用营地的一次服务（消耗营地强化凭证，凭证没了运行时就结束营地服务）。
+// 低级的好骨灰一次追上来。用掉一块强化石（营地发的那块用掉时，营地的一次服务也就用掉了，不能再补瓶）。
 // 列表画在叠加层上（原版对话菜单的选项文字只能是预先写好的文本）；选择交给对话的轮询在游戏任务里执行。
 use std::sync::{Mutex,atomic::{AtomicU8,Ordering}};
 use eldenring::cs::{EquipDataItem,EquipInventoryData,ItemCategory,ItemId,PlayerGameData};
@@ -40,9 +40,10 @@ fn name(id:u32)->String {lookup(0x40000000|id).map_or_else(||format!("骨灰 {id
 fn level(id:u32)->u8 {spirit_level(0x40000000|id).unwrap_or(0)}
 fn base_name(id:u32)->String {name(erdtree_tower::rewards::spirit_base(0x40000000|id)&0x0fffffff)}
 
-/// 调灵：换成目标等级的骨灰，原来在快捷栏、随身包里的位置换成新骨灰，再消耗营地强化凭证
+/// 调灵：换成目标等级的骨灰，原来在快捷栏、随身包里的位置换成新骨灰，再用掉一块强化石
 pub fn tune(data:&mut PlayerGameData,offer:Offer)->Result<(),String> {
-    if super::smith::remaining(data)!=1||!offers(data).contains(&offer) {return Err("骨灰或营地强化凭证已变化，请重新选择".into());}
+    let before=super::smith::remaining(data);
+    if before==0||!offers(data).contains(&offer) {return Err("骨灰或强化石已变化，请重新选择".into());}
     let remove_fn=super::items::checked_function(0x24d1e0,&[0x48,0x89,0x5c,0x24,0x20,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x41,0x56,0x41,0x57])?;
     let source=ItemId::new(ItemCategory::Goods,offer.source).map_err(|e|e.to_string())?;
     let target=ItemId::new(ItemCategory::Goods,offer.target).map_err(|e|e.to_string())?;
@@ -67,7 +68,7 @@ pub fn tune(data:&mut PlayerGameData,offer:Offer)->Result<(),String> {
     let equipment=&mut data.equipment;
     for &i in &quick {equipment.equip_item_data.quick_slots[i]=EquipDataItem{gaitem_handle:handle,index};equipment.equipment_entries.quick_tems[i]=target.into();}
     for &i in &pouch {equipment.equip_item_data.pouch_slots[i]=EquipDataItem{gaitem_handle:handle,index};equipment.equipment_entries.pouch[i]=target.into();}
-    if super::smith::remaining(data)!=0 {return Err("营地强化凭证消耗未确认，请停止操作".into());}
+    if super::smith::remaining(data)+1!=before {return Err("强化石消耗未确认，请停止操作".into());}
     set_peak(PEAK.load(Ordering::Relaxed).max(level(offer.target)));
     super::log(format!("Spirit ash tuned: {} -> {} (quick {quick:?}, pouch {pouch:?}), voucher consumed",offer.source,offer.target));
     Ok(())
@@ -107,7 +108,7 @@ pub fn draw(ui:&Ui) {
         .build(|| {
             let scale=ui.push_style_var(hudhook::imgui::StyleVar::ItemSpacing([8.0*s,8.0*s]));
             ui.text_colored(gold,"调灵 · 强化骨灰");
-            ui.text_colored(dim,"选一个骨灰升到「持有过的最高等级 +1」，低级骨灰一次追上来。\n会用掉本次营地服务（不能再补瓶或强化武器、护符）。");
+            ui.text_colored(dim,"选一个骨灰升到「持有过的最高等级 +1」，低级骨灰一次追上来。\n用掉一块强化石；若用的是本次营地发的那块，就不能再补瓶。");
             ui.separator();
             for (i,offer) in offers.iter().enumerate() {
                 let label=format!("{}　+{} → +{}##tune{i}",base_name(offer.source),level(offer.source),level(offer.target));

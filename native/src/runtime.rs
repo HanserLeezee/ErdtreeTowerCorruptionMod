@@ -1368,7 +1368,11 @@ fn tick_locked() {
         state.view.room=Some(hub.view());state.hub=Some(hub);
         match result {
             Ok(Some(mut run))=>{
-                if run.act==1&&run.visited.is_empty()&&run.completed_nodes==0 {if let Some(hub)=&state.hub {super::run_log::clear(&super::run_log::path(hub.owner));}}
+                if run.act==1&&run.visited.is_empty()&&run.completed_nodes==0 {
+                    if let Some(hub)=&state.hub {super::run_log::clear(&super::run_log::path(hub.owner));}
+                    // 新旅程：上一局留下的强化石作废
+                    if let Some(player)=world.main_player.as_mut() {super::smith::clear(unsafe {player.player_game_data.as_mut()});}
+                }
                 if let Some(link)=&state.party {
                     let aligned=erdtree_tower::party_game::act_seed(link.config.seed,run.act).and_then(|seed|run.align_party_start(seed));
                     if let Err(error)=aligned {
@@ -2048,6 +2052,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     let mut item_reward=None;
     let mut reward_ash=-1;
     let mut sacred_tear=false;
+    let mut upgrade_stone=false;
     let mut camp_refill=None;
     match action {
         Action::Camp(choice) => {
@@ -2059,6 +2064,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
                 if matches!(offers.get(index),Some(erdtree_tower::Reward::StarStream))&&!super::star_stream::ready(){return Err("星流引导暂不可用，请更新后重试".into());}
                 if let Some(erdtree_tower::Reward::Item(id))=offers.get(index){item_reward=Some(*id);reward_ash=super::random_ashes::preview(&old,node,index,*id);}
                 sacred_tear=matches!(offers.get(index),Some(erdtree_tower::Reward::SacredTear));
+                upgrade_stone=matches!(offers.get(index),Some(erdtree_tower::Reward::UpgradeStone));
             }
             next.claim_reward(index)?;
         },
@@ -2103,6 +2109,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     }
     if let Some(id)=item_reward {super::items::give_reward_with_ash(unsafe {player.player_game_data.as_mut()},id,reward_ash)?;}
     if sacred_tear {super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR)?;}
+    if upgrade_stone {super::items::give_stack(unsafe {player.player_game_data.as_mut()},super::smith::VOUCHER)?;}
     if next.flask_bonus!=old.flask_bonus {
         state.flasks.as_mut().ok_or("圣杯瓶未绑定")?.set_bonus(unsafe {player.player_game_data.as_mut()},next.class,next.flask_bonus,next.law.flask_cut())?;
     }
@@ -2261,7 +2268,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
         if room.kind == erdtree_tower::NodeKind::Camp {
             let data=unsafe {world.main_player.as_mut().ok_or("角色未加载")?.player_game_data.as_mut()};
             if let Some(run)=state.view.run.as_ref() {super::spirit_tune::set_peak(run.spirit_peak.unwrap_or(0));}
-            if super::smith::spent(room.allowance_issued,room.view.completed,super::smith::remaining(data)) {
+            if super::smith::spent(room.allowance_issued,room.view.completed,super::smith::remaining(data),room.allowance_target) {
                 let run=state.view.run.as_mut().ok_or("角色未绑定")?;
                 // 调灵也走这里：调灵后的骨灰等级立即记进本局（骨灰召唤后会用掉，不能等下一场胜利再看背包）
                 run.spirit_peak=Some(spirit_peak(run,super::spirit_tune::inventory_peak(data)));
@@ -2281,7 +2288,8 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                     super::log(error);
                 }
                 if result.is_ok() {
-                    super::smith::clear(unsafe {world.main_player.as_mut().unwrap().player_game_data.as_mut()});
+                    // 补瓶代替强化：用掉营地发的那块强化石，身上其他强化石保留
+                    if let Err(error)=super::smith::consume_one(unsafe {world.main_player.as_mut().unwrap().player_game_data.as_mut()}) {super::log(format!("Camp refill stone: {error}"));}
                     room.complete("服务已完成，使用传送门继续".into());
                 }
                 room.notice(if result.is_err(){9500012}else{9500010})?;

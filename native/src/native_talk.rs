@@ -174,7 +174,7 @@ impl NativeTalk {
                 if self.service==6 && !self.event_menu.altar {return self.dialog(9500053);}
                 if self.service==6 && self.event_menu.busy {return self.dialog(9500054);}
                 if self.service==6 && self.event_menu.used {return self.dialog(9500055);}
-                if self.service == 0 && self.camp.used { return self.dialog(9500011); }
+                // 营地服务用过之后菜单照常打开：补瓶会被拒绝，调灵只要身上还有强化石就能用
                 self.event(110, &[])?;
                 self.event(20, &[])?;
                 if self.service==6 {
@@ -199,7 +199,8 @@ impl NativeTalk {
                     for (i,message) in [9500040,9500042,9500043,9500045,9500046,9500071,9500100,9500101,9500108].into_iter().enumerate() {self.event(19,&[i as i32+1,message,-1])?;}
                     self.event(19,&[99,9500003,-1])?;
                 } else if self.service==2 {
-                    for (choice,message) in [(1,9500002),(2,9500111),(99,9500003)] {self.event(19,&[choice,message,-1])?;}
+                    // 商店：查看货物、出售武器、强化武器（消耗一块强化石，与营地铁匠相同）
+                    for (choice,message) in [(1,9500002),(2,9500111),(3,9500001),(99,9500003)] {self.event(19,&[choice,message,-1])?;}
                 } else {
                     self.event(19, &[1, if self.service==5 {9500040}else{9500000 + self.service as i32}, -1])?;
                     self.event(19, &[2, 9500003, -1])?;
@@ -224,7 +225,7 @@ impl NativeTalk {
                     self.choice=Some(choice); self.state=0; return Ok(());
                 }
                 if self.service==1 {
-                    if smith_uses_allowance(choice)&&self.camp.used {return self.dialog(9500011);}
+                    // 强化与护符升阶各用一块强化石；营地的一次服务用掉之后，身上还有强化石也能继续用
                     if smith_uses_allowance(choice) {
                         let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                         let data=unsafe {player.player_game_data.as_ref()};
@@ -275,9 +276,15 @@ impl NativeTalk {
                 if self.service==2&&choice==2 {
                     self.event(46,&[-1,-1])?;self.menu_kind=6;self.state=7;return Ok(());
                 }
+                if self.service==2&&choice==3 {
+                    let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
+                    if super::smith::remaining(unsafe {player.player_game_data.as_ref()})==0 {return self.dialog(9500012);}
+                    super::smith::configure_menu()?;
+                    let (event,args,menu)=smith_menu(1).unwrap();
+                    self.event(event,&args)?;self.menu_kind=menu;self.state=7;return Ok(());
+                }
                 // 调灵：与补瓶共用营地的一次服务；骨灰列表画在叠加层上，选定后在状态 20 执行
                 if self.service==0&&choice==5 {
-                    if self.camp.used {return self.dialog(9500011);}
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                     let data=unsafe {player.player_game_data.as_ref()};
                     if super::smith::remaining(data)==0 {return self.dialog(9500012);}
@@ -323,7 +330,6 @@ impl NativeTalk {
             18 => if self.query(58,&[0])?==0 {
                 let offer=self.talisman.take();self.state=0;
                 if !dialog_confirmed(self.query(22,&[])?) {return Ok(());}
-                if self.camp.used {return self.dialog(9500011);}
                 let player=unsafe {eldenring::cs::PlayerIns::local_player_mut()}.map_err(|_|"角色未加载")?;
                 if player.chr_ins.modules.data.hp<=0{return Ok(());}
                 super::smith::upgrade_talisman(unsafe {player.player_game_data.as_mut()},offer.ok_or("护符选择已失效")?)?;
@@ -332,7 +338,6 @@ impl NativeTalk {
             20 => if let Some(choice)=super::spirit_tune::take_result() {
                 self.state=0;
                 let Some(offer)=choice else{return Ok(());};
-                if self.camp.used {return self.dialog(9500011);}
                 let player=unsafe {eldenring::cs::PlayerIns::local_player_mut()}.map_err(|_|"角色未加载")?;
                 if player.chr_ins.modules.data.hp<=0 {return Ok(());}
                 super::spirit_tune::tune(unsafe {player.player_game_data.as_mut()},offer)?;

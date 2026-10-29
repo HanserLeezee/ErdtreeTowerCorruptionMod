@@ -31,7 +31,7 @@ fn affixed_equipment_details_and_icons_cover_every_variant() {
 fn quality(run:&Run,reward:&Reward)->usize {
     if matches!(reward,Reward::MemorySlot){return 1;}
     if let Reward::Ember(ember)=reward {return usize::from(ember.quality());}
-    if matches!(reward,Reward::StarStream){return 2;}
+    if matches!(reward,Reward::StarStream|Reward::UpgradeStone){return 2;}
     item_id(run,reward).map_or(0,item_quality) as usize
 }
 fn card_light(tier:usize,selected:bool,hover:bool,time:f64)->u8 {
@@ -112,8 +112,13 @@ pub fn ember_icon(ember:erdtree_tower::embers::Ember)->Option<u32> {
     if *EMBLEMS_READY {return Some(EMBER_EMBLEMS+ember.index() as u32);}
     DETAILS.get(&(0x20000000|erdtree_tower::embers::icon_talisman(ember))).map(|detail|detail.icon)
 }
+/// 特殊奖励的卡片图标（scene-builder/extra_reward_icons.py 生成的 990100 起 5 张）：武器强化、圣杯扩容、记忆扩容、卢恩、强化石；
+/// 文件缺失时照旧显示两个字
+const EXTRA_ICONS:u32=990100;
 fn card_icon(run:&Run,reward:&Reward)->Option<u32> {
     if let Reward::Ember(ember)=reward {return ember_icon(*ember);}
+    let extra=match reward {Reward::UpgradeWeapon=>Some(0),Reward::FlaskCapacity=>Some(1),Reward::MemorySlot=>Some(2),Reward::Gold(_)=>Some(3),Reward::UpgradeStone=>Some(4),_=>None};
+    if let Some(index)=extra {return Some(EXTRA_ICONS+index);}
     let id=match reward {Reward::StarStream=>Some(0x40000000|4200),_=>item_id(run,reward)};
     id.and_then(|id|DETAILS.get(&id)).map(|detail|detail.icon)
 }
@@ -379,6 +384,7 @@ impl Panel {
                     Reward::Gold(n)=>("卢恩",format!("{n} 卢恩"),"获得卢恩".into()),
                     Reward::TalismanBuff(_)=>("护符赐福",detail.map_or("护符效果".into(),|v|v.name.clone()),format!("{}\n本局生效，不占护符栏位",detail.map_or("",|v|v.info.as_str()))),
                     Reward::SacredTear=>("强化材料","圣杯滴露 ×1".into(),"圣杯瓶恢复量 +1\n交给服务 NPC 使用，最高 +12".into()),
+                    Reward::UpgradeStone=>("强化材料","强化石 ×1".into(),"在营地铁匠或商店\n强化一次武器（追上最高等效等级）\n也可升阶护符、调灵骨灰；可保留".into()),
                     Reward::FlaskCapacity=>("增益","圣杯扩容".into(),"红、蓝瓶上限各 +1\n本局生效，不补瓶".into()),
                     Reward::MemorySlot=>("增益","记忆扩容".into(),"记忆栏位 +1\n魔法与祷告共用，本局生效".into()),
                     Reward::StarStream=>("增益","星流引导".into(),"彗星亚兹勒随视角左右瞄准\n光束保持水平".into()),
@@ -689,6 +695,11 @@ pub fn test_pad_frames(context:&mut hudhook::imgui::Context) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn special_rewards_have_their_own_card_icons() {
+        let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scene-assets/reward-icons");
+        for index in 0..5 {assert_eq!(std::fs::metadata(root.join(format!("{}.rgba",super::EXTRA_ICONS+index))).map(|m|m.len()).unwrap_or(0),160*160*4);}
+    }
     #[test]
     fn talisman_variants_have_chinese_details_icons_and_matching_rarity() {
         for item in erdtree_tower::talismans::CATALOG.iter() {

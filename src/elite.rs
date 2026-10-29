@@ -46,7 +46,7 @@ mod tests {
         use crate::{Class,NodeKind,Phase};
         let mut checked=0;
         for seed in 0..40 {
-            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;
             for _ in 0..11 {
                 let id=run.available()[0];run.enter(id).unwrap();
                 match run.nodes[id].kind {

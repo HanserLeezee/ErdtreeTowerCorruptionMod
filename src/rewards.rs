@@ -263,6 +263,32 @@ mod tests {
         assert!(seen.iter().all(|s|*s),"without any record every level still appears");
     }
     #[test]
+    fn upgrade_stones_appear_in_combat_rewards_of_new_runs_only() {
+        let (mut seen,mut total)=(0,0);
+        for seed in 0..3000 {
+            let mut run=Run::new(seed,Class::Samurai);
+            let node=run.start_nodes()[0];run.enter(node).unwrap();run.win_combat().unwrap();
+            let crate::Phase::Reward{ref offers,..}=run.phase else {panic!()};
+            total+=1;if offers.contains(&Reward::UpgradeStone) {seen+=1;}
+            assert!(offers.iter().filter(|r|**r==Reward::UpgradeStone).count()<=1);
+            if offers.contains(&Reward::UpgradeStone) {
+                let index=offers.iter().position(|r|*r==Reward::UpgradeStone).unwrap();
+                let before=run.clone();run.claim_reward(index).unwrap();
+                assert_eq!((run.weapon_level,run.gold,&run.claimed_items),(before.weapon_level,before.gold,&before.claimed_items),"the stone itself is delivered by the DLL");
+            }
+            let mut old=Run::new(seed,Class::Samurai);old.stone_rewards=false;
+            let node=old.start_nodes()[0];old.enter(node).unwrap();old.win_combat().unwrap();
+            let crate::Phase::Reward{ref offers,..}=old.phase else {panic!()};
+            assert!(!offers.contains(&Reward::UpgradeStone),"saves from before keep their offers");
+        }
+        assert!((300..600).contains(&seen),"about {}% of {total}: {seen}",crate::STONE_CHANCE);
+        for seed in 0..200 {
+            let run=Run::new(seed,Class::Samurai);
+            let boss=run.nodes.iter().position(|n|n.kind==crate::NodeKind::Boss).unwrap();
+            assert!(!run.offers_for_test(boss).contains(&Reward::UpgradeStone),"no stones from bosses");
+        }
+    }
+    #[test]
     fn tuning_catches_a_low_ash_up_to_the_peak_plus_one() {
         let ash=CATALOG.iter().find(|i|i.kind==ItemKind::Spirit).unwrap().id;
         assert_eq!(spirit_level(ash),Some(0));assert_eq!(spirit_level(ash+7),Some(7));
@@ -277,7 +303,7 @@ mod tests {
     #[test]
     fn pending_rewards_from_before_whetblades_still_load() {
         for seed in 0..60 {
-            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;
             let node=run.start_nodes()[0];run.enter(node).unwrap();run.win_combat().unwrap();
             run.phase=crate::Phase::Reward{id:node,offers:before_whetblades(&run,node)};
             let loaded=Run::decode(&run.encode().unwrap()).unwrap();
@@ -363,7 +389,7 @@ mod tests {
     }
     #[test]
     fn current_currency_fallback_is_1500_and_old_rewards_migrate() {
-        let mut run=(0..100).map(|seed|{let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Tool).map(|i|i.id));run}).find(|run|offers(run,run.start_nodes()[0]).iter().any(|r|matches!(r,Reward::Gold(_)))).unwrap();
+        let mut run=(0..100).map(|seed|{let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;run.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Tool).map(|i|i.id));run}).find(|run|offers(run,run.start_nodes()[0]).iter().any(|r|matches!(r,Reward::Gold(_)))).unwrap();
         let node=run.start_nodes()[0];
         run.enter(node).unwrap();run.win_combat().unwrap();
         let old=before_bosses(&run,node);
@@ -472,7 +498,7 @@ mod tests {
     fn old_numbered_talisman_offers_migrate_without_removing_owned_items() {
         let mut migrated=0;
         for seed in 0..500 {
-            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.claimed_items.push(0x20000000|1001);
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;run.claimed_items.push(0x20000000|1001);
             run.enter(0).unwrap();run.win_combat().unwrap();
             let old=before_base_talismans(&run,0);
             if !old.iter().any(|r|matches!(r,Reward::Item(id) if !lookup(*id).unwrap().random_eligible())){continue;}
@@ -488,7 +514,7 @@ mod tests {
         let mut old=0;let mut new=0;
         let contains=|rewards:&[Reward]|rewards.iter().any(|r|matches!(r,Reward::Item(id) if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)));
         for seed in 0..1000 {
-            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;
             run.claimed_items.extend(CATALOG.iter().filter(|i|i.kind==ItemKind::Tool).map(|i|i.id));
             let mut unweighted=ranked_pool(&run,0,true,&CATALOG,true);
             unweighted.truncate(3);
@@ -505,7 +531,7 @@ mod tests {
     #[test]
     fn rewards_saved_before_tool_rate_change_still_load() {
         for seed in 0..60 {
-            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;
             let node=run.start_nodes()[0];run.enter(node).unwrap();run.win_combat().unwrap();
             run.phase=crate::Phase::Reward{id:node,offers:before_tool_rate(&run,node)};
             let restored=Run::decode(&run.encode().unwrap()).unwrap();
@@ -515,7 +541,7 @@ mod tests {
     #[test]
     fn previous_version_pending_rewards_still_load() {
         for seed in 0..30 {
-            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.enter(0).unwrap();run.win_combat().unwrap();
+            let mut run=Run::new(seed,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;run.enter(0).unwrap();run.win_combat().unwrap();
             run.phase=crate::Phase::Reward{id:0,offers:run.legacy_offers(0)};
             let mut json:serde_json::Value=serde_json::from_str(&run.encode().unwrap()).unwrap();
             json.as_object_mut().unwrap().remove("claimed_items");
@@ -538,7 +564,7 @@ mod claimed_base_tests {
     use crate::{Class,Phase,Run};
     #[test]
     fn pending_page_from_variant_blind_rules_still_loads_and_migrates() {
-        let mut run=Run::new(7,Class::Samurai);run.ember_rewards=false;
+        let mut run=Run::new(7,Class::Samurai);run.ember_rewards=false;run.stone_rewards=false;
         let id=run.available()[0];run.enter(id).unwrap();run.win_combat().unwrap();
         let variant=crate::affixes::roll(&run,3150000,0,true).unwrap();run.claimed_items.push(variant);
         let old=super::before_claimed_bases(&run,id);run.phase=Phase::Reward{id,offers:old};

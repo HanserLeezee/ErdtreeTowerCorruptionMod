@@ -20,7 +20,7 @@ fn affixed_rewards_are_deterministic_claimable_and_survive_reload() {
         let node=run.start_nodes()[0];run.enter(node).unwrap();run.win_combat().unwrap();
         let Phase::Reward{ref offers,..}=run.phase else {panic!()};
         let raw=rewards::offers(&run,node);assert_eq!(offers.len(),raw.len());
-        for (index,(shown,pool)) in offers.iter().zip(&raw).enumerate() {assert!(shown==pool||index==raw.len()-1&&matches!(shown,Reward::Ember(_)),"only the last slot may become an ember");}
+        for (index,(shown,pool)) in offers.iter().zip(&raw).enumerate() {assert!(shown==pool||index==raw.len()-1&&matches!(shown,Reward::Ember(_))||index==raw.len()/2&&*shown==Reward::UpgradeStone,"only the last slot may become an ember, the middle one a stone");}
         for reward in offers {if let Reward::Item(id)=reward {
             let kind=rewards::lookup(*id).unwrap().kind;
             if matches!(kind,ItemKind::Weapon|ItemKind::Armor){assert!(affixes::tier(*id).is_some());}

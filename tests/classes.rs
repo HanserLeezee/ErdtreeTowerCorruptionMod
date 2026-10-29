@@ -3,7 +3,7 @@ use erdtree_tower::{Class,NodeKind,Reward,Run,rewards::{self,ItemKind}};
 fn weapon_offers(class:Class)->(u32,u32) {
     let (mut favored,mut total)=(0,0);
     for seed in 0..300 {
-        let mut run=Run::new(seed,class);run.ember_rewards=false;
+        let mut run=Run::new(seed,class);run.ember_rewards=false;run.stone_rewards=false;
         for (id,node) in run.nodes.iter().enumerate().filter(|(_,n)|n.kind==NodeKind::Monster) {
             let _=node;
             for reward in rewards::offers(&run,id) {
@@ -40,7 +40,7 @@ fn weapon_rewards_lean_towards_the_class() {
 fn summoners_see_a_spirit_ash_on_every_ordinary_reward_page() {
     let (mut pages,mut with_spirit)=(0,0);
     for seed in 0..200 {
-        let mut run=Run::new(seed,Class::Confessor);run.ember_rewards=false;
+        let mut run=Run::new(seed,Class::Confessor);run.ember_rewards=false;run.stone_rewards=false;
         assert!(run.summoner()&&erdtree_tower::embers::carries_spirit(&run));
         for (id,_) in run.nodes.iter().enumerate().filter(|(_,n)|n.kind==NodeKind::Monster) {
             pages+=1;

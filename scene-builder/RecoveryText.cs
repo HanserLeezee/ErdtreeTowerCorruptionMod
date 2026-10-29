@@ -31,7 +31,7 @@ static class RecoveryText {
         (9500154,"这里的交易已经完成，请从传送门离开。")];
     // 营地调灵（小红帽）：菜单项与提示；编号与 native/src/native_talk.rs 的 TUNE_* 对应
     static readonly (int,string)[] TuneEntries=[(9500155,"调灵（强化骨灰）"),
-        (9500156,"没有可以调灵的骨灰。需要背包里有尚未到 +10 的骨灰，且没有持有它的目标等级。"),
+        (9500156,"没有可以调灵的骨灰，或身上没有强化石。需要背包里有尚未到 +10 的骨灰，且没有持有它的目标等级。"),
         (9500157,"调灵完成。之后刷出的骨灰最高可到这个等级 +1。")];
     static readonly (int,string)[] ChestEntries=[(9500053,"三个宝箱，三份命运。每箱两成火药、两成守卫、六成宝物。")];
     static readonly (int,string)[] EndEntries=[(9500108,"结束本局"),(9500109,"结束本局并返回大赐福？联机时，全队将结束本局。"),(9500110,"当前无法结束本局。联机时请由房主操作。"),(9500111,"出售武器")];
@@ -47,7 +47,7 @@ static class RecoveryText {
         var file=menu.Files.Single(f=>f.ID==33);var text=FMG.Read(file.Bytes);
         void Set(int id,string value){text.Entries.RemoveAll(e=>e.ID==id);text.Entries.Add(new FMG.Entry(id,value));}
         Set(9500112,"没有可强化的护符。需要持有低阶护符，且尚未持有其强化目标。");
-        Set(9500113,"消耗本次营地强化机会，将所选护符兑换为高阶版本？已装备的护符会在原栏位替换。");
+        Set(9500113,"用掉一块强化石，将所选护符兑换为高阶版本？已装备的护符会在原栏位替换。");
         Set(9500114,"护符强化完成。");
         foreach(var row in Read("ShopLineupParam").Rows.Where(r=>r.ID>=SmithAssets.ShopFirst&&r.ID<SmithAssets.ShopFirst+100)) {
             var material=materials[Convert.ToInt32(row["mtrlId"].Value)];

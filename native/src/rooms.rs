@@ -69,6 +69,8 @@ pub struct Room {
     saved_fp: i32,
     restored: bool,
     pub allowance_issued: bool,
+    /// 营地发放强化石到账时身上的强化石数量：少于它就说明营地的一次服务用掉了
+    pub allowance_target: u32,
     allowance:super::smith::Grant,
     pub view: RoomView,
     pub scarabs:super::scarabs::Hunt,
@@ -166,6 +168,7 @@ impl Room {
             saved_fp: fp,
             restored: kind==NodeKind::Monster,
             allowance_issued: false,
+            allowance_target: 0,
             allowance:super::smith::Grant::default(),
             view: RoomView {
                 message: "正在前往服务房间……".into(),
@@ -202,7 +205,6 @@ impl Room {
         if !self.restored {
             let player = world.main_player.as_mut().unwrap();
             super::ailments::clear(&mut player.chr_ins)?;
-            if self.hub {super::smith::clear(unsafe {player.player_game_data.as_mut()});}
             player.chr_ins.modules.data.hp = player.chr_ins.modules.data.hp.min(self.saved_hp);
             player.chr_ins.modules.data.fp = player.chr_ins.modules.data.fp.min(self.saved_fp);
             self.restored = true;
@@ -349,20 +351,21 @@ impl Room {
         }
         if !self.hub && self.kind==NodeKind::Camp && !self.allowance_issued {
             let data=unsafe {world.main_player.as_mut().unwrap().player_game_data.as_mut()};
-            match self.allowance.poll(self.started.elapsed(),super::smith::remaining(data)) {
+            let held=super::smith::remaining(data);
+            match self.allowance.poll(self.started.elapsed(),held) {
                 super::smith::GrantStep::Request=>{
                     self.view.loading=true;
-                    self.view.message="正在确认本次营地的强化机会……".into();
+                    self.view.message="正在发放本次营地的强化石……".into();
                     super::smith::prepare(data)?;
                     return Ok(());
                 },
                 super::smith::GrantStep::Waiting=>{self.view.loading=true;return Ok(());},
                 super::smith::GrantStep::Ready=>{
-                    self.allowance_issued=true;
+                    self.allowance_issued=true;self.allowance_target=held;
                     super::log("Camp allowance confirmed; automatic issuance disabled for this room");
                 },
                 super::smith::GrantStep::Failed=>{
-                    self.view.message="强化凭证尚未确认到账，已停止自动发放；补瓶、加点和免费菜单仍可使用。".into();
+                    self.view.message="强化石尚未确认到账，已停止自动发放；补瓶、加点和免费菜单仍可使用。".into();
                 },
             }
         }
@@ -391,7 +394,7 @@ impl Room {
     pub fn retire(&self, world: &mut WorldChrMan) {
         self.scarabs.retire(world);
         if self.kind==NodeKind::Camp {super::spirit_tune::close();}
-        if self.kind!=NodeKind::Monster {if let Some(player)=world.main_player.as_mut(){super::smith::clear(unsafe {player.player_game_data.as_mut()});}}
+        // 强化石离开营地也保留（新旅程开始时才清掉）
         if !self.hub && self.kind!=NodeKind::Monster && let Ok(flags) = unsafe { CSEventFlagMan::instance_mut() } {
             flags.virtual_memory_flag.set_flag(self.base() + 993, false);
             if self.kind==NodeKind::Chest { flags.virtual_memory_flag.set_flag(45010939,false); }
