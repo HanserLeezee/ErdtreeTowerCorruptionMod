@@ -784,6 +784,9 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
                 state.reward_wait=Some((Instant::now(),run.clone()));state.view.busy=true;
                 state.reward_portal=Default::default();
                 let healed=heal_victory(world,run);if !healed.is_empty(){super::log(&healed);state.view.status=healed;state.view.prompt=state.view.prompt.wrapping_add(1);}
+                // 召唤师「群灵」：与房主、单人相同，胜利时召唤物还活着就补回这次用掉的骨灰
+                if keep_summoned_ash(world,run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
+                world.summon_buddy_manager.disappear_requested=true;
                 give_elite_tear(world,run,id);
                 super::log(format!("Party victory received epoch={}",link.epoch));
             }
@@ -1267,7 +1270,11 @@ fn tick_locked() {
     }
     let identity = (player_data.character_id, game.save_slot);
     if game.event_world_type != EventWorldType::Local && state.party.is_none() && !super::seamless::active() {return;}
-    let ash_fighting=state.pending.as_ref().is_some_and(|pending|!pending.completed);
+    // 联机客机没有本地的战斗记录（敌人由房主生成）：同步上敌人、还没收到胜利的这段时间也算在战斗中，
+    // 否则客机拍不到开战时的骨灰快照，召唤师「群灵」胜利时补不回骨灰
+    let client_fighting=state.party.as_ref().is_some_and(|p|!p.host()&&p.bound&&!p.victory)
+        &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
+    let ash_fighting=state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting;
     if ash_fighting&&!state.ash_tracking {
         match super::loadout::ash_snapshot(player_data) {
             Ok(before)=>{state.ash_before=before;state.ash_used=None;state.summon_seen=None;state.ash_tracking=true;super::log(format!("Spirit ash battle snapshot: {:?}",state.ash_before));},
