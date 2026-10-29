@@ -143,7 +143,7 @@ fn card_summary(detail:&Detail)->String {
 pub const LIGHT_RED:[f32;4]=[1.0,0.612,0.549,1.0];
 fn curse_detail(detail:&mut Detail,cursed:&erdtree_tower::descent::Cursed) {
     detail.name=format!("{}{}",erdtree_tower::descent::FALLEN,detail.name);detail.cursed=true;
-    detail.info=format!("{}\n红色关卡奖励：一个词条 ×2、一个词条 ×-1（只有一个词条时二选一）",erdtree_tower::descent::rewrite(&detail.info,cursed));
+    detail.info=erdtree_tower::descent::rewrite(&detail.info,cursed);
     detail.caption=erdtree_tower::descent::rewrite(&detail.caption,cursed);
 }
 fn offer_detail(run:&Run,node:usize,slot:usize,reward:&Reward)->Option<Detail> {

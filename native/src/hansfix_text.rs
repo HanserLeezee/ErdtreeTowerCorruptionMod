@@ -69,8 +69,18 @@ impl Fmg {
     }
     fn text(&self,slot:usize)->Option<(String,bool,u64)> {
         let value=read_u64(slot)?;let (address,absolute)=self.resolve(value)?;
-        let mut units=Vec::new();
-        for i in 0..8192 {let mut b=[0;2];if !read_bytes(address+i*2,&mut b){return None;}let u=u16::from_le_bytes(b);if u==0{break;}units.push(u);}
+        // r8：按块读（原来每个字符一次系统调用，几十件堕落装备时一次刷新要卡 1–2 秒）
+        let mut units=Vec::new();let mut done=false;
+        while !done&&units.len()<8192 {
+            let at=address+units.len()*2;
+            // 不跨页读，避免块尾落在未映射的页上
+            let room=(0x1000-(at&0xfff)).min(512);
+            let mut b=vec![0u8;room&!1];
+            if b.is_empty()||!read_bytes(at,&mut b) {
+                let mut one=[0;2];if !read_bytes(at,&mut one){return None;}b=one.to_vec();
+            }
+            for c in b.chunks_exact(2) {let u=u16::from_le_bytes([c[0],c[1]]);if u==0 {done=true;break;}units.push(u);}
+        }
         Some((String::from_utf16_lossy(&units),absolute,value))
     }
 }
@@ -88,16 +98,24 @@ pub fn restore() {
     // 旧字符串留着：菜单可能还拿着指针，量很小
 }
 /// 给一件堕落装备换文字；返回改了几项
-pub fn apply(cursed:&erdtree_tower::descent::Cursed)->usize {
+pub fn apply(cursed:&erdtree_tower::descent::Cursed)->usize {apply_all(std::slice::from_ref(cursed))}
+/// 一次给多件装备换文字：每张文本表只解析一次
+pub fn apply_all(items:&[erdtree_tower::descent::Cursed])->usize {
     let Ok(mut guard)=STATE.lock() else{return 0};
     let state=guard.get_or_insert_with(State::default);
     let Some(repo)=repository() else{return 0};
+    let mut cache:std::collections::HashMap<u32,Option<Fmg>>=std::collections::HashMap::new();
+    let mut changed=0;
+    for cursed in items {changed+=apply_one(state,repo,&mut cache,cursed);}
+    changed
+}
+fn apply_one(state:&mut State,repo:usize,cache:&mut std::collections::HashMap<u32,Option<Fmg>>,cursed:&erdtree_tower::descent::Cursed)->usize {
     let weapon=cursed.item>>28==0;let first=cursed.item&0x0fff_ffff;
     // 武器的质变名（first+100…）也有名字项
     let range=if weapon {first..first+10000} else {first..first+1};
     let mut changed=0;let mut seen=0;
     for &(index,part) in if weapon {&WEAPON} else {&PROTECTOR} {
-        let Some(table)=fmg(repo,index) else{continue};seen+=1;
+        let Some(table)=cache.entry(index).or_insert_with(||fmg(repo,index)).as_ref() else{continue};seen+=1;
         for (id,slot) in table.slots(range.clone()) {
             if part!=Part::Name&&id!=first {continue;}
             let Some((text,absolute,value))=table.text(slot) else{continue};
@@ -116,4 +134,15 @@ pub fn apply(cursed:&erdtree_tower::descent::Cursed)->usize {
     }
     if seen==0&&!state.warned {crate::log("HANSFIX_TEXT message tables not found; in-game text unchanged");state.warned=true;}
     changed
+}
+#[test]
+fn strings_are_read_in_chunks_up_to_the_terminator() {
+    let text:String="堕落的史诗·大龙爪".repeat(40);
+    let mut blob:Vec<u8>=vec![0;16];
+    let at=blob.len();blob.extend(text.encode_utf16().chain(Some(0)).flat_map(u16::to_le_bytes));blob.extend([0x41,0,0x42,0]);
+    let base=blob.as_ptr() as usize;
+    let slot:Box<u64>=Box::new(at as u64);
+    let fmg=Fmg{base,size:blob.len(),table:0,groups:vec![]};
+    let (read,absolute,_)=fmg.text(std::ptr::from_ref(&*slot) as usize).unwrap();
+    assert_eq!(read,text);assert!(!absolute);
 }

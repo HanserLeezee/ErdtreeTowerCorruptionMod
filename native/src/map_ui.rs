@@ -353,7 +353,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, _vitals: &str) {
                 ui.set_cursor_pos([size[0]-right+margin,742.0*scale]);
                 let n=run.descents();
                 let color=if n>0 {[0.78,0.20,0.15,1.0]} else {[0.80,0.74,0.60,1.0]};
-                ui.text_colored(color,format!("向下次数：{n}"));
+                ui.text_colored(color,format!("堕落值：{n}"));
             }
             ui.set_cursor_pos([size[0]-right+margin,size[1]-126.0*scale]);
             if ui.button_with_size(format!("档案  [{}]",crate::options::label(erdtree_tower::options::Hotkey::Archive)),[right-2.0*margin,44.0*scale])||ui.is_key_pressed_no_repeat(hudhook::imgui::Key::GamepadBack) {

@@ -236,7 +236,7 @@ pub struct Run {
     /// 堕落模式：可沿地图连线向上或向下进入当前关卡相邻、尚未去过的关卡
     #[serde(default,skip_serializing_if="std::ops::Not::not")]
     pub wander: bool,
-    /// [HansFix] 堕落：前几幕累计的向下次数（本幕的从路线推算，见 descent_path）
+    /// [HansFix] 堕落值：前几幕继承来的部分（每过一幕减半；本幕的从路线推算，见 descent_path）
     #[serde(default,skip_serializing_if="is_zero")]
     pub descents_before: u32,
     /// [HansFix] 在红色关卡领取、词条被扭曲的装备
@@ -444,9 +444,9 @@ mod wander_mode {
                     NodeKind::Camp=>run.leave_camp().unwrap(),NodeKind::Shop=>run.leave_shop().unwrap(),
                     NodeKind::Chest=>run.finish_chest().unwrap(),NodeKind::Event=>run.resolve_event(false).unwrap(),
                 }
-                assert_eq!(run.descents(),expected);
+                assert_eq!(run.descents(),if run.act==1 {expected} else {expected/2});
             }
-            assert_eq!(run.act,2);assert_eq!(run.descents_before,expected);assert_eq!(run.descents(),expected,"count carries into act 2");
+            assert_eq!(run.act,2);assert_eq!(run.descents_before,expected/2);assert_eq!(run.descents(),expected/2,"half the fallen value carries into act 2");
             assert!(run.descent_path().is_empty());
         }
         assert!(checked_curse>0,"some red elite pages offer affixed gear");
@@ -914,7 +914,7 @@ impl Run {
         if let Phase::Combat{id}|Phase::Node{id}|Phase::Reward{id,..}=self.phase {if path.last()!=Some(&id) {path.push(id);}}
         path.windows(2).filter(|w|self.is_descent(w[0],w[1])).map(|w|w[1]).collect()
     }
-    /// 整局累计向下次数
+    /// 当前堕落值（继承的一半 + 本幕向下次数）
     pub fn descents(&self)->u32 {self.descents_before+self.descent_path().len() as u32}
     /// 红色关卡：是第几次向下（整局计数，从 1 开始）
     pub fn descent_level(&self,id:usize)->Option<u32> {
@@ -985,7 +985,8 @@ impl Run {
         self.checkpoint = None;
         self.shop_purchased = 0;self.shop_stock=None;
         if self.nodes[id].kind==NodeKind::Boss && self.act<3 {
-            self.descents_before+=self.descent_path().len() as u32;
+            // [HansFix] 堕落值：进入下一幕只继承一半（向下取整）
+            self.descents_before=(self.descents_before+self.descent_path().len() as u32)/2;
             self.act+=1;
             self.reached_layer=0;
             self.hp=self.max_hp;

@@ -148,7 +148,8 @@ pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
     crate::hansfix_text::restore();
     let Some(run)=run.filter(|_|wander()) else{return};
     let (mut count,mut texts)=(0,0);
-    let curses=active_curses(run);
+    let started=std::time::Instant::now();
+    let curses=active_curses(run);let mut applied=Vec::new();
     for cursed in &curses {
         if cursed.swaps.iter().any(|&(_,to)|params.get::<SpEffectParam>(to).is_none()) {
             if !state.missing {crate::log(format!("HANSFIX_CURSE missing effects for {}; reinstall the wander patch regulation.bin",cursed.item));state.missing=true;}
@@ -171,9 +172,10 @@ pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
             }
             count+=1;
         }
-        texts+=crate::hansfix_text::apply(cursed);
+        applied.push(cursed.clone());
     }
-    crate::log(format!("HANSFIX_CURSE items={} shop={} rows={count} texts={texts}",run.cursed.len(),curses.len()-run.cursed.len()));
+    texts+=crate::hansfix_text::apply_all(&applied);
+    crate::log(format!("HANSFIX_CURSE items={} shop={} rows={count} texts={texts} ms={}",run.cursed.len(),curses.len()-run.cursed.len(),started.elapsed().as_millis()));
 }
 
 /// [HansFix] 红篝火与堕落挑战中把游戏时间推到夜晚（与赐福点“消磨时间到晚上”同一个接口）；离开后推回白天
