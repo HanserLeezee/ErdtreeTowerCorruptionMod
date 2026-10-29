@@ -4,7 +4,7 @@ use hudhook::imgui::{Condition,Ui};
 use erdtree_tower::{NodeKind,Run,contracts::Kind,embers::Ember,law::{Law,NODES}};
 use crate::enemies::Enemy;
 
-pub enum Command {Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32)}
+pub enum Command {Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),FallenStart,FallenValue(u32)}
 
 // tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
 static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()||crate::options::get().debug);
@@ -76,7 +76,7 @@ impl Bout {
 }
 
 #[derive(Default)]
-pub struct Menu {enemy_filter:String,item_query:String,items:Vec<(u32,String)>,searched:String,count:i32,bout:[usize;2],bout_team:usize,bout_both:bool}
+pub struct Menu {enemy_filter:String,item_query:String,items:Vec<(u32,String)>,searched:String,count:i32,bout:[usize;2],bout_team:usize,bout_both:bool,fallen_value:i32}
 const LEVELS:[&str;4]=["无","I","II","III"];
 impl Menu {
     pub fn draw(&mut self,ui:&Ui,view:Option<&crate::runtime::View>) {
@@ -98,6 +98,20 @@ impl Menu {
         if !keep {OPEN.store(false,Ordering::Relaxed);}
     }
     fn combat(&mut self,ui:&Ui,run:&Run) {
+        // [HansFix] 堕落模式调试：直接到红篝火 / 开启堕落挑战 / 跳到堕落首领 / 改堕落值
+        if run.fallen.is_some() {
+            ui.text_colored([0.95,0.45,0.40,1.0],format!("堕落模式 · 堕落值 {} · {}",run.descents(),if run.fallen_active(){"堕落挑战进行中"}else{"未开启堕落挑战"}));
+            if !run.fallen_active() {
+                if let Some(camp)=run.red_camp() {if ui.small_button("跳到红篝火##fallen-camp") {send(Command::Jump(camp));}ui.same_line();}
+                if ui.small_button("直接开启堕落挑战##fallen-start") {send(Command::FallenStart);}
+            } else if let Some(boss)=run.fallen_id() {
+                if ui.small_button("跳到堕落首领##fallen-boss") {send(Command::Jump(boss));}
+            }
+            ui.same_line();ui.set_next_item_width(110.0);ui.input_int("##fallen-value",&mut self.fallen_value).build();
+            self.fallen_value=self.fallen_value.clamp(0,erdtree_tower::descent::MAX_LEVEL as i32);
+            ui.same_line();if ui.small_button("设为继承的堕落值##fallen-set") {send(Command::FallenValue(self.fallen_value as u32));}
+            ui.separator();
+        }
         ui.text("跳到节点（路线图上会变成可选）");
         ui.child_window("##debug-nodes").size([0.0,220.0]).build(|| {
             for layer in 0..run.floors() {

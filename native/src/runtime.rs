@@ -1880,6 +1880,8 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
                 Command::Oath(kind,level)=>{next.debug_oath(kind,level)?;format!("{} 设为 {}",kind.name(),["移除","I","II","III"][usize::from(level)])},
                 Command::Ember(ember,held)=>{next.debug_ember(ember,held)?;format!("{}余烬「{}」",if held{"获得"}else{"移除"},ember.name())},
                 Command::Law(law)=>{next.debug_law(law)?;format!("苦难律法改为 {} 分（{}）",law.score(),law.code())},
+                Command::FallenStart=>{next.debug_fallen_start()?;"已在红篝火开启堕落挑战：现在只能向下".to_owned()},
+                Command::FallenValue(value)=>{next.debug_fallen_value(value)?;format!("继承的堕落值设为 {value}（当前堕落值 {}）",next.descents())},
                 _=>unreachable!(),
             };
             if let Some(flasks)=state.flasks.as_mut() {

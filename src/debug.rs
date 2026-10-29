@@ -10,6 +10,9 @@ impl Run {
     pub fn debug_jump(&mut self,target:usize)->RuleResult<()> {
         if target>=self.nodes.len() {return Err("节点不存在".into());}
         self.debug_begin()?;
+        // [HansFix] 堕落挑战中：从红篝火沿“只能向下”的路线找一条路
+        if self.fallen_active() {return self.debug_fallen_jump(target);}
+        if Some(target)==self.fallen_id() {return Err("堕落首领要先开启堕落挑战（调试菜单里可以直接开启）".into());}
         let starts=self.start_nodes();
         let path=if starts.contains(&target) {vec![]} else {
             let mut previous=vec![None;self.nodes.len()];let mut queue:std::collections::VecDeque<_>=starts.iter().copied().collect();
@@ -25,6 +28,39 @@ impl Run {
         self.visited=path;
         self.reached_layer=self.visited.last().map_or(0,|&id|self.nodes[id].layer+1);
         self.regional_event=Default::default();self.shop_purchased=0;self.shop_stock=None;self.checkpoint=None;
+        self.validate()
+    }
+    fn debug_fallen_jump(&mut self,target:usize)->RuleResult<()> {
+        let camp=self.red_camp().ok_or("没有红篝火")?;
+        let mut queue:std::collections::VecDeque<Vec<usize>>=vec![vec![camp]].into();let mut found=None;
+        let mut seen=std::collections::HashSet::from([camp]);
+        while let Some(path)=queue.pop_front() {
+            let last=*path.last().unwrap();
+            let route=self.fallen_route(&path,last);
+            if route.contains(&target) {found=Some(path);break;}
+            for next in route {if seen.insert(next) {let mut p=path.clone();p.push(next);queue.push_back(p);}}
+        }
+        self.visited=found.ok_or("堕落挑战里到不了这个节点（只能向下）")?;
+        self.regional_event=Default::default();self.shop_purchased=0;self.shop_stock=None;self.checkpoint=None;
+        self.validate()
+    }
+    /// [HansFix] 调试：在红篝火直接开启堕落挑战（相当于走到红篝火后选回一个走过的相邻关卡，但先停在路线图上）
+    pub fn debug_fallen_start(&mut self)->RuleResult<()> {
+        if self.fallen.is_none() {return Err("这一局没有开启堕落模式（第一幕路线图右侧的开关）".into());}
+        if self.fallen_active() {return Err("堕落挑战已经开启".into());}
+        let camp=self.red_camp().ok_or("没有红篝火")?;
+        self.debug_jump(camp)?;
+        let entry=*self.visited.last().ok_or("红篝火下面没有关卡")?;
+        self.visited.push(camp);
+        self.begin_fallen(entry)?;
+        self.regional_event=Default::default();self.shop_purchased=0;self.shop_stock=None;self.checkpoint=None;
+        self.validate()
+    }
+    /// [HansFix] 调试：设置继承来的堕落值（本幕已走的向下次数另算）
+    pub fn debug_fallen_value(&mut self,value:u32)->RuleResult<()> {
+        if self.fallen.is_none() {return Err("这一局没有开启堕落模式".into());}
+        self.debug_begin()?;
+        self.descents_before=value.min(crate::descent::MAX_LEVEL);
         self.validate()
     }
     /// 切换到指定幕的起点：按初始种子推算该幕的路线，生命与圣杯瓶回满，誓约按新一幕重新出卡
@@ -70,6 +106,31 @@ impl Run {
         self.law=law;self.flask_limit=self.full_flask_limit();
         self.flasks=if full {self.flask_limit}else{self.flasks.min(self.flask_limit)};
         self.validate()
+    }
+}
+
+#[cfg(test)]
+mod fallen_debug {
+    use crate::{Class,NodeKind,Phase,Run};
+    #[test]
+    fn debug_can_open_the_fallen_challenge_and_jump_anywhere_inside_it() {
+        for seed in 0..30u64 {
+            let mut run=Run::new(seed,Class::Samurai);run.set_wander(true).unwrap();
+            let camp=run.red_camp().unwrap();let fallen=run.fallen_id().unwrap();
+            assert!(run.debug_jump(fallen).is_err(),"fallen boss locked before the challenge");
+            run.debug_jump(camp).unwrap();assert!(run.available().contains(&camp));
+            run.debug_fallen_start().unwrap();
+            assert!(run.fallen_active());assert_eq!(run.visited,vec![camp]);assert_eq!(run.phase,Phase::Map);
+            assert!(!run.available().is_empty());
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+            run.debug_jump(fallen).unwrap();assert!(run.available().contains(&fallen),"seed {seed}");
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+            let shop=(0..run.nodes.len()).find(|&i|run.nodes[i].kind==NodeKind::Shop&&i!=camp);
+            if let Some(shop)=shop {if run.debug_jump(shop).is_ok() {assert!(run.available().contains(&shop));run.enter(shop).unwrap();assert!(run.red_shop(shop));}}
+            let mut other=Run::new(seed,Class::Samurai);other.set_wander(true).unwrap();
+            other.debug_fallen_value(12).unwrap();assert_eq!(other.descents(),12);
+        }
+        let mut plain=Run::new(1,Class::Samurai);assert!(plain.debug_fallen_start().is_err());
     }
 }
 

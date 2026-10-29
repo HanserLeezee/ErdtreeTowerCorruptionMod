@@ -880,7 +880,7 @@ impl Run {
         route
     }
     /// [HansFix] 堕落挑战：只能沿连线向下进入没去过的关卡；起点那排向下就是堕落首领
-    fn fallen_route(&self,visited:&[usize],id:usize)->Vec<usize> {
+    pub(crate) fn fallen_route(&self,visited:&[usize],id:usize)->Vec<usize> {
         if Some(id)==self.fallen_id() {return vec![];}
         let route:Vec<usize>=(0..self.nodes.len()).filter(|&o|self.nodes[o].next.contains(&id)&&!visited.contains(&o)).collect();
         if route.is_empty() {self.fallen_id().filter(|f|!visited.contains(f)).into_iter().collect()} else {route}
@@ -895,7 +895,7 @@ impl Run {
         match &self.fallen {Some(f)=>descent::fallen_graph(base,self.seed,f.active,f.entry),None=>base}
     }
     /// 红篝火处选择了走过的相邻关卡：开启堕落挑战
-    fn begin_fallen(&mut self,entry:usize)->RuleResult<()> {
+    pub(crate) fn begin_fallen(&mut self,entry:usize)->RuleResult<()> {
         let camp=self.red_camp().ok_or("没有红篝火")?;
         self.descents_before+=self.descent_path().len() as u32;
         if let Some(f)=self.fallen.as_mut() {f.active=true;f.page=0;f.entry=Some(entry);}
