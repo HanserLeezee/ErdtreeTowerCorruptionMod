@@ -112,8 +112,8 @@ static class BossAssets {
     }
     public static void Verify(string output,Func<string,PARAM> read) {
         var parts=Parts(output);var npcs=read("NpcParam");var ai=read("NpcThinkParam");
-        // 原有 105 组 140 个部件；之后追加 13 个单部件 Boss（追忆与 DLC，boss-pool.txt 第 11 列为 trial）
-        if(parts.Select(p=>p.Encounter).Distinct().Count()!=118||parts.Length!=153||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
+        // 原有 105 组 140 个部件；之后追加 13 个单部件 Boss（追忆与 DLC），再追加 5 个 DLC Boss（序号 153–157，仅单人）
+        if(parts.Select(p=>p.Encounter).Distinct().Count()!=123||parts.Length!=158||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
         var names=BND4.Read(Path.Combine(output,"msg/zhocn/item_dlc02.msgbnd.dcx")).Files.Where(f=>f.Name.Contains("NpcName")).SelectMany(f=>FMG.Read(f.Bytes).Entries).ToList();
         foreach(var p in parts) {
             if(!ai.Rows.Any(r=>r.ID==p.Think)||!names.Any(e=>e.ID==9600000+p.Index&&e.Text==p.Name))throw new Exception("Boss AI/name missing");
@@ -132,7 +132,8 @@ static class BossAssets {
         for(uint map=0;map<3;map++) {
             uint basis=45000000+map*10000;
             var script=EMEVD.Read(Path.Combine(output,$"event/m45_0{map}_00_00.emevd.dcx"));
-            foreach(var p in parts)for(short slot=0;slot<3;slot++) {
+            // 序号 153 起的 Boss 没有地图血条事件：原生 DLL 按句柄绑定血条（boss_bars.rs）
+            foreach(var p in parts.Where(p=>p.Index<153))for(short slot=0;slot<3;slot++) {
                 var ev=script.Events.Single(e=>e.ID==basis+3000+p.Index*3+slot);
                 var gates=ev.Instructions.Where(i=>i.Bank==3&&i.ID==0).Select(i=>BitConverter.ToUInt32(i.ArgData,4)).ToArray();
                 uint member=47000000u+(uint)p.Index*4+(uint)slot;
@@ -142,6 +143,6 @@ static class BossAssets {
                 if(!script.Events.Single(e=>e.ID==0).Instructions.Any(i=>i.Bank==2000&&i.ID==0&&BitConverter.ToUInt32(i.ArgData,4)==ev.ID))throw new Exception("Boss bar event not registered");
             }
         }
-        Console.WriteLine("Verified 118 boss encounters, 153 source components, elite variants and native health bar events in all three arenas");
+        Console.WriteLine("Verified 123 boss encounters, 158 source components, elite variants and native health bar events in all three arenas");
     }
 }

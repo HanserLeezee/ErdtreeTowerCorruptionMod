@@ -2,6 +2,10 @@ using SoulsFormats;
 static class BossAffixAssets {
     public const int First=9620000;
     const int Resident=7030,Neutral=90400,PlayerStatus=4051,VanillaRot=21001;
+    // 黄金护盾的全身金光：原版黄金壁垒（1633000）与黄金雷电附加（1790300）的复制，只把播放优先级提到最高。
+    // 全身光效（playCategory 3）同一时间只显示优先级最高的一个，原版这两个是 70，与傲慢的白金光、嫉妒的黑焰一样高，
+    // Boss 同时带这些词条时先挂上的一直占着，护盾展开时金光出不来。原版行不改（玩家自己的黄金誓言等照旧）
+    static readonly (int id,int source,byte priority)[] ShieldVfx=[(9620090,1633000,100),(9620091,1790300,99)];
     static readonly string[] Cuts=["slashDamageCutRate","blowDamageCutRate","thrustDamageCutRate","neutralDamageCutRate","magicDamageCutRate","fireDamageCutRate","thunderDamageCutRate","darkDamageCutRate"];
     static readonly string[] Attacks=["physicsAttackPowerRate","magicAttackPowerRate","fireAttackPowerRate","thunderAttackPowerRate","darkAttackPowerRate"];
     static readonly string[] Kept=["spCategory","categoryPriority","effectTargetOpposeTarget","effectTargetFriendlyTarget","effectTargetSelfTarget","effectTargetSelf","effectTargetFriend","effectTargetEnemy","effectTargetPlayer","effectTargetAI","effectTargetLive","effectTargetGhost"];
@@ -33,7 +37,7 @@ static class BossAffixAssets {
         (First+71,"Tower boss affix envious rage empowered",0,[("effectEndurance",10f),..All(Attacks,1.45f),("vfxId",1627000),("vfxId1",9010)]),
         (First+81,"Tower boss affix proud empowered",0,[..All(Attacks,1.3f),("vfxId",1649000),("vfxId1",1648000)]),
         // 黄金律法的护盾：同时挂三个原版金色护体光效（黄金壁垒、黄金雷电附加、黄金誓言），比单个黄金誓言醒目
-        (First+90,"Tower boss affix golden shield",0,[("effectEndurance",5f),..All(Cuts,0.3f),("vfxId",1633000),("vfxId1",1790300),("vfxId2",1660000)]),
+        (First+90,"Tower boss affix golden shield",0,[("effectEndurance",5f),..All(Cuts,0.3f),("vfxId",9620090),("vfxId1",9620091),("vfxId2",1660000)]),
         (First+95,"Tower boss affix reborn",0,[("effectEndurance",3f),("vfxId",1643000)]),
     ];
     static PARAM.Row Create(PARAM effects,(int id,string name,int kind,(string,object)[] fields) spec) {
@@ -84,11 +88,25 @@ static class BossAffixAssets {
         }
         effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=effects.Write();
         Console.WriteLine($"Boss affix effects: {added} added, {replaced} replaced, {removed} removed");
-        var others=reg.Files.Where(f=>f!=file).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
+        var vfxFile=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="SpEffectVfxParam");
+        var vfxDef=PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/SpEffectVfx.xml");
+        var vfxOriginal=PARAM.Read(vfxFile.Bytes);vfxOriginal.ApplyParamdef(vfxDef);
+        var vfx=PARAM.Read(vfxFile.Bytes);vfx.ApplyParamdef(vfxDef);
+        vfx.Rows.RemoveAll(r=>ShieldVfx.Any(v=>v.id==r.ID));
+        foreach(var (id,source,priority) in ShieldVfx) {var row=new PARAM.Row(vfx.Rows.Single(r=>r.ID==source)){ID=id,Name="Tower boss golden shield"};row["playPriority"].Value=priority;vfx.Rows.Add(row);}
+        vfx.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));vfxFile.Bytes=vfx.Write();
+        var others=reg.Files.Where(f=>f!=file&&f!=vfxFile).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
         Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
         SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(path,reg);
         var check=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(path);
-        foreach(var f in check.Files.Where(f=>f.Name!=file.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
+        foreach(var f in check.Files.Where(f=>f.Name!=file.Name&&f.Name!=vfxFile.Name))if(!f.Bytes.SequenceEqual(others[f.Name]))throw new Exception($"Unrelated param changed: {f.Name}");
+        var vfxActual=PARAM.Read(check.Files.Single(f=>f.Name==vfxFile.Name).Bytes);vfxActual.ApplyParamdef(vfxDef);var vfxRows=vfxActual.Rows.ToDictionary(r=>r.ID);
+        foreach(var row in vfxOriginal.Rows.Where(r=>!ShieldVfx.Any(v=>v.id==r.ID)))foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,vfxRows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing vfx changed: {row.ID}");
+        foreach(var (id,source,priority) in ShieldVfx) {
+            var row=vfxRows[id];
+            foreach(var cell in row.Cells)if(cell.Def.InternalName!="playPriority"&&!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,vfxRows[source][cell.Def.InternalName].Value))throw new Exception($"Shield vfx differs from its source: {id} {cell.Def.InternalName}");
+            if(Convert.ToByte(row["playPriority"].Value)!=priority)throw new Exception($"Shield vfx priority not raised: {id}");
+        }
         var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);Verify(actual);
         if(actual.Rows.Count!=original.Rows.Count-existing+Rows.Length)throw new Exception("Unexpected effect count");
         var rows=actual.Rows.ToDictionary(r=>r.ID);

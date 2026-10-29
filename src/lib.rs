@@ -228,6 +228,9 @@ pub struct Run {
     pub ember_rewards: bool,
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub embers: Vec<embers::Ember>,
+    /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；旧存档为 0，等概率
+    #[serde(default)]
+    pub ember_rules: u8,
     /// 用过调试菜单的旅程：不计入律法纪录，誓约进度不再校验
     #[serde(default,skip_serializing_if="std::ops::Not::not")]
     pub debug: bool,
@@ -253,6 +256,10 @@ pub struct Run {
     /// 上一场战斗胜利时背包里武器的最高强化（0–50，与铁匠同一换算）：决定奖励里骨灰的最高等级
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub weapon_peak: Option<u8>,
+    /// 持有过的骨灰最高等级（0–10，只升不降）：战斗胜利时按背包更新，营地调灵后立即更新。
+    /// 决定奖励与商店里骨灰的最高等级（+1）；旧存档没有这一项时沿用武器换算
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub spirit_peak: Option<u8>,
     pub class: Class,
     pub nodes: Vec<Node>,
     pub phase: Phase,
@@ -529,6 +536,7 @@ impl Run {
             law: law::Law::default(),
             start_talisman: 0,
             ember_rewards: true,
+            ember_rules: 1,
             embers: vec![],
             debug: false,
             event_rules: 3,
@@ -541,6 +549,7 @@ impl Run {
             personal_reward_seed: None,
             casting_tools: None,
             weapon_peak: None,
+            spirit_peak: Some(0),
             class,
             nodes: camp_graph(seed),
             phase: Phase::Map,
@@ -991,7 +1000,7 @@ impl Run {
 
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>1||self.class_rules!=1||self.boss_affix_rules>1||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>1||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>1||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
@@ -1012,6 +1021,7 @@ impl Run {
             || self.flasks > self.flask_limit
             || self.weapon_level > 25
             || self.weapon_peak.is_some_and(|peak|peak>50)
+            || self.spirit_peak.is_some_and(|peak|peak>10)
             || self.shop_purchased > 7
             || self.blessings.len() > 8
             || self.delivered_talismans.len() > 24

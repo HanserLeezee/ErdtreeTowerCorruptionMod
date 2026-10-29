@@ -30,7 +30,8 @@ fn affixed_equipment_details_and_icons_cover_every_variant() {
 }
 fn quality(run:&Run,reward:&Reward)->usize {
     if matches!(reward,Reward::MemorySlot){return 1;}
-    if matches!(reward,Reward::StarStream|Reward::Ember(_)){return 2;}
+    if let Reward::Ember(ember)=reward {return usize::from(ember.quality());}
+    if matches!(reward,Reward::StarStream){return 2;}
     item_id(run,reward).map_or(0,item_quality) as usize
 }
 fn card_light(tier:usize,selected:bool,hover:bool,time:f64)->u8 {
@@ -384,9 +385,11 @@ impl Panel {
                     Reward::Ember(ember)=>("余烬",ember.name().into(),format!("{}\n本局生效",ember.effect())),
                 };
                 let tier=quality(run,reward);
-                // 余烬：橙红色的类别与标题，外加一圈余火色的外框，和普通奖励区分开
+                // 余烬：卡面与名字按余烬的品质着色，类别写成“余烬 · 品质”，外加一圈余火色的外框，和普通奖励区分开
                 let ember=matches!(reward,Reward::Ember(_));
-                let quality_color=if ember {[0.98,0.58,0.32,1.0]}else{rarity_color(tier)};
+                let quality_color=rarity_color(tier);
+                let ember_category=format!("余烬 · {}",["普通","稀有","史诗","传说"][tier.min(3)]);
+                let category=if ember {ember_category.as_str()}else{category};
                 if let Some(texture)=if tier==1 {self.rare_blue}else{None} {
                     let light=card_light(tier,selected,hover,now);
                     ui.get_window_draw_list().add_image(texture,[x,y],[x+width,y+height])
@@ -420,8 +423,8 @@ impl Panel {
                 } else {
                     center(ui,x+width*0.5,y+145.0*scale,match reward {Reward::UpgradeWeapon=>"强化",Reward::FlaskCapacity=>"圣杯",Reward::MemorySlot=>"记忆",Reward::StarStream=>"星流",_=>"卢恩"},gold);
                 }
-                // 物品名用标题字体：传说整名金色流光，其他品质的前缀带特效；余烬与其他奖励保持原样
-                if ember||!matches!(reward,Reward::Item(_)) {
+                // 物品名与余烬名用标题字体：传说整名金色流光，其他品质的前缀带特效；其他奖励保持原样
+                if !ember&&!matches!(reward,Reward::Item(_)) {
                     ui.set_window_font_scale(scale*1.2);
                     let title_width=ui.calc_text_size(&title)[0];
                     if title_width>width-40.0*scale {ui.set_window_font_scale(scale*1.2*(width-40.0*scale)/title_width);}

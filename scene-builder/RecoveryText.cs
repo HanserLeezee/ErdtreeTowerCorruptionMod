@@ -29,11 +29,15 @@ static class RecoveryText {
         (9500152,"这把武器没有其他词条组合，没有消耗任何东西。"),
         (9500153,"暂时无法进行，没有消耗任何东西。"),
         (9500154,"这里的交易已经完成，请从传送门离开。")];
+    // 营地调灵（小红帽）：菜单项与提示；编号与 native/src/native_talk.rs 的 TUNE_* 对应
+    static readonly (int,string)[] TuneEntries=[(9500155,"调灵（强化骨灰）"),
+        (9500156,"没有可以调灵的骨灰。需要背包里有尚未到 +10 的骨灰，且没有持有它的目标等级。"),
+        (9500157,"调灵完成。之后刷出的骨灰最高可到这个等级 +1。")];
     static readonly (int,string)[] ChestEntries=[(9500053,"三个宝箱，三份命运。每箱两成火药、两成守卫、六成宝物。")];
     static readonly (int,string)[] EndEntries=[(9500108,"结束本局"),(9500109,"结束本局并返回大赐福？联机时，全队将结束本局。"),(9500110,"当前无法结束本局。联机时请由房主操作。"),(9500111,"出售武器")];
     public static void Add(BND4 menu,bool chestOnly=false) {
         var file=menu.Files.Single(f=>f.ID==33);var fmg=FMG.Read(file.Bytes);
-        foreach(var (id,text) in chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries)){fmg.Entries.RemoveAll(e=>e.ID==id);fmg.Entries.Add(new FMG.Entry(id,text));}
+        foreach(var (id,text) in chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries)){fmg.Entries.RemoveAll(e=>e.ID==id);fmg.Entries.Add(new FMG.Entry(id,text));}
         file.Bytes=fmg.Write();
     }
     public static void AddTalismans(BND4 menu,BND4 regulation,BND4 item) {
@@ -62,7 +66,7 @@ static class RecoveryText {
         Console.WriteLine("Verified talisman choice and confirmation text roundtrip");
     }
     public static void Patch(string input,string output,bool chestOnly=false) {
-        var entries=chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).ToArray();
+        var entries=chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).ToArray();
         const string name="msg/zhocn/menu_dlc02.msgbnd.dcx";
         var original=BND4.Read(Path.Combine(input,name));
         var menu=BND4.Read(Path.Combine(input,name));Add(menu,chestOnly);

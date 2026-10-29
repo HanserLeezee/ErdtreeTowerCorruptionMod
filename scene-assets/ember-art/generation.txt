@@ -30,3 +30,10 @@ Production game UI icon sprite atlas on a truly transparent background. Square i
 3 feast of the spirits: several small ghostly teal flames gathered around a golden chalice, rising wisps.
 4 command of the calling bell: an ornate small spirit calling bell ringing, concentric teal sound rings and a faint spectral wolf head above.
 All four emblems share identical style, rim, disc size and lighting with the existing twelve ember emblems so they read as one set. Transparent canvas outside the discs.
+
+
+emblems-twin.png（双生的灵唤铃 990016）由 gpt-image-2 单独生成（background=transparent，1254×1254），提示词沿用召唤流的风格描述。
+emblems-twin.png prompt (transparent background):
+Production game UI icon on a truly transparent background. Square image with ONE single emblem centered with generous empty transparent padding, no frame, no backdrop. The emblem is a round medallion-like sigil, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing spectral teal ember accent, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle inner glow like a smoldering coal, never cartoonish, never glossy plastic. Absolutely NO text, letters, runes, numbers, labels or watermarks.
+Subject: twin spirit calling bells: two small ornate spirit calling bells hanging side by side from one shared golden cord, mirrored, each ringing, two interlocking concentric teal sound rings, and two faint spectral figures (a ghostly wolf and a ghostly knight) rising back to back above them in teal mist.
+Identical style, rim, disc size and lighting to an existing set of ember emblems so it reads as part of the set. Transparent canvas outside the disc.

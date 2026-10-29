@@ -62,12 +62,12 @@ fn refresh_special_prices(stock:&mut [Stock],run:&Run) {
         assert!(seen>300,"summoners always see a spirit ash: {seen}");
     }
     #[test]
-    fn spirit_stock_never_exceeds_weapon_level_plus_one() {
+    fn spirit_stock_never_exceeds_the_spirit_peak_plus_one() {
         use erdtree_tower::rewards::spirit_base;
-        for seed in 0..300 {for peak in [0u8,5,20,49,50] {
-            let run=Run::new(seed,erdtree_tower::Class::Samurai);
-            let cap=erdtree_tower::rewards::spirit_cap(Some(peak));
-            assert_eq!(cap,(u32::from(peak)/5+1).min(10));
+        for seed in 0..300 {for peak in [0u8,1,4,9,10] {
+            let mut run=Run::new(seed,erdtree_tower::Class::Samurai);run.spirit_peak=Some(peak);
+            let cap=erdtree_tower::rewards::spirit_cap(&run);
+            assert_eq!(cap,(u32::from(peak)+1).min(10));
             for item in stock_capped(&run,cap).iter().filter(|s|s.kind==3) {
                 let id=0x40000000|item.id as u32;let base=spirit_base(id);
                 if base!=id||erdtree_tower::rewards::lookup(id).is_some_and(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit) {assert!(id-base<=cap,"{id} over +{cap}");}
@@ -283,8 +283,8 @@ fn extras(group:&str)->Vec<Stock> {
     }).filter(|item|(group!="food"||!withdrawn(item))&&offered(item)).collect()
 }
 #[cfg(test)]
-fn stock(run:&Run)->Vec<Stock> {stock_capped(run,erdtree_tower::rewards::spirit_cap(run.weapon_peak))}
-/// spirit_cap：骨灰最高等级（进店时按背包里武器的等价强化等级 +1）
+fn stock(run:&Run)->Vec<Stock> {stock_capped(run,erdtree_tower::rewards::spirit_cap(run))}
+/// spirit_cap：骨灰最高等级（进店时按本局记录与背包里骨灰的最高等级 +1；旧存档按武器的等价强化等级 +1）
 fn stock_capped(run:&Run,spirit_cap:u32)->Vec<Stock> {
     use erdtree_tower::{Class,rewards::{CATALOG,ItemKind}};
     let visit=run.visited.iter().filter(|&&i|run.nodes[i].kind==NodeKind::Shop).count();
@@ -367,8 +367,12 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     let saved=run.shop_stock.as_ref().filter(|saved|!refresh&&saved.node==node&&saved.items.len()==STOCK_COUNT as usize);
     let mut stock=if let Some(saved)=saved {saved.items.iter().map(|[kind,id,price,quantity]|Stock{kind:*kind as u8,id:*id,price:*price,quantity:*quantity as i16}).collect()}else{
         let tools=super::loot::casting_tools(data);
-        let peak=super::smith::inventory_peak(data,params).clamp(0,50) as u8;
-        let mut stock = stock_capped(run,erdtree_tower::rewards::spirit_cap(Some(peak)));
+        let mut live=run.clone();
+        match live.spirit_peak {
+            Some(peak)=>live.spirit_peak=Some(peak.max(super::spirit_tune::inventory_peak(data))),
+            None=>live.weapon_peak=Some(super::smith::inventory_peak(data,params).clamp(0,50) as u8),
+        }
+        let mut stock = stock_capped(run,erdtree_tower::rewards::spirit_cap(&live));
         filter_spells(&mut stock,tools,run.reward_seed());
         affix_stock(run,run.visited.iter().filter(|&&i|run.nodes[i].kind==NodeKind::Shop).count(),&mut stock);
         for item in &mut stock {

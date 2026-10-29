@@ -41,6 +41,8 @@ impl Affix {
     fn legacy_group(self)->u8 {match self {Affix::Bulwark|Affix::Golden=>1,Affix::Regenerating|Affix::Reborn=>2,_=>0}}
 }
 pub const MAX_AFFIXES:usize=3;
+/// 已移除、不再抽到的词条
+pub const RETIRED:[Affix;1]=[Affix::Proud];
 /// 最早的 9 个词条的组合（规则 0）：序号与已生成的血条名称一一对应
 pub const LEGACY_AFFIXES:usize=9;
 pub const BAR_NAME_FIRST:i32=9700000;
@@ -101,7 +103,8 @@ pub fn roll(run:&Run,node:usize)->Vec<Affix> {
     if !run.boss_affixes||budget==0 {return vec![];}
     // 规则 0（旧存档）只用最早的 9 个词条和原来的分组
     let (count,group):(usize,fn(Affix)->u8)=if run.boss_affix_rules>=1 {(Affix::ALL.len(),Affix::group)}else{(LEGACY_AFFIXES,Affix::legacy_group)};
-    let mut pool=Affix::ALL[..count].to_vec();
+    // 傲慢的已移除：不再抽到（枚举、组合表与血条名称编号保留，旧组合的序号不变）
+    let mut pool:Vec<_>=Affix::ALL[..count].iter().copied().filter(|a|!RETIRED.contains(a)).collect();
     pool.sort_by_key(|a|crate::mix(run.seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^a.index() as u64^0xb055_af1c));
     let (mut left,mut chosen)=(budget,Vec::new());
     for affix in pool {
@@ -134,7 +137,8 @@ mod tests {
             assert_eq!(bonus_runes(&run,node),[9000,18000,30000][usize::from(act)-1]*15*u32::from(points(&affixes))/100);
             seen.extend(affixes);
         }}
-        assert_eq!(seen.len(),Affix::ALL.len(),"new runs can roll every affix");
+        assert_eq!(seen.len(),Affix::ALL.len()-RETIRED.len(),"new runs can roll every affix that is not retired");
+        assert!(RETIRED.iter().all(|a|!seen.contains(a)));
     }
     #[test]
     fn every_roll_has_a_bar_name_and_the_combo_table_is_current() {

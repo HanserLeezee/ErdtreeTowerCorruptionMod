@@ -5,7 +5,7 @@ use erdtree_tower::boss_affixes::Affix;
 pub const FIRST:i32=9620000;
 /// 腐败光环每秒给玩家挂一次：原版“NPC：猩红腐败”（21001，每次积累 20，积满后照常发作、持续扣血）的复制，
 /// 只打开了“作用于自身”。21001 本身不能作用于自身，直接挂给玩家会被游戏忽略（腐败条不涨）；更早自建的 FIRST+41 只有积累值、积满不发作
-const ROT_BUILDUP:i32=FIRST+42;const ENVY:i32=FIRST+70;const PRIDE:i32=FIRST+80;const SHIELD:i32=FIRST+90;const REBORN:i32=FIRST+95;
+const ROT_BUILDUP:i32=FIRST+42;const ENVY:i32=FIRST+70;const PRIDE:i32=FIRST+80;const SHIELD:i32=FIRST+90;pub(crate) const REBORN:i32=FIRST+95;
 /// 迅猛、荆棘的常驻光效，吸血回血时的闪光
 const SWIFT:i32=FIRST+50;const THORNED:i32=FIRST+60;const LEECH_FLASH:i32=FIRST+65;
 const EFFECTS:[i32;13]=[FIRST,FIRST+10,FIRST+20,FIRST+30,FIRST+40,ROT_BUILDUP,ENVY,PRIDE,SHIELD,REBORN,SWIFT,THORNED,LEECH_FLASH];

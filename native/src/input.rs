@@ -41,7 +41,7 @@ impl ActionGuard {
 }
 
 pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime::View) -> bool {
-    if crate::debug_menu::open(){return player_present;}
+    if crate::debug_menu::open()||crate::spirit_tune::active(){return player_present;}
     if crate::run_screen::active(){return player_present;}
     if view.room.is_some()||view.shared_event {
         return false;

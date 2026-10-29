@@ -1,9 +1,9 @@
 """余烬徽记：把生成的图集切成 160×160 图标。
 
 用法：python scene-builder/ember_art.py scene-assets
-读取 scene-assets/ember-art/emblems.png（4 列 × 3 行，Ember::ALL 前 12 项）与 emblems-summon.png（2 列 × 2 行，召唤流 4 项），
+读取 scene-assets/ember-art/emblems.png（4 列 × 3 行，Ember::ALL 前 12 项）、emblems-summon.png（2 列 × 2 行，召唤流 4 项）与 emblems-twin.png（单个，双生的灵唤铃），
 透明背景，按 src/embers.rs 中 Ember::ALL 的顺序从左到右、从上到下，
-写出 scene-assets/reward-icons/990000.rgba … 990015.rgba（与原版图标相同的 160×160 RGBA 原始数据）。
+写出 scene-assets/reward-icons/990000.rgba … 990016.rgba（与原版图标相同的 160×160 RGBA 原始数据）。
 游戏发现全部徽记都在时，奖励卡改用这些徽记；缺任何一张则继续借用原版护符图标。
 """
 from pathlib import Path
@@ -13,7 +13,8 @@ from PIL import Image
 FIRST, SIZE = 990000, 160
 ATLASES = [("emblems.png", 4, 3, ["无声处刑", "鲜血君王的赐福", "永冻吐息", "死诞之焰", "米凯拉之刃", "荷莱·露的再起",
                                   "古龙之心", "以血还血", "癫火狂热", "圣杯余响", "噬神之蛇的饱食", "荆棘之躯"]),
-           ("emblems-summon.png", 2, 2, ["仿身泪滴的替身", "灵骸迸裂", "众灵的盛宴", "灵唤铃的号令"])]
+           ("emblems-summon.png", 2, 2, ["仿身泪滴的替身", "灵骸迸裂", "众灵的盛宴", "灵唤铃的号令"]),
+           ("emblems-twin.png", 1, 1, ["双生的灵唤铃"])]
 
 assets = Path(sys.argv[1])
 destination = assets / "reward-icons"

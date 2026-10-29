@@ -45,9 +45,23 @@ pub fn spirit_base(id:u32)->u32 {
     let base=id-(id&0x0fffffff)%1000;
     if id-base<=10&&CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit){base}else{id}
 }
-/// 刷出的骨灰最高等级：武器的等价强化等级（背包里武器的最高强化，换算成 +0～+10）再 +1，最多 +10；没有记录时不限
-pub fn spirit_cap(weapon_peak:Option<u8>)->u32 {
-    weapon_peak.map_or(10,|peak|(u32::from(crate::contracts::reinforcement_level(peak,10))+1).min(10))
+/// 刷出的骨灰最高等级：持有过的骨灰最高等级 +1，最多 +10（营地调灵把骨灰升上去，之后刷出的骨灰跟着变高）。
+/// 旧存档没有骨灰记录时沿用旧规则：武器的等价强化等级（换算成 +0～+10）+1，也没有武器记录时不限
+pub fn spirit_cap(run:&Run)->u32 {
+    match run.spirit_peak {
+        Some(peak)=>(u32::from(peak)+1).min(10),
+        None=>run.weapon_peak.map_or(10,|peak|(u32::from(crate::contracts::reinforcement_level(peak,10))+1).min(10)),
+    }
+}
+/// 骨灰等级（+0～+10）；不是骨灰时为 None
+pub fn spirit_level(id:u32)->Option<u8> {
+    let base=spirit_base(id);
+    (CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit)).then(||(id-base) as u8)
+}
+/// 调灵：把一个骨灰升到 max(自身, 持有过的最高等级) + 1（最多 +10），低级骨灰一次追上来；已经 +10 时为 None
+pub fn spirit_tune_target(id:u32,peak:u8)->Option<u32> {
+    let level=spirit_level(id)?;
+    (level<10).then(||spirit_base(id)+u32::from(level.max(peak.min(10))+1).min(10))
 }
 /// 随机骨灰等级 +0～+cap（cap 为 10 时与原来的 +0～+10 相同）
 pub fn random_spirit_level(id:u32,entropy:u64,cap:u32)->u32 {
@@ -78,7 +92,7 @@ pub(crate) fn before_claimed_bases(run:&Run,node:usize)->Vec<Reward> {
     crate::affixes::rewards(run,node,casting_replaced(run,node,false))
 }
 fn casting_replaced(run:&Run,node:usize,spread:bool)->Vec<Reward> {
-    let mut result=before_spirit_levels(run,node);let cap=spirit_cap(run.weapon_peak);
+    let mut result=before_spirit_levels(run,node);let cap=spirit_cap(run);
     for reward in &mut result {if let Reward::Item(id)=reward {
         *id=random_spirit_level(*id,run.reward_seed()^(node as u64).wrapping_mul(7919),cap);
         if lookup(*id).is_some_and(|i|i.kind==ItemKind::Spirit)&&run.claimed_items.contains(id) {
@@ -229,13 +243,16 @@ fn favored_kind(class:Class)->Option<(ItemKind,bool)> {
 mod tests {
     use super::*;
     #[test]
-    fn spirit_rewards_stay_within_weapon_level_plus_one() {
-        assert_eq!(spirit_cap(None),10);
-        assert_eq!([0u8,4,5,24,45,50].map(|p|spirit_cap(Some(p))),[1,1,2,5,10,10]);
+    fn spirit_rewards_stay_within_the_spirit_peak_plus_one() {
+        let run=|spirit:Option<u8>,weapon:Option<u8>|{let mut r=crate::Run::new(1,crate::Class::Confessor);r.spirit_peak=spirit;r.weapon_peak=weapon;r};
+        assert_eq!(spirit_cap(&run(None,None)),10);
+        assert_eq!([0u8,4,5,24,45,50].map(|p|spirit_cap(&run(None,Some(p)))),[1,1,2,5,10,10],"saves without a spirit record keep the weapon rule");
+        assert_eq!([0u8,1,5,9,10].map(|p|spirit_cap(&run(Some(p),Some(50)))),[1,2,6,10,10],"the spirit record replaces the weapon rule");
+        assert_eq!(crate::Run::new(7,crate::Class::Hero).spirit_peak,Some(0));
         let mut seen=[false;11];
-        for seed in 0..3000 {for peak in [None,Some(0u8),Some(12),Some(50)] {
-            let mut run=crate::Run::new(seed,crate::Class::Confessor);run.weapon_peak=peak;
-            let cap=spirit_cap(peak);
+        for seed in 0..3000 {for peak in [Some(0u8),Some(3),Some(9),None] {
+            let mut run=crate::Run::new(seed,crate::Class::Confessor);run.spirit_peak=peak;
+            let cap=spirit_cap(&run);
             for node in 0..run.nodes.len().min(12) {for reward in offers(&run,node) {
                 if let Reward::Item(id)=reward {if lookup(id).is_some_and(|i|i.kind==ItemKind::Spirit) {
                     let level=id-spirit_base(id);assert!(level<=cap,"+{level} over +{cap}");
@@ -243,7 +260,19 @@ mod tests {
                 }}
             }}
         }}
-        assert!(seen.iter().all(|s|*s),"without a recorded weapon every level still appears");
+        assert!(seen.iter().all(|s|*s),"without any record every level still appears");
+    }
+    #[test]
+    fn tuning_catches_a_low_ash_up_to_the_peak_plus_one() {
+        let ash=CATALOG.iter().find(|i|i.kind==ItemKind::Spirit).unwrap().id;
+        assert_eq!(spirit_level(ash),Some(0));assert_eq!(spirit_level(ash+7),Some(7));
+        assert_eq!(spirit_tune_target(ash,0),Some(ash+1));
+        assert_eq!(spirit_tune_target(ash,4),Some(ash+5),"a +0 ash jumps past the best ash held");
+        assert_eq!(spirit_tune_target(ash+6,4),Some(ash+7),"a better ash still gains one level");
+        assert_eq!(spirit_tune_target(ash+9,10),Some(ash+10));
+        assert_eq!(spirit_tune_target(ash+10,3),None);
+        let weapon=CATALOG.iter().find(|i|i.kind==ItemKind::Weapon).unwrap().id;
+        assert_eq!(spirit_tune_target(weapon,0),None);assert_eq!(spirit_level(weapon),None);
     }
     #[test]
     fn pending_rewards_from_before_whetblades_still_load() {

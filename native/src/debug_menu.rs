@@ -4,12 +4,28 @@ use hudhook::imgui::{Condition,Ui};
 use erdtree_tower::{NodeKind,Run,contracts::Kind,embers::Ember,law::{Law,NODES}};
 use crate::enemies::Enemy;
 
-pub enum Command {Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32)}
+pub enum Command {Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool)}
 
 // tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
 static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()||crate::options::get().debug);
 static OPEN:AtomicBool=AtomicBool::new(false);
 static QUEUE:Mutex<VecDeque<Command>>=Mutex::new(VecDeque::new());
+/// 无敌（玩家不会死、敌人打不中玩家）与秒杀（玩家每次命中 9999999 伤害）：游戏自带的调试开关（WorldChrManDbgFlags），只在单人生效
+static GOD:AtomicBool=AtomicBool::new(false);
+static ONE_SHOT:AtomicBool=AtomicBool::new(false);
+static APPLIED:Mutex<Option<(bool,bool)>>=Mutex::new(None);
+/// 每帧：把开关写进游戏的调试标志；联机或调试菜单不可用时全部关掉
+pub fn apply_cheats(party:bool) {
+    if party||!enabled() {GOD.store(false,Ordering::Relaxed);ONE_SHOT.store(false,Ordering::Relaxed);}
+    let want=(GOD.load(Ordering::Relaxed),ONE_SHOT.load(Ordering::Relaxed));
+    let Ok(mut applied)=APPLIED.lock() else{return};
+    if *applied==Some(want)||applied.is_none()&&want==(false,false) {return;}
+    use fromsoftware_shared::FromStatic;
+    let Ok(flags)=(unsafe {eldenring::cs::WorldChrManDbgFlags::instance_mut()}) else{return};
+    flags.player_no_dead=want.0;flags.all_no_hit=want.0;flags.player_exterminate=want.1;
+    *applied=Some(want);
+    crate::log(format!("DEBUG_MENU cheats god={} one_shot={}",want.0,want.1));
+}
 static ROSTER:Mutex<Option<Vec<Enemy>>>=Mutex::new(None);
 
 pub fn enabled()->bool {*ENABLED}
@@ -175,6 +191,11 @@ impl Menu {
             let mut held=run.embers.contains(&ember);
             if ui.checkbox(format!("{}##ember-{i}",ember.name()),&mut held) {send(Command::Ember(ember,held));}
         }
+        // 双生的灵唤铃的实验方式：0 只放开使用；1 召第二只前清空“当前召唤”的记录
+        ui.text("双生的灵唤铃：");
+        let mode=crate::spirits::twin_mode();
+        ui.same_line();if ui.radio_button_bool("只放开使用##twin-0",mode==0) {crate::spirits::set_twin_mode(0);}
+        ui.same_line();if ui.radio_button_bool("另清空当前召唤##twin-1",mode==1) {crate::spirits::set_twin_mode(1);}
         ui.separator();
         ui.text(format!("苦难律法：{} 分 · 律法码 {}",run.law.score(),run.law.code()));
         ui.same_line();if ui.small_button("清空律法") {send(Command::Law(Law::default()));}
@@ -221,6 +242,9 @@ impl Menu {
         }
         ui.separator();
         if ui.button("回满生命、专注与圣杯瓶") {send(Command::Heal);}
+        let (mut god,mut one_shot)=(GOD.load(Ordering::Relaxed),ONE_SHOT.load(Ordering::Relaxed));
+        let changed=ui.checkbox("无敌（敌人打不中，也不会死）",&mut god)|{ui.same_line();ui.checkbox("秒杀（每次命中 9999999 伤害）",&mut one_shot)};
+        if changed {GOD.store(god,Ordering::Relaxed);ONE_SHOT.store(one_shot,Ordering::Relaxed);send(Command::Cheats(god,one_shot));}
         if ui.button("卢恩 +10000") {send(Command::Runes(10000));}
         ui.same_line();if ui.button("卢恩 +100000") {send(Command::Runes(100000));}
         ui.separator();

@@ -36,12 +36,15 @@ fn enemy(name: &'static str, model: i32,act:u8,kind:NodeKind) -> Enemy {
         act,kind,bar:0,retired:false,dlc:false,solo:false,appended:false,
     }
 }
+/// 预览名称追加在普通怪之后的 Boss 序号起点（DLC 的融泥骑士、黄金河马、贝勒、拉塔恩、梅瑟莫）
+const LATE_BOSS_FIRST:i32=153;
 static PREVIEW_NAMES:LazyLock<Vec<&'static str>>=LazyLock::new(|| {
     let mut names=Vec::new();
-    // 追加顺序固定：旧敌人、旧 Boss、DLC 敌人、新 Boss、新普通怪，保持名称编号不变。
+    // 追加顺序固定：旧敌人、旧 Boss、DLC 敌人、新 Boss、新普通怪、再之后追加的 Boss（序号 153 起），保持名称编号不变。
+    let late=|e:&Enemy|e.npc>=950000000+LATE_BOSS_FIRST*2;
     for name in POOLS.iter().filter(|e|!e.dlc&&!e.appended).map(|e|e.name).chain(BOSSES.iter().filter(|(_,e)|!e.appended).map(|(_,e)|e.name))
-        .chain(POOLS.iter().filter(|e|e.dlc).map(|e|e.name)).chain(BOSSES.iter().filter(|(_,e)|e.appended).map(|(_,e)|e.name))
-        .chain(POOLS.iter().filter(|e|e.appended).map(|e|e.name)) {if !names.contains(&name){names.push(name);}}
+        .chain(POOLS.iter().filter(|e|e.dlc).map(|e|e.name)).chain(BOSSES.iter().filter(|(_,e)|e.appended&&!late(e)).map(|(_,e)|e.name))
+        .chain(POOLS.iter().filter(|e|e.appended).map(|e|e.name)).chain(BOSSES.iter().filter(|(_,e)|late(e)).map(|(_,e)|e.name)) {if !names.contains(&name){names.push(name);}}
     names
 });
 pub fn preview_texts(group:&[Enemy])->Vec<i32> {
@@ -55,9 +58,9 @@ pub fn preview_texts(group:&[Enemy])->Vec<i32> {
 static POOLS:LazyLock<Vec<Enemy>>=LazyLock::new(||include_str!("../../scene-assets/enemy-pools.txt").lines().map(|line| {
     let p:Vec<_>=line.split('|').collect();
     let kind=match p[1]{"weak"=>NodeKind::Monster,"elite"=>NodeKind::Elite,"boss"=>NodeKind::Boss,_=>panic!("Invalid enemy tier")};
-    // party 为已补齐联机实体的追加敌人；solo 保留用于未移植敌人。DLC 停用标记在第 7 列。
+    // party 为已补齐联机实体的追加敌人；solo 保留用于未移植敌人。DLC 与追加敌人的停用标记在第 7 列（保留联机实体编号）。
     let flag=p.get(5).copied().unwrap_or("");let extra=p.get(6).copied().unwrap_or("");
-    assert!(matches!(flag,""|"retired"|"dlc"|"solo"|"party")&&matches!(extra,"")||(flag=="dlc"&&extra=="retired"),"Invalid enemy pool flag");
+    assert!(matches!(flag,""|"retired"|"dlc"|"solo"|"party")&&matches!(extra,"")||(matches!(flag,"dlc"|"party")&&extra=="retired"),"Invalid enemy pool flag");
     Enemy{retired:flag=="retired"||extra=="retired",dlc:flag=="dlc",solo:flag=="solo",appended:matches!(flag,"solo"|"party"),..enemy(p[4],p[2].parse().unwrap(),p[0].parse().unwrap(),kind)}
 }).collect());
 pub const POOL_NAME_FIRST:i32=9610000;
@@ -203,14 +206,35 @@ fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
 fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enemy> {
     let mut encounters=Vec::new();
     for (id,_) in BOSSES.iter().filter(|(id,e)|!e.retired&&!(party&&(e.solo||relocated(e).is_some()))&&encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
-    encounters.sort_by_key(|&id|mix(seed ^ (id as u64).wrapping_mul(0x9e3779b97f4a7c15)));
-    let chosen=encounters[ordinal%encounters.len()];
-    BOSSES.iter().filter(|(id,_)|*id==chosen).map(|(_,e)|{
+    // 第三幕「双王共命」：每个双王组合是第三幕 Boss 战的一个选项，与每个单只 Boss 机会相同；组合里的 Boss 不再单独出现（机制见 dual_bosses.rs）
+    let mut options:Vec<Vec<usize>>=Vec::new();
+    let pairs:Vec<[usize;2]>=if dual(kind,act) {DUAL_PAIRS.iter().filter_map(|pair|{
+        let ids=pair.map(|name|encounters.iter().copied().find(|id|BOSSES.iter().any(|(g,e)|g==id&&e.name==name)));
+        Some([ids[0]?,ids[1]?])
+    }).collect()}else{Vec::new()};
+    for &id in &encounters {if !pairs.iter().any(|p|p.contains(&id)) {options.push(vec![id]);}}
+    for pair in &pairs {options.push(pair.to_vec());}
+    options.sort_by_key(|o|mix(seed ^ (o.iter().fold(0u64,|k,&id|k.wrapping_mul(0x100000001b3)^id as u64)).wrapping_mul(0x9e3779b97f4a7c15)));
+    let chosen=&options[ordinal%options.len()];
+    chosen.iter().flat_map(|chosen|BOSSES.iter().filter(move |(id,_)|id==chosen)).map(|(_,e)|{
         let mut enemy=*e;enemy.act=act;enemy.kind=kind;if kind==NodeKind::Elite {enemy.npc+=1;enemy.bar=0;}enemy
     }).collect()
 }
+/// 第三幕双王共命的组合（Boss 名）：卡利亚双骑
+pub const DUAL_PAIRS:[[&str;2];1]=[["“圣树骑士”罗蕾塔","“双月骑士”蕾拉娜"]];
+/// 这一幕的 Boss 战可能是双王
+pub fn dual(kind:NodeKind,act:u8)->bool {kind==NodeKind::Boss&&act==3}
+/// 能当 Boss 的组合只当 Boss：同一幕的精英战不再抽到它们的精英版
+fn boss_capable(id:usize)->bool {
+    BOSSES.iter().any(|(group,e)|*group==id&&!e.retired&&boss_eligible(NodeKind::Boss,e))&&encounter_allowed(NodeKind::Boss,id)
+}
+/// 这一幕的怪物池里已有同名的精英或小怪（例如第一幕的猎犬骑士、第二幕的鲜血贵族）：不再作为这一幕的 Boss
+fn pooled(enemy:&Enemy)->bool {POOLS.iter().any(|p|p.act==enemy.act&&!p.retired&&p.kind!=NodeKind::Boss&&p.name==enemy.name)}
 fn encounter_allowed(kind:NodeKind,id:usize)->bool {
-    !BOSSES.iter().any(|(group,e)|*group==id&&e.name=="铃珠猎人")
+    if kind==NodeKind::Elite&&boss_capable(id) {return false;}
+    if kind==NodeKind::Boss&&BOSSES.iter().any(|(group,e)|*group==id&&pooled(e)) {return false;}
+    // 铃珠猎人、艾斯缇（黑暗弃子）不进 Boss 与精英战；数据行与联机实体保留，名称编号不变
+    !BOSSES.iter().any(|(group,e)|*group==id&&matches!(e.name,"铃珠猎人"|"艾斯缇"))
         &&!BOSSES.iter().any(|(group,e)|*group==id&&matches!(e.model,4570|4580|4050|4602))
         &&!BOSSES.iter().any(|(group,e)|*group==id&&kind==NodeKind::Elite&&e.act==3&&e.model==4911)
         &&!BOSSES.iter().any(|(group,e)|*group==id&&kind==NodeKind::Boss&&e.act==1&&e.name=="死亡仪式鸟")
@@ -238,6 +262,8 @@ pub fn placement(index: usize, count: usize) -> [f32; 3] {
     let radius=if count>4 {6.0}else{2.8};
     [angle.cos() * radius, 0.05, angle.sin() * radius]
 }
+/// 双王：左右各 8 米
+pub fn dual_placement(index:usize)->[f32;3] {[if index==0 {-8.0}else{8.0},0.05,0.0]}
 pub fn facing(from:[f32;3],target:[f32;3])->f32 {
     (from[0]-target[0]).atan2(from[2]-target[2])
 }
@@ -391,12 +417,21 @@ mod tests {
                 if e.kind==NodeKind::Monster {assert!(!["辉石矿工","巨蚁","罪人","圣树士兵","腐败野狗","梅瑟莫士兵"].contains(&e.name),"{}",e.name);}
             }
         }}
-        assert_eq!(POOLS.iter().filter(|e|e.retired&&e.kind==NodeKind::Monster&&e.act>=2).count(),28);
+        assert_eq!(POOLS.iter().filter(|e|e.retired&&e.kind==NodeKind::Monster&&e.act>=2).count(),32);
+    }
+    #[test]
+    fn slow_enemies_leave_the_act_two_and_three_pools() {
+        // 机动性差（不动或移动很慢）的怪：泥人、大型腐烂尸体、腐烂尸体、大型腐烂软泥、各种米兰达花、巨大神谕众使者
+        let slow=[3750,3662,3661,4171,4480,4482,5380,3630];
+        for act in 2..=3 {for seed in 0..600 {for kind in [NodeKind::Monster,NodeKind::Elite] {for party in [false,true] {
+            assert!(roster_in(kind,seed,seed as usize%24,seed as usize%12,act,party).iter().all(|e|!slow.contains(&e.model)));
+        }}}}
+        for act in 2..=3 {assert!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster&&selectable(e,true)).count()>=8,"four early fights still draw eight distinct weak enemies");}
     }
     #[test]
     fn appended_weak_enemies_join_solo_and_party_rosters() {
         let solo:Vec<_>=POOLS.iter().filter(|e|e.appended).collect();
-        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|e.kind==NodeKind::Monster&&e.act>=2&&!e.retired&&!e.dlc&&!e.solo));
+        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|e.kind==NodeKind::Monster&&e.act>=2&&(!e.retired||e.model==3661)&&!e.dlc&&!e.solo));
         let mut seen=std::collections::HashSet::new();
         for act in 2..=3 {for seed in 0..800 {
             let group=roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,true);
@@ -404,9 +439,10 @@ mod tests {
             map_entities(&group).unwrap();
             for e in group {if e.appended {seen.insert(e.model);}}
         }}
-        assert_eq!(seen.len(),9);
-        // 仅单人的怪物排在预览名单最后
-        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-9..],&solo.iter().map(|e|e.name).collect::<Vec<_>>()[..]);
+        assert_eq!(seen.len(),8,"the appended rotting corpse is retired as too slow");
+        // 追加的普通怪排在追加的 Boss 之后，再之后是序号 153 起的 DLC Boss
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-14..names.len()-5],&solo.iter().map(|e|e.name).collect::<Vec<_>>()[..]);
+        assert_eq!(&names[names.len()-5..],&["融泥骑士","黄金河马","“狂龙”贝勒","约定之王拉塔恩","“穿刺者”梅瑟莫"]);
     }
     #[test]
     fn appended_bosses_have_party_slots_and_reach_boss_rosters() {
@@ -473,8 +509,8 @@ mod tests {
     }
     #[test]
     fn eligible_encounters_are_reachable_as_boss_and_elite() {
-        assert_eq!(BOSSES.len(),153);
-        assert_eq!(BOSSES.iter().map(|(id,_)|*id).collect::<std::collections::HashSet<_>>().len(),118);
+        assert_eq!(BOSSES.len(),158);
+        assert_eq!(BOSSES.iter().map(|(id,_)|*id).collect::<std::collections::HashSet<_>>().len(),123);
         for act in 1..=3 {
             for kind in [NodeKind::Boss,NodeKind::Elite] {
                 if act==1&&kind==NodeKind::Elite {continue;}
@@ -491,12 +527,56 @@ mod tests {
         }
     }
     #[test]
+    fn an_act_never_offers_the_same_enemy_as_boss_and_elite() {
+        for act in 1..=3u8 {
+            let mut bosses=std::collections::HashSet::new();let mut elites=std::collections::HashSet::new();
+            for seed in 0..3000 {
+                for e in roster(NodeKind::Boss,seed,0,11,act) {bosses.insert(e.name);}
+                for e in roster(NodeKind::Elite,seed,0,11,act) {elites.insert(e.name);}
+                for e in roster(NodeKind::Monster,seed,0,11,act) {elites.insert(e.name);}
+            }
+            let both:Vec<_>=bosses.intersection(&elites).collect();
+            assert!(both.is_empty(),"act {act}: {both:?}");
+            assert!(bosses.len()>=10,"act {act} keeps enough bosses: {}",bosses.len());
+        }
+    }
+    #[test]
     fn boss_nodes_only_spawn_one_enemy_including_adds() {
-        for act in 1..=3 {for seed in 0..500 {for ordinal in 0..24 {
-            let group=roster(NodeKind::Boss,seed,ordinal,11,act);
-            assert_eq!(group.len(),1,"act={act}, seed={seed}: {group:?}");
-            assert!(group[0].bar>0);
-        }}}
+        for act in 1..=3 {for seed in 0..500 {for ordinal in 0..24 {for party in [false,true] {
+            let group=roster_in(NodeKind::Boss,seed,ordinal,11,act,party);
+            // 第三幕可能是双王组合：两只不同的 Boss，各有自己的血条
+            if group.len()==2 {
+                assert_eq!(act,3);assert_ne!(group[0].npc,group[1].npc);
+                assert!(DUAL_PAIRS.iter().any(|p|p.contains(&group[0].name)&&p.contains(&group[1].name)));
+                if party {map_entities(&group).unwrap();}
+            } else {
+                assert_eq!(group.len(),1,"act={act}, seed={seed}: {group:?}");
+                assert!(DUAL_PAIRS.iter().all(|p|!p.contains(&group[0].name)||act!=3),"pair members only appear together");
+            }
+            assert!(group.iter().all(|e|e.bar>0));
+        }}}}
+    }
+    #[test]
+    fn late_dlc_bosses_are_solo_boss_fights_only() {
+        let late:Vec<_>=BOSSES.iter().filter(|(_,e)|e.npc>=950000000+LATE_BOSS_FIRST*2).map(|(_,e)|(e.act,e.name)).collect();
+        assert_eq!(late,vec![(2,"融泥骑士"),(2,"黄金河马"),(3,"“狂龙”贝勒"),(3,"约定之王拉塔恩"),(3,"“穿刺者”梅瑟莫")]);
+        for (act,name) in late {
+            assert!((0..4000).any(|seed|roster_in(NodeKind::Boss,seed,0,11,act,false).iter().any(|e|e.name==name)),"{name} is drawn as a boss");
+            for seed in 0..1500 {
+                for kind in [NodeKind::Elite,NodeKind::Monster] {assert!(roster_in(kind,seed,seed as usize%24,11,act,false).iter().all(|e|e.name!=name),"{name} never appears as an elite");}
+                assert!(roster_in(NodeKind::Boss,seed,0,11,act,true).iter().all(|e|e.name!=name),"no party map entities yet");
+            }
+        }
+    }
+    #[test]
+    fn the_carian_pair_is_one_act_three_option_among_the_single_bosses() {
+        for party in [false,true] {
+            let mut seen=std::collections::HashMap::new();
+            for seed in 0..4000 {let group=roster_in(NodeKind::Boss,seed,0,11,3,party);*seen.entry(group.iter().map(|e|e.name).collect::<Vec<_>>()).or_insert(0)+=1;}
+            let pair=seen.iter().find(|(names,_)|names.len()==2).map(|(_,n)|*n).expect("the pair is reachable");
+            let options=seen.len() as i32;
+            assert!((pair as i32-4000/options).abs()<4000/options/2,"pair drawn {pair} times among {options} options");
+        }
     }
     #[test]
     fn great_wyrm_is_reserved_for_act_three_boss_rooms() {
@@ -510,6 +590,9 @@ mod tests {
     }
     #[test]
     fn bell_bearing_hunter_is_excluded_from_boss_and_elite_encounters() {
+        let astel=BOSSES.iter().find(|(_,e)|e.name=="艾斯缇").unwrap();
+        for kind in [NodeKind::Boss,NodeKind::Elite] {assert!(!encounter_allowed(kind,astel.0));}
+        for seed in 0..3000 {for party in [false,true] {assert!(roster_in(NodeKind::Boss,seed,0,11,2,party).iter().all(|e|e.name!="艾斯缇"));}}
         let hunters:Vec<_>=BOSSES.iter().filter(|(_,e)|e.name=="铃珠猎人").collect();
         assert!(!hunters.is_empty());
         for (id,_) in hunters {for kind in [NodeKind::Boss,NodeKind::Elite] {

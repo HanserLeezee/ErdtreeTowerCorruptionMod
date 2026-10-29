@@ -1,6 +1,6 @@
 use eldenring::{cs::{BlockId,ChrInsExt,TalkScript,WorldChrMan},ez_state::EzStateValue};
 use fromsoftware_shared::FromStatic;
-use std::{ffi::c_void,sync::atomic::{AtomicBool,AtomicUsize,Ordering}};
+use std::{ffi::c_void,sync::atomic::{AtomicBool,AtomicU8,AtomicUsize,Ordering}};
 use hudhook::mh::{MhHook,MH_EnableHook};
 
 static ACTIVE:AtomicBool=AtomicBool::new(false);
@@ -10,6 +10,18 @@ static CLEAR:AtomicUsize=AtomicUsize::new(0);
 static REGISTER:AtomicUsize=AtomicUsize::new(0);
 static BOUND:AtomicUsize=AtomicUsize::new(0);
 pub fn set_active(active:bool){ACTIVE.store(active,Ordering::Release);if !active {BOUND.store(0,Ordering::Release);}}
+/// 双生的灵唤铃（余烬，单人）：第一只召唤物在场时重新开放召唤点，再召唤一次。
+/// 原版只记一个“当前召唤”，场上有召唤物时不让用骨灰，所以在“使用前检查”的阶段把“有存活召唤物”暂时清掉（ARMED）。
+/// 召第二只时原版会不会把第一只收回去还没有实测：TWIN_MODE 0 只放开使用；1 另外在请求召唤前清空当前召唤的记录（调试菜单切换）
+static TWIN:AtomicBool=AtomicBool::new(false);
+static TWIN_ARMED:AtomicBool=AtomicBool::new(false);
+static TWIN_MODE:AtomicU8=AtomicU8::new(0);
+/// 第二只的召唤请求被原版拒绝时记下骨灰编号：扣骨灰与发召唤请求在使用动画里同时发生，被拒就会白扣一个，由运行时补回
+static TWIN_REFUND:std::sync::atomic::AtomicI32=std::sync::atomic::AtomicI32::new(0);
+pub fn take_twin_refund()->Option<u32> {let id=TWIN_REFUND.swap(0,Ordering::AcqRel);(id>0).then_some(id as u32&0x0fffffff)}
+pub fn set_twin(on:bool){if TWIN.swap(on,Ordering::AcqRel)!=on {super::log(format!("TOWER_TWIN enabled={on}"));}if !on {TWIN_ARMED.store(false,Ordering::Release);}}
+pub fn twin_mode()->u8 {TWIN_MODE.load(Ordering::Relaxed)}
+pub fn set_twin_mode(mode:u8){TWIN_MODE.store(mode.min(1),Ordering::Relaxed);super::log(format!("TOWER_TWIN mode={}",mode.min(1)));}
 fn refresh_allowed(active:bool,bound:usize,manager:usize,block:i32,alive:bool,used:bool)->bool {
     active&&bound!=0&&bound==manager&&eligible(block,alive,used)
 }
@@ -17,6 +29,8 @@ unsafe extern "C" fn clear_frame(manager:*mut u8) {
     let original:unsafe extern "C" fn(*mut u8)=unsafe {std::mem::transmute(CLEAR.load(Ordering::Acquire))};
     unsafe {original(manager);}
     if !ACTIVE.load(Ordering::Acquire)||BOUND.load(Ordering::Acquire)!=manager as usize {return;}
+    // 双生的灵唤铃：第一只还在场时，让骨灰在这一阶段的使用检查里可用
+    if TWIN_ARMED.load(Ordering::Acquire) {unsafe {(*manager.cast::<eldenring::cs::SummonBuddyManager>()).player_has_alive_summon=false;}}
     let Ok(world)=(unsafe {WorldChrMan::instance_mut()}) else {return;};
     let Some(player)=world.main_player.as_mut() else {return;};
     let used=super::native_talk::flag(SUMMONED_FLAG).unwrap_or(true);
@@ -33,9 +47,17 @@ unsafe extern "C" fn request(manager:*mut u8,effect:i32)->bool {
     let query:unsafe extern "C" fn(*mut u8,i32)->i32=unsafe {std::mem::transmute(USE_STATE.load(Ordering::Acquire))};
     let state=unsafe {query(manager,-1)};
     let field=|offset|unsafe {manager.add(offset).cast::<i32>().read()};
-    super::log(format!("Spirit use request: effect={effect} state={state} stone={} active_stone={} goods={} active_goods={}",field(0x38),field(0x3c),field(0xe0),field(0xe4)));
+    super::log(format!("Spirit use request: effect={effect} state={state} stone={} active_stone={} goods={} active_goods={} twin_armed={}",field(0x38),field(0x3c),field(0xe0),field(0xe4),TWIN_ARMED.load(Ordering::Acquire)));
+    let twin=TWIN_ARMED.load(Ordering::Acquire);let goods=field(0xe0);
+    if twin&&TWIN_MODE.load(Ordering::Relaxed)==1 {
+        // 实验 1：把第一只当成“没有当前召唤”，让原版按全新召唤处理
+        let buddy=unsafe {&mut *manager.cast::<eldenring::cs::SummonBuddyManager>()};
+        super::log(format!("TOWER_TWIN clearing active summon record: effect={} stone={} goods={}",buddy.active_summon_speffect_id,buddy.active_summmon_buddy_stone_entity_id,buddy.active_summon_goods_id));
+        buddy.active_summon_speffect_id=0;buddy.active_summmon_buddy_stone_entity_id=0;buddy.active_summon_goods_id=-1;buddy.player_has_alive_summon=false;
+    }
     let accepted=unsafe {original(manager,effect)};
     super::log(format!("Spirit use result: accepted={accepted} pending={} active={} stone={}",field(0x20),field(0x24),field(0x3c)));
+    if twin&&!accepted&&goods>0 {TWIN_REFUND.store(goods,Ordering::Release);super::log(format!("TOWER_TWIN second summon rejected; ash {goods} will be returned"));}
     accepted
 }
 pub unsafe fn install()->Result<(),String> {
@@ -64,10 +86,14 @@ unsafe fn install_trace()->Result<(),String> {
 
 pub const SUMMONED_FLAG:u32=45020968;
 #[derive(Default)]
-pub struct Spirits {script:Option<TalkScript>,reported:bool,failed:bool,status:Option<(u32,bool,bool,bool)>,registration:Option<u32>}
+pub struct Spirits {script:Option<TalkScript>,reported:bool,failed:bool,status:Option<(u32,bool,bool,bool)>,registration:Option<u32>,
+    /// 双生的灵唤铃：这场战斗已经重新开放过召唤点；上一次记录的存活召唤物数量
+    twin_reopened:bool,buddies:Option<usize>}
 // Accessed only from the serialized game task, like the native NPC dialogs.
 unsafe impl Send for Spirits {}
 
+/// 第二只还没召：已经重新开放、召唤点没再用掉、场上有第一只
+fn twin_armed(twin:bool,reopened:bool,used:bool,buddies:usize)->bool {twin&&reopened&&!used&&buddies>0}
 fn eligible(block:i32,combat:bool,used:bool)->bool {super::arenas::for_block(block).is_some()&&combat&&!used}
 impl Spirits {
     pub fn poll(&mut self,world:&WorldChrMan,block:i32,combat:bool)->Result<(),String> {
@@ -86,8 +112,20 @@ impl Spirits {
             self.reported=false;
             super::log(format!("Spirit stone bound: {handle:?}"));
         }
-        let used=super::native_talk::flag(SUMMONED_FLAG)?;
+        let mut used=super::native_talk::flag(SUMMONED_FLAG)?;
         let manager=&world.summon_buddy_manager;
+        let buddies=world.summon_buddy_chr_set.characters().filter(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag()).count();
+        if self.buddies!=Some(buddies) {
+            super::log(format!("TOWER_TWIN alive spirits={buddies} (was {:?}) active_goods={} active_effect={} alive_flag={} reopened={}",self.buddies,manager.active_summon_goods_id,manager.active_summon_speffect_id,manager.player_has_alive_summon,self.twin_reopened));
+            self.buddies=Some(buddies);
+        }
+        let twin=TWIN.load(Ordering::Acquire);
+        if used&&twin&&!self.twin_reopened&&buddies>0 {
+            super::native_talk::set_flag(SUMMONED_FLAG,false)?;
+            self.twin_reopened=true;used=false;
+            super::log("TOWER_TWIN first spirit is out; summon point reopened for a second spirit");
+        }
+        TWIN_ARMED.store(twin_armed(twin,self.twin_reopened,used,buddies),Ordering::Release);
         let status=(manager.buddy_stone_entity_id,manager.is_within_activation_range,manager.player_has_alive_summon,used);
         if self.status!=Some(status) {
             super::log(format!("Spirit state: stone={} range={} alive={} used={} cooldown={}",status.0,status.1,status.2,status.3,manager.item_use_cooldown_timer));
@@ -121,6 +159,15 @@ mod tests {
         assert!(!refresh_allowed(true,10,10,0x0b0a0000,true,false));
         assert!(!refresh_allowed(true,10,10,0x2d020000,false,false));
         assert!(!refresh_allowed(true,10,10,0x2d020000,true,true));
+    }
+    #[test]
+    fn the_twin_summon_only_lifts_the_alive_flag_between_the_first_and_second_spirit() {
+        use super::twin_armed;
+        assert!(twin_armed(true,true,false,1));
+        assert!(!twin_armed(false,true,false,1),"no ember");
+        assert!(!twin_armed(true,false,false,1),"first summon not yet made");
+        assert!(!twin_armed(true,true,true,2),"second spirit already summoned");
+        assert!(!twin_armed(true,true,false,0),"the first spirit is gone: the native rules apply again");
     }
     #[test]
     fn summons_are_only_registered_for_an_unused_combat_in_the_arena() {

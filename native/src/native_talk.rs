@@ -39,6 +39,10 @@ pub const GAMBLE_NO_AFFIX:i32=9500151;
 pub const GAMBLE_NO_SIBLING:i32=9500152;
 pub const GAMBLE_FAILED:i32=9500153;
 pub const GAMBLE_USED:i32=9500154;
+/// 营地调灵（小红帽）：菜单项、没有可调灵的骨灰、完成（文字在 scene-builder/RecoveryText.cs）
+pub const TUNE_OPTION:i32=9500155;
+pub const TUNE_NONE:i32=9500156;
+pub const TUNE_DONE:i32=9500157;
 impl EventMenu {
     fn confirmation(self,choice:i32)->Option<i32> {
         use erdtree_tower::regional_events::Trial;
@@ -100,6 +104,7 @@ impl NativeTalk {
     pub fn suspend(&mut self)->Result<(),String> {
         if !self.active(){return Ok(());}
         for event in [67,18,35] {self.event(event,&[])?;}
+        if self.state==20 {super::spirit_tune::close();let _=super::spirit_tune::take_result();}
         self.state=0;self.choice=None;self.event_request=None;self.event_confirmation=None;
         Ok(())
     }
@@ -182,7 +187,7 @@ impl NativeTalk {
                     for (i,&message) in messages.iter().enumerate() { self.event(19,&[i as i32+1,message,-1])?; }
                     self.event(19,&[99,9500003,-1])?;
                 } else if self.service==0 {
-                    for (choice,message) in [(1,9500000),(2,9500044),(3,9500106),(4,9500107),(99,9500003)] {
+                    for (choice,message) in [(1,9500000),(2,9500044),(3,9500106),(4,9500107),(5,TUNE_OPTION),(99,9500003)] {
                         self.event(19,&[choice,message,-1])?;
                     }
                 } else if self.service==1 {
@@ -270,6 +275,17 @@ impl NativeTalk {
                 if self.service==2&&choice==2 {
                     self.event(46,&[-1,-1])?;self.menu_kind=6;self.state=7;return Ok(());
                 }
+                // 调灵：与补瓶共用营地的一次服务；骨灰列表画在叠加层上，选定后在状态 20 执行
+                if self.service==0&&choice==5 {
+                    if self.camp.used {return self.dialog(9500011);}
+                    let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
+                    let data=unsafe {player.player_game_data.as_ref()};
+                    if super::smith::remaining(data)==0 {return self.dialog(9500012);}
+                    let offers=super::spirit_tune::offers(data);
+                    if offers.is_empty() {return self.dialog(TUNE_NONE);}
+                    super::log(format!("Spirit tuning menu: {offers:?}"));
+                    super::spirit_tune::open_picker(offers);self.state=20;return Ok(());
+                }
                 if choice != 1 && !(self.service == 0 && matches!(choice,2..=4)) { self.state = 0; return Ok(()); }
                 if self.service == 5 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
@@ -312,6 +328,15 @@ impl NativeTalk {
                 if player.chr_ins.modules.data.hp<=0{return Ok(());}
                 super::smith::upgrade_talisman(unsafe {player.player_game_data.as_mut()},offer.ok_or("护符选择已失效")?)?;
                 self.dialog(9500114)?;
+            },
+            20 => if let Some(choice)=super::spirit_tune::take_result() {
+                self.state=0;
+                let Some(offer)=choice else{return Ok(());};
+                if self.camp.used {return self.dialog(9500011);}
+                let player=unsafe {eldenring::cs::PlayerIns::local_player_mut()}.map_err(|_|"角色未加载")?;
+                if player.chr_ins.modules.data.hp<=0 {return Ok(());}
+                super::spirit_tune::tune(unsafe {player.player_game_data.as_mut()},offer)?;
+                self.dialog(TUNE_DONE)?;
             },
             5 => self.state=6,
             6 => if self.query(25,&[23])? == 0 {self.state=0;},

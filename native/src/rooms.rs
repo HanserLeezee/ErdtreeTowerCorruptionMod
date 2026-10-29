@@ -390,6 +390,7 @@ impl Room {
     }
     pub fn retire(&self, world: &mut WorldChrMan) {
         self.scarabs.retire(world);
+        if self.kind==NodeKind::Camp {super::spirit_tune::close();}
         if self.kind!=NodeKind::Monster {if let Some(player)=world.main_player.as_mut(){super::smith::clear(unsafe {player.player_game_data.as_mut()});}}
         if !self.hub && self.kind!=NodeKind::Monster && let Ok(flags) = unsafe { CSEventFlagMan::instance_mut() } {
             flags.virtual_memory_flag.set_flag(self.base() + 993, false);
