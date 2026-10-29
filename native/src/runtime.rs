@@ -295,6 +295,10 @@ struct Runtime {
     flask_grant_requested: Option<Instant>,
     reward_wait: Option<(Instant, Run)>,
     reward_portal:super::reward_delay::Completion,
+    /// 联机成员收到胜利后待撤下的敌人实体：尸体留到传送时再撤；(联机场次, 实体, 收到胜利的时间, 是否已撤下不同步的活敌人)
+    victory_cleanup:Option<(u64,Vec<u32>,Instant,bool)>,
+    /// 本局结束（死亡或通关）时这场战斗的敌人：先留在场上，复活或 15 秒后再撤，不在死亡瞬间消失
+    lingering:Option<(Pending,Instant)>,
     action_guard: super::input::ActionGuard,
     last_blessing_sync: Option<Instant>,
     room: Option<super::rooms::Room>,
@@ -356,6 +360,8 @@ fn fresh_runtime()->Runtime {
         flask_grant_requested: None,
         reward_wait: None,
         reward_portal:Default::default(),
+        victory_cleanup:None,
+        lingering:None,
         action_guard: Default::default(),
         last_blessing_sync: None,
         room: None,
@@ -698,6 +704,7 @@ fn tick_auto_party(state:&mut Runtime)->Result<bool,String> {
 }
 
 fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Result<(),String> {
+    finish_victory_cleanup(state,world);
     let epoch=state.party.as_ref().filter(|p|p.host()&&!p.defeated&&p.stopped.is_none())
         .filter(|_|state.hub.as_ref().is_some_and(|h|!h.active))
         .filter(|_|state.view.run.as_ref().is_some_and(|r|!matches!(r.phase,Phase::Dead|Phase::Won)))
@@ -771,7 +778,9 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
         if !link.host() {
             super::spirits::set_active(link.bound&&!link.victory&&alive);
             if link.victory&&alive&&state.reward_wait.is_none(){
-                for entity in super::enemies::map_entities(&super::enemies::node_roster(run,id))? {super::enemies::request_map_entity(entity,false)?;}
+                // 不马上撤敌人：房主在生命归零时就判定胜利，被处决的敌人要等处决动画播完才真正死亡；
+                // 在本机死亡之前撤掉，成员就拿不到这只敌人的卢恩（看起来直接消失、不掉魂）
+                state.victory_cleanup=Some((link.epoch,super::enemies::map_entities(&super::enemies::node_roster(run,id))?,Instant::now(),false));
                 state.reward_wait=Some((Instant::now(),run.clone()));state.view.busy=true;
                 state.reward_portal=Default::default();
                 let healed=heal_victory(world,run);if !healed.is_empty(){super::log(&healed);state.view.status=healed;state.view.prompt=state.view.prompt.wrapping_add(1);}
@@ -781,6 +790,47 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
         }
     }
     Ok(())
+}
+/// 联机成员胜利后撤敌人：死掉的敌人留着尸体（死亡动画、倒地与卢恩照常），等开始传送时一起撤下；
+/// 收到胜利 8 秒后仍在本机活着的（与房主不同步），先单独撤下，免得在选奖励时打人
+fn finish_victory_cleanup(state:&mut Runtime,world:&mut WorldChrMan) {
+    // 换了一场联机（队伍断开重连等）：过期的撤场作废，免得撤掉新一场的敌人
+    let epoch=state.party.as_ref().map(|p|p.epoch);
+    if state.victory_cleanup.as_ref().is_some_and(|c|Some(c.0)!=epoch) {state.victory_cleanup=None;return;}
+    let Some((_,ids,started,swept))=state.victory_cleanup.as_mut() else{return};
+    if state.view.travelling {
+        let (_,ids,started,_)=state.victory_cleanup.take().unwrap();
+        for entity in ids {if let Err(error)=super::enemies::request_map_entity(entity,false){super::log(error);}}
+        super::log(format!("Party victory cleanup on departure after {:.1} s",started.elapsed().as_secs_f32()));
+        return;
+    }
+    if *swept||!stray_sweep_due(started.elapsed()) {return;}
+    *swept=true;
+    let stray:Vec<u32>=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).filter(|chr|ids.contains(&chr.event_entity_id)
+        &&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
+        .map(|chr|chr.event_entity_id).collect();
+    for &entity in &stray {if let Err(error)=super::enemies::request_map_entity(entity,false){super::log(error);}}
+    if !stray.is_empty() {super::log(format!("Party victory: removed {} enemies still alive locally {:?}",stray.len(),stray));}
+}
+fn stray_sweep_due(waited:Duration)->bool {waited>=Duration::from_secs(8)}
+/// 本局结束后留在场上的敌人：玩家活着时（复活回到大赐福，或通关）5 秒后撤下，最多留 15 秒
+fn lingering_due(alive:bool,waited:Duration)->bool {alive&&waited>=Duration::from_secs(5)||waited>=Duration::from_secs(15)}
+#[cfg(test)]
+mod victory_cleanup_tests {
+    #[test]
+    fn members_keep_corpses_and_only_sweep_desynced_enemies_after_eight_seconds() {
+        use std::time::Duration as D;
+        assert!(!super::stray_sweep_due(D::from_secs(7)),"a riposted enemy can still be mid-animation");
+        assert!(super::stray_sweep_due(D::from_secs(8)));
+    }
+    #[test]
+    fn enemies_stay_while_the_player_is_dead() {
+        use std::time::Duration as D;
+        assert!(!super::lingering_due(false,D::from_secs(10)),"\"YOU DIED\" keeps the enemies on screen");
+        assert!(!super::lingering_due(true,D::from_secs(2)),"a final boss corpse does not vanish at once");
+        assert!(super::lingering_due(true,D::from_secs(5)),"retired once the player is back");
+        assert!(super::lingering_due(false,D::from_secs(15)),"never kept forever");
+    }
 }
 fn tick_revival(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result<(),String> {
     if !super::seamless_revival::available(){super::seamless_revival::cancel();return Ok(());}
@@ -1285,7 +1335,8 @@ fn tick_locked() {
             }
         }
         if let Some(room)=state.room.take(){room.retire(world);}
-        if let Some(pending)=&state.pending {retire_group(pending,world);}
+        // 这场战斗的敌人先留着（玩家死亡时像原版一样留在场上），复活或 15 秒后由下面撤下
+        if let Some(pending)=state.pending.take() {state.lingering=Some((pending,Instant::now()));}
         let _=super::native_talk::set_flag(45020970,false);
         let _=super::native_talk::set_flag(45020971,false);
         if let Some(player)=world.main_player.as_mut(){super::blessings::Blessings::clear_run(&mut player.chr_ins);}
@@ -1299,6 +1350,13 @@ fn tick_locked() {
         let _=super::native_talk::set_flag(35007990,false);
         let _=super::native_talk::set_flag(45007990,false);
         state.identity=None;state.view.run=None;state.view.travelling=false;
+    }
+    if let Some((_,since))=&state.lingering {
+        let alive=world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag());
+        if lingering_due(alive,since.elapsed()) {
+            let (pending,since)=state.lingering.take().unwrap();retire_group(&pending,world);
+            super::log(format!("Ended run enemies retired after {:.1} s (player alive={alive})",since.elapsed().as_secs_f32()));
+        }
     }
     if state.hub.as_ref().is_some_and(|h|h.active) {
         state.command=None;state.view.ready=false;state.pad_capture.update(false);
@@ -1852,7 +1910,8 @@ fn tick_locked() {
             super::run_log::append(&path,&super::run_log::entry(&next,fought,outcome==Outcome::Victory,&names));
         }
     }
-    if matches!(outcome,Outcome::LostEntity|Outcome::SpawnTimedOut|Outcome::PlayerDied){retire_group(pending,world);}
+    // 玩家死亡时不撤敌人：像原版一样留在场上（“你死了”画面里不会突然消失），回大赐福结算时统一撤下
+    if matches!(outcome,Outcome::LostEntity|Outcome::SpawnTimedOut){retire_group(pending,world);}
     state.view.enemy_hp = enemy_hp;
     state.view.busy = false;
     state.view.travelling = false;
