@@ -191,7 +191,8 @@ pub fn night_tick(run:Option<&erdtree_tower::Run>) {
     let Ok(time)=(unsafe {WorldAreaTime::instance_mut()}) else{return};
     let hour=time.clock.date.hours();
     let dark=!(5..20).contains(&hour);
-    let due=night.requested.is_none_or(|t|t.elapsed()>std::time::Duration::from_secs(20));
+    // r12：地图读完会把时间重置回 07:00；以前隔 20 秒才再改一次，所以要等一会儿才变黑。现在每帧检查，一回到白天立刻改回夜晚
+    let quiet=night.requested.is_some_and(|t|t.elapsed()<std::time::Duration::from_secs(5));
     // r6：只写目标时间不会生效（r5 日志里时间一直停在 7:00），所以同时直接改写当前时钟
     let set=|time:&mut WorldAreaTime,h:u8| {
         let (y,m,day,utc)=(time.clock.year(),time.clock.month(),time.clock.day(),time.clock.is_utc());
@@ -199,7 +200,7 @@ pub fn night_tick(run:Option<&erdtree_tower::Run>) {
         time.request_time(u32::from(h),0,0);time.clock=clock();time.previous_tick_clock=clock();
     };
     if want {
-        if !dark&&due {set(time,22);night.requested=Some(std::time::Instant::now());crate::log(format!("HANSFIX_NIGHT set 22:00 (was {hour}:00)"));}
+        if !dark {set(time,22);if !quiet {crate::log(format!("HANSFIX_NIGHT set 22:00 (was {hour}:00)"));}night.requested=Some(std::time::Instant::now());}
         night.on=true;
     } else if night.on {
         if dark {set(time,10);crate::log(format!("HANSFIX_NIGHT set 10:00 (was {hour}:00)"));}
