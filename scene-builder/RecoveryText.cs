@@ -32,7 +32,7 @@ static class RecoveryText {
     // 营地调灵（小红帽）：菜单项与提示；编号与 native/src/native_talk.rs 的 TUNE_* 对应
     static readonly (int,string)[] TuneEntries=[(9500155,"调灵（强化骨灰）"),
         (9500156,"没有可以调灵的骨灰，或身上没有强化石。需要背包里有尚未到 +10 的骨灰，且没有持有它的目标等级。"),
-        (9500157,"调灵完成。之后刷出的骨灰最高可到这个等级 +1。")];
+        (9500157,"调灵完成。之后刷出的骨灰最高可到这个等级。")];
     static readonly (int,string)[] ChestEntries=[(9500053,"三个宝箱，三份命运。每箱两成火药、两成守卫、六成宝物。")];
     static readonly (int,string)[] EndEntries=[(9500108,"结束本局"),(9500109,"结束本局并返回大赐福？联机时，全队将结束本局。"),(9500110,"当前无法结束本局。联机时请由房主操作。"),(9500111,"出售武器")];
     public static void Add(BND4 menu,bool chestOnly=false) {

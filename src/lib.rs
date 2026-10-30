@@ -267,6 +267,9 @@ pub struct Run {
     /// 决定奖励与商店里骨灰的最高等级（+1）；旧存档没有这一项时沿用武器换算
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub spirit_peak: Option<u8>,
+    /// 骨灰规则：1 起刷出的骨灰最高为当前骨灰等级（不再 +1，并计入武器等价强化等级）；更早的存档为 0
+    #[serde(default)]
+    pub spirit_rules: u8,
     pub class: Class,
     pub nodes: Vec<Node>,
     pub phase: Phase,
@@ -558,6 +561,7 @@ impl Run {
             casting_tools: None,
             weapon_peak: None,
             spirit_peak: Some(0),
+            spirit_rules: 1,
             class,
             nodes: camp_graph(seed),
             phase: Phase::Map,
@@ -874,6 +878,8 @@ impl Run {
                 let boss=matches!(self.phase,Phase::Reward{id:node,..} if self.nodes[node].kind==NodeKind::Boss)&&elite::LEGENDARY.contains(&affixes::base(id));
                 if (!item.kind.allowed(self.class)&&!boss)||(self.claimed_items.contains(&id)&&!(boss&&item.kind==rewards::ItemKind::Weapon)) {return Err("该奖励不可领取".into());}
                 if !self.claimed_items.contains(&id){self.claimed_items.push(id);}
+                // 拿到骨灰就记下它的等级：召唤后骨灰会用掉，不能等下一场胜利再看背包
+                if let (Some(level),Some(peak))=(rewards::spirit_level(id),self.spirit_peak) {self.spirit_peak=Some(peak.max(level));}
             },
         }
         Ok(())
@@ -1037,6 +1043,7 @@ impl Run {
             || self.weapon_level > 25
             || self.weapon_peak.is_some_and(|peak|peak>50)
             || self.spirit_peak.is_some_and(|peak|peak>10)
+            || self.spirit_rules>1
             || self.shop_purchased > 7
             || self.blessings.len() > 8
             || self.delivered_talismans.len() > 24

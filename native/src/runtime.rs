@@ -1277,7 +1277,16 @@ fn tick_locked() {
     let ash_fighting=state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting;
     if ash_fighting&&!state.ash_tracking {
         match super::loadout::ash_snapshot(player_data) {
-            Ok(before)=>{state.ash_before=before;state.ash_used=None;state.summon_seen=None;state.ash_tracking=true;super::log(format!("Spirit ash battle snapshot: {:?}",state.ash_before));},
+            Ok(before)=>{
+                state.ash_before=before;state.ash_used=None;state.summon_seen=None;state.ash_tracking=true;super::log(format!("Spirit ash battle snapshot: {:?}",state.ash_before));
+                // 开战时记下背包里骨灰的最高等级：骨灰召唤后会用掉，胜利时背包里可能已经没有它
+                let held=super::spirit_tune::inventory_peak(player_data);
+                let runtime=&mut *state;
+                for run in runtime.view.run.iter_mut().chain(runtime.pending.iter_mut().map(|p|&mut p.next_run)) {
+                    if run.spirit_peak.is_some_and(|peak|peak<held) {run.spirit_peak=Some(held);}
+                }
+                if let Some(run)=state.view.run.as_ref() {record(run);}
+            },
             Err(error)=>super::log_repeating(format!("Spirit ash snapshot failed: {error}")),
         }
     } else if !ash_fighting {state.ash_tracking=false;}
@@ -2274,7 +2283,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
         }
         if room.kind == erdtree_tower::NodeKind::Camp {
             let data=unsafe {world.main_player.as_mut().ok_or("角色未加载")?.player_game_data.as_mut()};
-            if let Some(run)=state.view.run.as_ref() {super::spirit_tune::set_peak(run.spirit_peak.unwrap_or(0));}
+            if let Some(run)=state.view.run.as_ref() {super::spirit_tune::set_peak(erdtree_tower::rewards::spirit_level_now(run));}
             if super::smith::spent(room.allowance_issued,room.view.completed,super::smith::remaining(data),room.allowance_target) {
                 let run=state.view.run.as_mut().ok_or("角色未绑定")?;
                 // 调灵也走这里：调灵后的骨灰等级立即记进本局（骨灰召唤后会用掉，不能等下一场胜利再看背包）
@@ -2783,9 +2792,17 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
     let mut spawning = false;
     let roles:Vec<_>=pending.foes.iter().map(|f|super::enemies::role(&f.spec)).collect();
     let monster_node=matches!(pending.next_run.phase,Phase::Combat{id} if pending.next_run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Monster));
+    // 精英战里精英怪池的精英：平时一只一只上；苦难律法「精英成双 I」前一只半血时下一只上，「精英成双 II」一起上
+    let elite_node=matches!(pending.next_run.phase,Phase::Combat{id} if pending.next_run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Elite));
+    let pacing=if elite_node {pending.next_run.law.elite_pacing()}else{erdtree_tower::encounter::Pacing::Together};
     let mut untouched=Vec::new();
     for i in 0..count {
-        if !erdtree_tower::encounter::may_spawn(pending.networked,monster_node,&roles,i,&outcomes) {
+        let earlier:Vec<_>=(0..i).filter(|&j|roles[j]==erdtree_tower::encounter::Role::Strong).map(|j|{
+            let health=pending.foes[j].fight.handle().and_then(|h|world.chr_ins_by_handle(&h)).map(|c|(c.modules.data.hp,c.modules.data.max_hp));
+            (outcomes[j],health)
+        }).collect();
+        let held=pacing.waits(&earlier);
+        if !erdtree_tower::encounter::may_spawn_paced(pending.networked,monster_node,held,&roles,i,&outcomes) {
             outcomes.push(Outcome::Waiting);
             continue;
         }

@@ -74,6 +74,8 @@ pub fn bar_text(spec:&Enemy)->Option<i32> {
     POOL_NAMES.iter().position(|n|*n==spec.name).map(|i|POOL_NAME_FIRST+i as i32)
 }
 pub fn bar_rank(spec:&Enemy)->u8 {if spec.bar>0 {0}else if boss_npc(spec.npc)||spec.kind==NodeKind::Boss {1}else if spec.kind==NodeKind::Elite {2}else{3}}
+/// 只在精英战出现、不进普通房“强怪”位置的精英：猎犬骑士、咒剑士（DLC）
+const NOT_IN_ORDINARY_ROOMS:[i32;2]=[4290,5040];
 pub fn roster(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8) -> Vec<Enemy> {roster_in(kind,seed,ordinal,layer,act,party())}
 #[cfg(test)]
 pub(super) fn party_roster_for_test(kind:NodeKind,seed:u64,ordinal:usize,layer:usize,act:u8)->Vec<Enemy>{roster_in(kind,seed,ordinal,layer,act,true)}
@@ -96,7 +98,7 @@ fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,part
         let models=[3010,3800,4351,4352,4353,4354,4355,4290,3020,4340,2270,4490];
         select(POOLS.iter().copied().filter(|e|e.act==1&&e.kind==NodeKind::Elite&&(models.contains(&e.model)||e.dlc)).collect(),seed,ordinal*strong+i,party)
     } else if kind==NodeKind::Monster {
-        select(POOLS.iter().copied().filter(|e|e.act==act&&e.kind==NodeKind::Elite&&e.model!=4290).collect(),seed,ordinal*strong+i,party)
+        select(POOLS.iter().copied().filter(|e|e.act==act&&e.kind==NodeKind::Elite&&!NOT_IN_ORDINARY_ROOMS.contains(&e.model)).collect(),seed,ordinal*strong+i,party)
     } else {choose_in(NodeKind::Elite, seed, ordinal * strong + i,act,party)})
         .chain((0..weak).map(|i| choose_in(NodeKind::Monster, seed, ordinal * weak + i,act,party))).collect()
 }
@@ -337,11 +339,13 @@ mod tests {
         for act in 1..=3 {for layer in 0..12 {for ordinal in 0..40 {
             for seed in [0,42,999] {
                 let group=super::roster(NodeKind::Monster,seed,ordinal,layer,act);
-                assert!(group.iter().all(|enemy|enemy.model!=4290));
+                assert!(group.iter().all(|enemy|!super::NOT_IN_ORDINARY_ROOMS.contains(&enemy.model)));
                 assert_eq!(group.len(),match layer/3 {0=>2,1|2=>3,_=>4});
             }
         }}}
         assert!((0..40).any(|n|super::roster(NodeKind::Elite,42,n,0,1).iter().any(|e|e.model==4290)));
+        // 咒剑士仍在第一幕的精英战里（DLC 敌人开启时）
+        assert!((0..400).any(|n|super::roster_in(NodeKind::Elite,42,n,0,1,false).iter().any(|e|e.model==5040)));
     }
     #[test]
     fn preview_groups_duplicates_and_preserves_spawn_names() {

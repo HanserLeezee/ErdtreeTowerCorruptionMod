@@ -10,9 +10,9 @@ from pathlib import Path
 
 from PIL import Image
 
-# 序号与 src/law.rs 的 Node::art 对应：强敌、词条蔓延、精英词条、词条强化、坚不可摧、元素庇护、异常耐性、节制、脆弱、孤狼、疲惫、断念、贫瘠、奸商、吝啬的赐福、限时、嫉妒的世界
+# 序号与 src/law.rs 的 Node::art 对应：强敌、词条蔓延、精英词条、词条强化、坚不可摧、元素庇护、异常耐性、节制、脆弱、孤狼、疲惫、断念、贫瘠、奸商、吝啬的赐福、限时、嫉妒的世界、精英成双
 ICONS = ['enemy', 'spread', 'elite', 'empower', 'poise', 'element', 'status', 'temperance', 'fragile', 'lonewolf',
-         'fatigue', 'focus', 'poverty', 'merchant', 'stingy', 'timer', 'envy']
+         'fatigue', 'focus', 'poverty', 'merchant', 'stingy', 'timer', 'envy', 'pair']
 CELL, COLUMNS, ROWS = 160, 5, 4
 
 

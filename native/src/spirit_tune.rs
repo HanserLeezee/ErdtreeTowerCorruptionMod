@@ -108,7 +108,7 @@ pub fn draw(ui:&Ui) {
         .build(|| {
             let scale=ui.push_style_var(hudhook::imgui::StyleVar::ItemSpacing([8.0*s,8.0*s]));
             ui.text_colored(gold,"调灵 · 强化骨灰");
-            ui.text_colored(dim,"选一个骨灰升到「持有过的最高等级 +1」，低级骨灰一次追上来。\n用掉一块强化石；若用的是本次营地发的那块，就不能再补瓶。");
+            ui.text_colored(dim,"选一个骨灰升到「当前骨灰等级 +1」（当前等级取持有过的最高骨灰与武器等价强化中较高的），低级骨灰一次追上来。\n用掉一块强化石；若用的是本次营地发的那块，就不能再补瓶。");
             ui.separator();
             for (i,offer) in offers.iter().enumerate() {
                 let label=format!("{}　+{} → +{}##tune{i}",base_name(offer.source),level(offer.source),level(offer.target));

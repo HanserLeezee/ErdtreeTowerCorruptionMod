@@ -3,7 +3,7 @@
 pub struct Node {pub name:&'static str,pub branch:usize,pub parent:Option<usize>,pub points:u32,pub effect:&'static str,pub art:u8,pub col:u8,pub row:u8}
 pub const BRANCHES:[&str;4]=["敌人","我方","经济","规则"];
 const fn n(name:&'static str,branch:usize,parent:Option<usize>,points:u32,effect:&'static str,art:u8,col:u8,row:u8)->Node {Node{name,branch,parent,points,effect,art,col,row}}
-pub const NODES:[Node;32]=[
+pub const NODES:[Node;34]=[
     n("强敌 I",0,None,10,"敌人强度 +1 档：生命 +10%，攻击 +6%",0,1,0),
     n("强敌 II",0,Some(0),20,"再 +1 档：累计生命 +21%，攻击 +13%",0,2,0),
     n("强敌 III",0,Some(1),30,"再 +2 档：累计生命 +45%，攻击 +28%",0,3,0),
@@ -35,13 +35,15 @@ pub const NODES:[Node;32]=[
     n("元素庇护 II",0,Some(27),10,"敌人受到魔力、火、雷、圣伤害累计 -20%",5,2,9),
     n("异常耐性 I",0,None,10,"敌人中毒、腐败、出血、冻伤、睡眠、发狂、死亡耐性 +15%，原有免疫不变",6,1,10),
     n("异常耐性 II",0,Some(29),10,"敌人异常耐性累计 +30%，原有免疫不变",6,2,10),
-    // 律法以 32 位记录，这是最后一个空位
     n("词条强化",0,Some(5),20,"Boss 与精英的词条数值约提高一半：减伤、攻击、回复、吸血、反弹、加速都更强",3,4,1),
+    // 32 起超出原来的 32 位：律法以 64 位记录，前 32 个节点的律法码不变
+    n("精英成双 I",0,Some(2),10,"精英战里第一只精英生命降到一半时，第二只上场（平时第一只倒下后才出来）",17,4,0),
+    n("精英成双 II",0,Some(32),20,"精英战里的两只精英同时上场",17,5,0),
 ];pub const GRADES:[(u32,&str);4]=[(70,"老练"),(140,"艰难"),(210,"噩梦"),(280,"危机")];
 
 #[derive(Clone,Copy,Debug,Default,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
 #[serde(transparent)]
-pub struct Law(pub u32);
+pub struct Law(pub u64);
 impl Law {
     pub fn is_empty(self)->bool {self.0==0}
     fn chain(self,ids:&[usize])->u8 {ids.iter().take_while(|&&id|self.has(id)).count() as u8}
@@ -53,6 +55,11 @@ impl Law {
     pub fn elite_affixes(self)->bool {self.has(5)}
     /// 词条强化：Boss 词条使用强化后的数值
     pub fn empowered_affixes(self)->bool {self.has(31)}
+    /// 精英成双：精英战里精英怪池的精英怎么上场
+    pub fn elite_pacing(self)->crate::encounter::Pacing {
+        use crate::encounter::Pacing;
+        match self.chain(&[32,33]) {0=>Pacing::Apart,1=>Pacing::HalfHealth,_=>Pacing::Together}
+    }
     pub fn toughness(self)->u8 {self.chain(&[6,7])}
     pub fn elemental_resistance(self)->u8 {self.chain(&[27,28])}
     pub fn status_resistance(self)->u8 {self.chain(&[29,30])}
@@ -72,22 +79,22 @@ impl Law {
     /// 限时：每场战斗的秒数
     pub fn time_limit(self)->Option<u64> {match self.chain(&[24,25]) {0=>None,1=>Some(180),_=>Some(120)}}
     pub fn envy_world(self)->bool {self.has(26)}
-    pub fn has(self,id:usize)->bool {id<NODES.len()&&self.0&(1<<id)!=0}
+    pub fn has(self,id:usize)->bool {id<NODES.len()&&self.0&(1u64<<id)!=0}
     pub fn available(self,id:usize)->bool {id<NODES.len()&&NODES[id].parent.is_none_or(|p|self.has(p))}
     pub fn valid(self)->bool {u64::from(self.0)>>NODES.len()==0&&(0..NODES.len()).all(|id|!self.has(id)||self.available(id))}
     /// 选择时连同这条路线上还没选的前置节点一起选上；取消会连带取消其后的节点
     pub fn toggle(self,id:usize)->Self {
         if id>=NODES.len() {return self;}
         if self.has(id) {
-            let mut next=self.0&!(1<<id);
-            loop {let before=next;for (i,node) in NODES.iter().enumerate(){if node.parent.is_some_and(|p|next&(1<<p)==0){next&=!(1<<i);}}if next==before{break;}}
+            let mut next=self.0&!(1u64<<id);
+            loop {let before=next;for (i,node) in NODES.iter().enumerate(){if node.parent.is_some_and(|p|next&(1u64<<p)==0){next&=!(1u64<<i);}}if next==before{break;}}
             Law(next)
         } else {Law(self.0|self.path(id))}
     }
     /// 节点与它的全部前置节点（位掩码）
-    fn path(self,id:usize)->u32 {
-        let mut mask=0;let mut node=Some(id);
-        while let Some(i)=node {mask|=1<<i;node=NODES[i].parent;}
+    fn path(self,id:usize)->u64 {
+        let mut mask=0u64;let mut node=Some(id);
+        while let Some(i)=node {mask|=1u64<<i;node=NODES[i].parent;}
         mask
     }
     /// 选择这个节点时一并选上的、还没选的前置节点（由近到远；已选或没有前置时为空）
@@ -105,7 +112,7 @@ impl Law {
     /// 律法码：节点位图加 5 位校验，Crockford Base32，便于分享
     pub fn code(self)->String {
         const DIGITS:&[u8]=b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-        let value=(u64::from(self.0)<<5)|checksum(self.0);
+        let value=(self.0<<5)|checksum(self.0);
         (0..if value<(1u64<<35){7}else{8}).rev().map(|i|DIGITS[((value>>(i*5))&31) as usize] as char).collect()
     }
     pub fn parse(code:&str)->Option<Self> {
@@ -113,19 +120,48 @@ impl Law {
         let code=code.trim().to_ascii_uppercase().replace(['O'],"0").replace(['I','L'],"1");
         if code.is_empty()||code.len()>8 {return None;}
         let value=code.chars().try_fold(0u64,|v,c|DIGITS.find(c).map(|d|v<<5|d as u64))?;
-        let law=Law(u32::try_from(value>>5).ok()?);
+        let law=Law(value>>5);
         (value&31==checksum(law.0)&&law.valid()).then_some(law)
     }
 }
-fn checksum(mask:u32)->u64 {u64::from((0..32).map(|i|((mask>>i)&1)*(i+7)).fold(11u32,|a,b|a.wrapping_mul(31).wrapping_add(b))%32)}
+/// 校验：前 32 位的算法不变（旧律法码照常通过）；用到更高的位时接着折算
+fn checksum(mask:u64)->u64 {
+    let low=(0..32u32).map(|i|((mask>>i)&1) as u32*(i+7)).fold(11u32,|a,b|a.wrapping_mul(31).wrapping_add(b));
+    let all=if mask>>32==0 {low}else{(32..64u32).map(|i|((mask>>i)&1) as u32*(i+7)).fold(low,|a,b|a.wrapping_mul(31).wrapping_add(b))};
+    u64::from(all%32)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn codes_from_before_the_64_bit_law_stay_valid_and_new_nodes_round_trip() {
+        // 扩成 64 位之前的算法：32 位节点图 + 同样的校验
+        let old_code=|mask:u32|{
+            const DIGITS:&[u8]=b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+            let sum=u64::from((0..32).map(|i|((mask>>i)&1)*(i+7)).fold(11u32,|a,b|a.wrapping_mul(31).wrapping_add(b))%32);
+            let value=(u64::from(mask)<<5)|sum;
+            (0..if value<(1u64<<35){7}else{8}).rev().map(|i|DIGITS[((value>>(i*5))&31) as usize] as char).collect::<String>()
+        };
+        let mut law=Law::default();
+        for id in [0,3,8,11,15,19,24,27,29,4,31,1,12,25] {
+            law=law.toggle(id);
+            assert_eq!(law.code(),old_code(law.0 as u32),"old codes are unchanged");
+            assert_eq!(Law::parse(&old_code(law.0 as u32)),Some(law));
+        }
+        let half=Law::default().toggle(32);
+        assert!(half.elite_pacing()==crate::encounter::Pacing::HalfHealth&&half.has(2)&&half.has(1)&&half.has(0),"its route comes with it");
+        let paired=Law::default().toggle(33);
+        assert!(paired.elite_pacing()==crate::encounter::Pacing::Together&&paired.has(32));
+        assert_eq!(Law::default().elite_pacing(),crate::encounter::Pacing::Apart);
+        assert_eq!(Law::parse(&paired.code()),Some(paired));assert_eq!(Law::parse(&half.code()),Some(half));
+        let all=Law((1u64<<NODES.len())-1);assert!(all.valid());assert_eq!(Law::parse(&all.code()),Some(all));
+        assert!(!Law(1u64<<NODES.len()).valid());
+    }
+    #[test]
     fn every_route_has_its_own_icon() {
         // 律法图标集的格数，与 scene-builder/law_icons.py 的 ICONS 一致
-        const ICONS:u8=17;
+        const ICONS:u8=18;
         let stem=|n:&Node|n.name.trim_end_matches(['I',' ']);
         assert!(NODES.iter().all(|n|n.art<ICONS));
         assert_eq!(NODES.iter().map(|n|n.art).collect::<std::collections::BTreeSet<_>>().len(),usize::from(ICONS),"every icon is used");
@@ -138,7 +174,7 @@ mod tests {
             else {assert_eq!(node.col,1,"{}",node.name);}
             assert!(NODES.iter().enumerate().all(|(o,other)|o==id||(other.col,other.row)!=(node.col,node.row)));
         }
-        assert_eq!(Law(((1u64<<NODES.len())-1) as u32).score(),480);
+        assert_eq!(Law((1u64<<NODES.len())-1).score(),510);
     }
     #[test]
     fn selection_follows_paths_and_cascades() {
@@ -149,7 +185,7 @@ mod tests {
         let law=Law::default().toggle(0).toggle(1).toggle(2);assert_eq!(law.score(),60);
         assert_eq!(law.toggle(1),Law::default().toggle(0),"removing a node removes its successors");
         let all=(0..NODES.len()).fold(Law::default(),|l,id|l.toggle(id));
-        assert_eq!(all.score(),480);assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
+        assert_eq!(all.score(),510);assert_eq!(all.grade(),Some("危机"));assert!(all.valid());
         assert_eq!(Law::default().grade(),None);assert_eq!(Law::default().toggle(24).toggle(25).toggle(26).toggle(0).grade(),Some("老练"));
         assert!(!Law(1<<1).valid());
     }
