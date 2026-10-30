@@ -18,7 +18,7 @@ fn kinds()->&'static [Kind] {if erdtree_tower::contracts::extended() {&Kind::ALL
 /// [HansFix] 堕落誓约的词条行（6 种 × 3 档 × 负/正）
 fn curse_rows()->Vec<i32> {
     if !erdtree_tower::contracts::extended() {return vec![];}
-    (0..erdtree_tower::fallen_oaths::CURSES).flat_map(|c|(1..=3).flat_map(move|l|[false,true].map(|p|erdtree_tower::fallen_oaths::effect(c,l,p)))).collect()
+    let mut ids=erdtree_tower::fallen_oaths::all_effects();ids.sort_unstable();ids.dedup();ids
 }
 fn all_effects()->Vec<i32> {let mut ids=effects_for(kinds());ids.extend(curse_rows());ids.sort_unstable();ids.dedup();ids}
 /// [HansFix] 新誓约的参数行只在新誓约补丁的 regulation.bin 里；没装补丁时只检查、只管理官方的十种
@@ -237,12 +237,12 @@ mod tests {
     fn fallen_oaths_apply_their_boon_and_three_curse_rows_but_no_old_drawback() {
         use erdtree_tower::fallen_oaths::{FallenOath,effect};
         let mut run=Run::new(42,erdtree_tower::Class::Samurai);
-        run.fallen_oaths=vec![FallenOath{kind:Kind::Radiant,level:2,minus:[0,3],plus:5}];
+        run.fallen_oaths=vec![FallenOath{kind:Kind::Radiant,level:2,minus:[0,3],plus:5,element:1}];
         let ids=desired(Some(&run));
         assert_eq!(ids,vec![FIRST+104,effect(0,2,false),effect(3,2,false),effect(5,2,true)]);
         assert!(!ids.contains(&(FIRST+101)),"no fixed drawback");
         assert!(ids.iter().all(|id|all_effects().contains(id)),"every applied row is managed (and validated)");
-        assert_eq!(curse_rows().len(),36);
+        assert_eq!(curse_rows().len(),54);
     }
     #[test]
     fn effects_replace_previous_act_and_clear_on_death_win_or_hub() {

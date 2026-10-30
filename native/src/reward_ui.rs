@@ -679,7 +679,7 @@ pub fn test_frames(context:&mut hudhook::imgui::Context) {
         fallen.debug_fallen_start().unwrap();let boss=fallen.fallen_id().unwrap();
         fallen.debug_jump(boss).unwrap();fallen.enter(boss).unwrap();fallen.win_combat().unwrap();
         fallen.claim_reward(0).unwrap();fallen.decline_reward().unwrap();
-        fallen.fallen_oaths.push(erdtree_tower::fallen_oaths::FallenOath{kind:erdtree_tower::contracts::Kind::Lifeline,level:1,minus:[1,4],plus:0});
+        fallen.fallen_oaths.push(erdtree_tower::fallen_oaths::FallenOath{kind:erdtree_tower::contracts::Kind::Lifeline,level:1,minus:[1,4],plus:0,element:2});
         assert!(fallen.fallen_oath_pending());
         for _ in 0..3 {panel.draw_fallen_oaths(context.frame(),&fallen,&view);context.render();}
         panel.draw_fallen_oaths(context.frame(),&fallen,&view);let data=context.render();assert!(data.total_vtx_count>0);

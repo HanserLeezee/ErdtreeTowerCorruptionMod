@@ -139,20 +139,26 @@ fn super_pool(run:&crate::Run)->Vec<u32> {
         &&i.kind.allowed(run.class)&&crate::dlc::item_allowed(crate::affixes::base(i.id))&&!run.claimed_items.contains(&i.id))
         .map(|i|i.id).collect()
 }
-fn super_pick(run:&crate::Run,salt:u64,count:usize,avoid:&[u32])->Vec<u32> {
+fn super_pick(run:&crate::Run,salt:u64,count:usize,avoid:&[u32])->Vec<u32> {super_pick_capped(run,salt,count,avoid,count)}
+/// 同上，但防具最多 max_armor 件（防具变体远多于武器，不加限制时整页常常全是防具）
+fn super_pick_capped(run:&crate::Run,salt:u64,count:usize,avoid:&[u32],max_armor:usize)->Vec<u32> {
     let pool=super_pool(run);
     let mut picked:Vec<u32>=Vec::new();
-    for n in 0..pool.len().min(400) {
+    for n in 0..pool.len().min(2000) {
         if picked.len()==count {break;}
         let id=pool[(crate::mix(run.reward_seed()^salt^(n as u64).wrapping_mul(0x9e37_79b9)) as usize)%pool.len()];
         let base=crate::affixes::base(id);
+        let armor=|id:u32|id>>28==1;
+        if armor(id)&&picked.iter().filter(|p|armor(**p)).count()>=max_armor {continue;}
         if !avoid.contains(&id)&&!picked.iter().any(|p|crate::affixes::base(*p)==base) {picked.push(id);}
     }
     picked
 }
+/// [HansFix] 堕落首领两页奖励里防具合计最多 3 件：第一页最多 2 件，第二页最多 1 件
+pub const FALLEN_ARMOR_CAP:[usize;2]=[2,1];
 /// 堕落首领的奖励页（共两页，每页三件）
 pub fn fallen_offers(run:&crate::Run,node:usize,page:u8)->Vec<crate::Reward> {
-    let mut items=super_pick(run,(node as u64)<<8^u64::from(page)^0xfa11_b055,3,&[]);
+    let mut items=super_pick_capped(run,(node as u64)<<8^u64::from(page)^0xfa11_b055,3,&[],FALLEN_ARMOR_CAP[usize::from(page.min(1))]);
     while items.len()<3 {items.push(0);}
     items.into_iter().map(|id|if id==0 {crate::Reward::Gold(5000)} else {crate::Reward::Item(id)}).collect()
 }
@@ -305,6 +311,19 @@ mod fallen_entry {
                 let after=super::fallen_graph(base.clone(),seed,true,Some(k));
                 assert_eq!(after[k].kind,seen[k].kind,"seed {seed} node {k}");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod fallen_armor_cap_tests {
+    #[test]
+    fn fallen_boss_pages_hold_at_most_three_armor_pieces_in_total() {
+        for seed in 0..200u64 {
+            let run=crate::Run::new(seed,crate::Class::Hero);
+            let armor=|page:u8|super::fallen_offers(&run,7,page).iter().filter(|r|matches!(r,crate::Reward::Item(id) if id>>28==1)).count();
+            let (a,b)=(armor(0),armor(1));
+            assert!(a<=2&&b<=1&&a+b<=3,"seed {seed}: {a}+{b} armor");
         }
     }
 }

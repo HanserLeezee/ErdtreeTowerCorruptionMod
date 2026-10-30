@@ -55,6 +55,7 @@ plain(LIFELINE, 1, {'maxHpRate': 0.90})
 # r13 fallen-oath curses: 9600200 + kind*10 + (level-1) negative, +5 positive (the same effect reversed).
 # kinds: 0 max HP, 1 magic/fire/lightning/holy damage taken, 2 max stamina, 3 stamina cost, 4 FP cost, 5 skill damage
 CURSE_FIRST = 9600200
+ELEMENT_FIRST = 9600260
 SKILL_TEMPLATE = 9600001   # Steel oath drawback: attack rates limited to weapon skills via magicSubCategoryChange 112/111
 LOW, HIGH = (0.08, 0.10, 0.12), (0.10, 0.12, 0.15)
 for lvl in range(3):
@@ -68,6 +69,9 @@ for lvl in range(3):
         SPEC[CURSE_FIRST + 30 + off] = (TEMPLATE, {'consumeStaminaRate': 1 + sign * lo, 'changeHpEstusFlaskCorrectRate': 1.0})
         SPEC[CURSE_FIRST + 40 + off] = (TEMPLATE, {f'{c}ConsumptionRate': 1 + sign * lo for c in ('magic', 'miracle', 'arts')} | {'changeHpEstusFlaskCorrectRate': 1.0})
         SPEC[CURSE_FIRST + 50 + off] = (SKILL_TEMPLATE, {f'{e}AttackRate': 1 - sign * hi for e in ('physics', 'magic', 'fire', 'thunder', 'dark')})
+        # r20: damage taken from ONE random element per oath (magic / fire / lightning / holy)
+        for e, elem in enumerate(('magic', 'fire', 'thunder', 'dark')):
+            SPEC[ELEMENT_FIRST + e * 10 + off] = (TEMPLATE, {f'{elem}DamageCutRate': 1 + sign * hi, 'changeHpEstusFlaskCorrectRate': 1.0})
 
 reg = Regulation(SRC)
 fields, size = load_def(DEF)

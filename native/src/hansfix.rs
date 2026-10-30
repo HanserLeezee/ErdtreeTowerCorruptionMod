@@ -26,7 +26,7 @@ pub const BASE_RELEASE:&str="v101";
 pub const BASE_INSTALL_VERSION:u64=101;
 pub const BASE_REGULATION_LEN:u64=3451488;
 /// 堕落模式补丁带的 regulation.bin（v101 + 堕落誓约效果 + 向下强化与扭曲词条效果）
-pub const HANSFIX_REGULATION_LEN:u64=3401728;
+pub const HANSFIX_REGULATION_LEN:u64=3405168;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}
@@ -111,10 +111,14 @@ impl Descent {
     }
 }
 
-/// [HansFix] 扭曲装备：把这件装备（武器含各质变行）常驻效果里被扭曲的词条换成 ×2 / ×-1 的版本。
-/// 参数只在本机内存里改；旅程变化时先全部还原再按当前旅程重新套用，回到大赐福或换局即恢复原样。
+/// [HansFix] 扭曲装备：把这件装备（武器含各质变行）常驻效果里被扭曲的词条换成 ×2 / ×-1 的版本，并改写游戏内文字。
+/// 参数与文字只在本机内存里改。r20：按件增量处理——只还原被移除/改变的装备、只套用新出现的装备，
+/// 而且每帧最多花约 3 毫秒，剩下的留到下一帧继续（原来每次旅程变化都全部还原再全部重套，件数多时一次卡 1–4 秒）。
 #[derive(Default)]
-struct Curses {signature:Option<u64>,original:std::collections::HashMap<(bool,u32),[i32;3]>,missing:bool}
+struct Applied {swaps:Vec<(u32,u32)>,params:Vec<((bool,u32),[i32;3])>,texts:Vec<(usize,u64)>}
+#[derive(Default)]
+struct Curses {signature:Option<u64>,desired:Vec<erdtree_tower::descent::Cursed>,applied:std::collections::HashMap<u32,Applied>,
+    missing:bool,pending_since:Option<std::time::Instant>,work_ms:f64}
 static CURSES:std::sync::Mutex<Option<Curses>>=std::sync::Mutex::new(None);
 /// 本局要生效的堕落装备：已领取的，加上正在逛的堕落商店里的所有词条装备（让商店里看到的就是堕落后的样子）
 fn active_curses(run:&erdtree_tower::Run)->Vec<erdtree_tower::descent::Cursed> {
@@ -131,53 +135,81 @@ fn active_curses(run:&erdtree_tower::Run)->Vec<erdtree_tower::descent::Cursed> {
 fn signature(run:Option<&erdtree_tower::Run>)->u64 {
     use std::hash::{Hash,Hasher};
     let mut h=std::collections::hash_map::DefaultHasher::new();
-    run.filter(|_|wander()).map(|r|(r.seed,active_curses(r).iter().map(|c|(c.item,c.swaps.clone())).collect::<Vec<_>>())).hash(&mut h);h.finish()
+    // 只看会影响结果的东西：种子、已领取的堕落装备、是否正站在某家（有货单的）商店里
+    run.filter(|_|wander()).map(|r|{
+        let shop=match r.phase {erdtree_tower::Phase::Node{id} if r.shop_stock.as_ref().is_some_and(|s|s.node==id)=>Some((id,r.shop_stock.as_ref().map(|s|s.items.clone()))),_=>None};
+        (r.seed,r.cursed.iter().map(|c|(c.item,c.swaps.clone())).collect::<Vec<_>>(),shop)
+    }).hash(&mut h);h.finish()
+}
+fn restore_item(params:&mut eldenring::cs::SoloParamRepository,applied:Applied) {
+    use eldenring::cs::{EquipParamProtector,EquipParamWeapon};
+    for ((weapon,row),values) in applied.params.into_iter().rev() {
+        if weapon {if let Some(p)=params.get_mut::<EquipParamWeapon>(row){p.set_resident_sp_effect_id(values[0]);p.set_resident_sp_effect_id1(values[1]);p.set_resident_sp_effect_id2(values[2]);}}
+        else if let Some(p)=params.get_mut::<EquipParamProtector>(row){p.set_resident_sp_effect_id(values[0]);p.set_resident_sp_effect_id2(values[1]);p.set_resident_sp_effect_id3(values[2]);}
+    }
+    crate::hansfix_text::restore_slots(&applied.texts);
+}
+fn apply_item(params:&mut eldenring::cs::SoloParamRepository,cursed:&erdtree_tower::descent::Cursed,texts:&mut crate::hansfix_text::Batch)->Applied {
+    use eldenring::cs::{EquipParamProtector,EquipParamWeapon};
+    let swap=|value:i32|cursed.swaps.iter().find(|&&(from,_)|from as i32==value).map_or(value,|&(_,to)|to as i32);
+    let weapon=cursed.item>>28==0;let first=cursed.item&0x0fff_ffff;
+    let mut applied=Applied{swaps:cursed.swaps.clone(),..Default::default()};
+    // 武器：同一件词条武器的各质变行都在 id..id+9999（质变按 100 递增）；防具只有一行
+    let rows:Vec<u32>=if weapon {(0..100).map(|k|first+k*100).collect()} else {vec![first]};
+    for row in rows {
+        if weapon {
+            let Some(p)=params.get_mut::<EquipParamWeapon>(row) else{continue};
+            let values=[p.resident_sp_effect_id(),p.resident_sp_effect_id1(),p.resident_sp_effect_id2()];
+            applied.params.push(((true,row),values));
+            p.set_resident_sp_effect_id(swap(values[0]));p.set_resident_sp_effect_id1(swap(values[1]));p.set_resident_sp_effect_id2(swap(values[2]));
+        } else {
+            let Some(p)=params.get_mut::<EquipParamProtector>(row) else{continue};
+            let values=[p.resident_sp_effect_id(),p.resident_sp_effect_id2(),p.resident_sp_effect_id3()];
+            applied.params.push(((false,row),values));
+            p.set_resident_sp_effect_id(swap(values[0]));p.set_resident_sp_effect_id2(swap(values[1]));p.set_resident_sp_effect_id3(swap(values[2]));
+        }
+    }
+    applied.texts=texts.apply(cursed);
+    applied
 }
 pub fn curses_tick(run:Option<&erdtree_tower::Run>) {
-    use eldenring::cs::{EquipParamProtector,EquipParamWeapon,SoloParamRepository,SpEffectParam};
+    use eldenring::cs::{SoloParamRepository,SpEffectParam};
     use fromsoftware_shared::FromStatic;
     let Ok(mut guard)=CURSES.try_lock() else{return};
     let state=guard.get_or_insert_with(Curses::default);
     let sig=signature(run);
-    if state.signature==Some(sig) {return;}
-    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return};
-    // 还原
-    for (&(weapon,row),values) in &state.original {
-        if weapon {if let Some(p)=params.get_mut::<EquipParamWeapon>(row){p.set_resident_sp_effect_id(values[0]);p.set_resident_sp_effect_id1(values[1]);p.set_resident_sp_effect_id2(values[2]);}}
-        else if let Some(p)=params.get_mut::<EquipParamProtector>(row){p.set_resident_sp_effect_id(values[0]);p.set_resident_sp_effect_id2(values[1]);p.set_resident_sp_effect_id3(values[2]);}
+    if state.signature!=Some(sig) {
+        state.signature=Some(sig);
+        state.desired=run.filter(|_|wander()).map(active_curses).unwrap_or_default();
+        state.pending_since.get_or_insert_with(std::time::Instant::now);
     }
-    state.original.clear();state.signature=Some(sig);
-    crate::hansfix_text::restore();
-    let Some(run)=run.filter(|_|wander()) else{return};
-    let (mut count,mut texts)=(0,0);
+    let Some(since)=state.pending_since else{return};
+    let Ok(params)=(unsafe {SoloParamRepository::instance_mut()}) else{return};
     let started=std::time::Instant::now();
-    let curses=active_curses(run);let mut applied=Vec::new();
-    for cursed in &curses {
+    let budget=std::time::Duration::from_millis(3);
+    // 1. 还原：不再需要的、或扭曲方式变了的
+    let stale:Vec<u32>=state.applied.iter().filter(|(item,a)|!state.desired.iter().any(|c|c.item==**item&&c.swaps==a.swaps)).map(|(item,_)|*item).collect();
+    for item in stale {
+        if started.elapsed()>budget {state.work_ms+=started.elapsed().as_secs_f64()*1000.0;return;}
+        if let Some(applied)=state.applied.remove(&item) {restore_item(params,applied);}
+    }
+    // 2. 套用：新出现的
+    let mut texts=crate::hansfix_text::Batch::new();
+    let todo:Vec<erdtree_tower::descent::Cursed>=state.desired.iter().filter(|c|!state.applied.contains_key(&c.item)).cloned().collect();
+    for cursed in &todo {
+        if started.elapsed()>budget {state.work_ms+=started.elapsed().as_secs_f64()*1000.0;return;}
         if cursed.swaps.iter().any(|&(_,to)|params.get::<SpEffectParam>(to).is_none()) {
             if !state.missing {crate::log(format!("HANSFIX_CURSE missing effects for {}; reinstall the wander patch regulation.bin",cursed.item));state.missing=true;}
+            state.applied.insert(cursed.item,Applied{swaps:cursed.swaps.clone(),..Default::default()});
             continue;
         }
-        let swap=|value:i32|cursed.swaps.iter().find(|&&(from,_)|from as i32==value).map_or(value,|&(_,to)|to as i32);
-        let weapon=cursed.item>>28==0;let first=cursed.item&0x0fff_ffff;
-        // 武器：同一件词条武器的各质变行都在 id..id+9999；防具只有一行
-        for row in if weapon {first..first+10000} else {first..first+1} {
-            if weapon {
-                let Some(p)=params.get_mut::<EquipParamWeapon>(row) else{continue};
-                let values=[p.resident_sp_effect_id(),p.resident_sp_effect_id1(),p.resident_sp_effect_id2()];
-                state.original.insert((true,row),values);
-                p.set_resident_sp_effect_id(swap(values[0]));p.set_resident_sp_effect_id1(swap(values[1]));p.set_resident_sp_effect_id2(swap(values[2]));
-            } else {
-                let Some(p)=params.get_mut::<EquipParamProtector>(row) else{continue};
-                let values=[p.resident_sp_effect_id(),p.resident_sp_effect_id2(),p.resident_sp_effect_id3()];
-                state.original.insert((false,row),values);
-                p.set_resident_sp_effect_id(swap(values[0]));p.set_resident_sp_effect_id2(swap(values[1]));p.set_resident_sp_effect_id3(swap(values[2]));
-            }
-            count+=1;
-        }
-        applied.push(cursed.clone());
+        let applied=apply_item(params,cursed,&mut texts);
+        state.applied.insert(cursed.item,applied);
     }
-    texts+=crate::hansfix_text::apply_all(&applied);
-    crate::log(format!("HANSFIX_CURSE items={} shop={} rows={count} texts={texts} ms={}",run.cursed.len(),curses.len()-run.cursed.len(),started.elapsed().as_millis()));
+    state.work_ms+=started.elapsed().as_secs_f64()*1000.0;
+    let rows:usize=state.applied.values().map(|a|a.params.len()).sum();let text:usize=state.applied.values().map(|a|a.texts.len()).sum();
+    crate::log(format!("HANSFIX_CURSE items={} rows={rows} texts={text} work_ms={:.1} wall_ms={}",state.applied.len(),state.work_ms,since.elapsed().as_millis()));
+    state.pending_since=None;state.work_ms=0.0;
 }
 
 /// [HansFix] 红篝火与堕落挑战中把游戏时间推到夜晚（与赐福点“消磨时间到晚上”同一个接口）；离开后推回白天

@@ -56,7 +56,10 @@ fn fmg(repo:usize,index:u32)->Option<Fmg> {
 }
 impl Fmg {
     fn slots(&self,range:std::ops::Range<u32>)->Vec<(u32,usize)> {
-        self.groups.iter().flat_map(|&(index,first,last)|{
+        // FMG 的分组按编号升序：二分跳到第一个可能相交的分组（词条装备的名字表有上万个分组）
+        let sorted=self.groups.windows(2).all(|w|w[0].1<=w[1].1);
+        let start=if sorted {self.groups.partition_point(|&(_,_,last)|(last as i64)<range.start as i64)} else {0};
+        self.groups[start..].iter().take_while(|&&(_,first,_)|!sorted||(first as i64)<range.end as i64).flat_map(|&(index,first,last)|{
             let (lo,hi)=((first as i64).max(range.start as i64),(last as i64).min(range.end as i64-1));
             (lo..=hi).map(move|id|(id as u32,self.table+(index as i64+id-first as i64) as usize*8))
         }).collect()
@@ -86,34 +89,31 @@ impl Fmg {
 }
 
 #[derive(Default)]
-struct State {original:Vec<(usize,u64)>,buffers:Vec<Box<[u16]>>,warned:bool}
+struct State {buffers:Vec<Box<[u16]>>,warned:bool}
 static STATE:Mutex<Option<State>>=Mutex::new(None);
 
-/// 还原所有改过的文字项
-pub fn restore() {
-    let Ok(mut guard)=STATE.lock() else{return};
-    let state=guard.get_or_insert_with(State::default);
-    for &(slot,value) in state.original.iter().rev() {write_u64(slot,value);}
-    state.original.clear();
+/// 把一组改过的文字项写回原值（按写入的逆序）
+pub fn restore_slots(slots:&[(usize,u64)]) {
+    for &(slot,value) in slots.iter().rev() {write_u64(slot,value);}
     // 旧字符串留着：菜单可能还拿着指针，量很小
 }
-/// 给一件堕落装备换文字；返回改了几项
-pub fn apply(cursed:&erdtree_tower::descent::Cursed)->usize {apply_all(std::slice::from_ref(cursed))}
-/// 一次给多件装备换文字：每张文本表只解析一次
-pub fn apply_all(items:&[erdtree_tower::descent::Cursed])->usize {
-    let Ok(mut guard)=STATE.lock() else{return 0};
-    let state=guard.get_or_insert_with(State::default);
-    let Some(repo)=repository() else{return 0};
-    let mut cache:std::collections::HashMap<u32,Option<Fmg>>=std::collections::HashMap::new();
-    let mut changed=0;
-    for cursed in items {changed+=apply_one(state,repo,&mut cache,cursed);}
-    changed
+/// 一批改写：每张文本表只解析一次
+pub struct Batch {repo:Option<usize>,cache:std::collections::HashMap<u32,Option<Fmg>>}
+impl Batch {
+    pub fn new()->Self {Self{repo:repository(),cache:std::collections::HashMap::new()}}
+    /// 给一件堕落装备换文字；返回改过的 (偏移表项地址, 原值)，用于之后还原
+    pub fn apply(&mut self,cursed:&erdtree_tower::descent::Cursed)->Vec<(usize,u64)> {
+        let Some(repo)=self.repo else{return vec![]};
+        let Ok(mut guard)=STATE.lock() else{return vec![]};
+        let state=guard.get_or_insert_with(State::default);
+        apply_one(state,repo,&mut self.cache,cursed)
+    }
 }
-fn apply_one(state:&mut State,repo:usize,cache:&mut std::collections::HashMap<u32,Option<Fmg>>,cursed:&erdtree_tower::descent::Cursed)->usize {
+fn apply_one(state:&mut State,repo:usize,cache:&mut std::collections::HashMap<u32,Option<Fmg>>,cursed:&erdtree_tower::descent::Cursed)->Vec<(usize,u64)> {
     let weapon=cursed.item>>28==0;let first=cursed.item&0x0fff_ffff;
     // 武器的质变名（first+100…）也有名字项
     let range=if weapon {first..first+10000} else {first..first+1};
-    let mut changed=0;let mut seen=0;
+    let mut changed=Vec::new();let mut seen=0;
     for &(index,part) in if weapon {&WEAPON} else {&PROTECTOR} {
         let Some(table)=cache.entry(index).or_insert_with(||fmg(repo,index)).as_ref() else{continue};seen+=1;
         for (id,slot) in table.slots(range.clone()) {
@@ -129,7 +129,7 @@ fn apply_one(state:&mut State,repo:usize,cache:&mut std::collections::HashMap<u3
             let buffer:Box<[u16]>=replaced.encode_utf16().chain(Some(0)).collect();
             let address=buffer.as_ptr() as usize;
             let new=if absolute {address as u64} else {(address as u64).wrapping_sub(table.base as u64)};
-            if write_u64(slot,new) {state.original.push((slot,value));state.buffers.push(buffer);changed+=1;}
+            if write_u64(slot,new) {changed.push((slot,value));state.buffers.push(buffer);}
         }
     }
     if seen==0&&!state.warned {crate::log("HANSFIX_TEXT message tables not found; in-game text unchanged");state.warned=true;}

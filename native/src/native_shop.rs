@@ -409,11 +409,11 @@ fn stock_capped(run:&Run,spirit_cap:u32)->Vec<Stock> {
     result.push(Stock{kind:0,id:pick(&SPECIAL_BOLTS,0xb017),price:60,quantity:20});
     result.push(Stock{kind:0,id:53000000,price:100,quantity:10});
     result.push(Stock{kind:0,id:pick(&SPECIAL_GREATBOLTS,0x6b17),price:200,quantity:10});
-    affix_stock(run,visit,&mut result);
+    affix_stock(run,visit,None,&mut result);
     withdraw_goods(&mut result);
     result
 }
-fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
+fn affix_stock(run:&Run,visit:usize,red:Option<usize>,result:&mut [Stock]) {
     let mut talismans=std::collections::HashSet::new();
     for (slot,item) in result.iter_mut().enumerate() {
         if item.kind==2&&item.quantity==1 {
@@ -424,7 +424,17 @@ fn affix_stock(run:&Run,visit:usize,result:&mut [Stock]) {
         }
         if item.quantity==1&&matches!(item.kind,0|1) {
             let tag=if item.kind==0{0}else{0x10000000};
-            if let Some(id)=erdtree_tower::affixes::roll(run,tag|item.id as u32,(visit as u64).wrapping_mul(7919)^slot as u64,true){item.id=(id&0x0fffffff) as i32;}
+            let entropy=(visit as u64).wrapping_mul(7919)^slot as u64;
+            let mut rolled=erdtree_tower::affixes::roll(run,tag|item.id as u32,entropy,true);
+            // [HansFix] 堕落商店的装备都要能堕落：抽到没有可扭曲词条的组合（例如只有“防御时精力消耗”）就换一种组合
+            if let Some(node)=red {
+                let base=erdtree_tower::affixes::base(tag|item.id as u32);
+                for n in 1..24u64 {
+                    if rolled.is_none_or(|id|run.shop_curse(node,id).is_some()) {break;}
+                    rolled=erdtree_tower::affixes::roll(run,base,entropy^n.wrapping_mul(0x9e37_79b9_7f4a_7c15),true);
+                }
+            }
+            if let Some(id)=rolled{item.id=(id&0x0fffffff) as i32;}
         }
     }
 }
@@ -440,7 +450,7 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
         }
         let mut stock = stock_capped(run,erdtree_tower::rewards::spirit_cap(&live));
         filter_spells(&mut stock,tools,run.reward_seed());
-        affix_stock(run,run.visited.iter().filter(|&&i|run.nodes[i].kind==NodeKind::Shop).count(),&mut stock);
+        affix_stock(run,run.visited.iter().filter(|&&i|run.nodes[i].kind==NodeKind::Shop).count(),(super::hansfix::wander()&&run.red_shop(node)).then_some(node),&mut stock);
         for item in &mut stock {
             let rarity=if item.kind==0&&(item.id<50000000||erdtree_tower::affixes::tier(item.id as u32).is_some()) {
                 Some(params.get::<EquipParamWeapon>(item.id as u32).ok_or("商店武器参数不存在")?.rarity())

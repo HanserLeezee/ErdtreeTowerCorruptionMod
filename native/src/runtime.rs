@@ -2385,6 +2385,8 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                     erdtree_tower::NodeKind::Camp => run.leave_camp()?,
                     erdtree_tower::NodeKind::Shop => {
                         if let Some(player)=world.main_player.as_ref() {super::hansfix::keep_fallen_purchases(run,unsafe {player.player_game_data.as_ref()})?;}
+                        // [HansFix] 消费累计只算这一次进店：离开时清零（同一节点下次再来、或调试重置后进同一节点都从 0 算起）
+                        state.fallen_spend=Default::default();
                         run.leave_shop()?
                     },
                     erdtree_tower::NodeKind::Event => run.leave_regional_event()?,

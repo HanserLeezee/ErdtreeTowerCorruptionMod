@@ -82,7 +82,48 @@ pub fn sync(chr: &mut ChrIns, data: &PlayerGameData) {
     let present = unsafe { SoloParamRepository::instance() }.ok().is_some_and(|p| p.get::<SpEffectParam>(GOLDEN_VOW as u32).is_some());
     if present {
         chr.apply_speffect(CAST_FLASH, false);
-        chr.apply_speffect(GOLDEN_VOW, false);
-        super::log("HANSFIX_TORCH cast golden vow after 10s raised");
+        // 竞技场范围：从玩家身上发射放大后的黄金誓言范围判定（半径 30 米），范围内的玩家（含自己、联机队友）获得效果；
+        // 发射失败（例如参数缺失）就退回只给自己
+        match spawn_area(chr, AREA_BULLET) {
+            Ok(()) => super::log("HANSFIX_TORCH cast golden vow (arena-wide) after 10s raised"),
+            Err(e) => {
+                chr.apply_speffect(GOLDEN_VOW, false);
+                super::log(format!("HANSFIX_TORCH area bullet failed ({e}); applied to self only"));
+            }
+        }
     }
+}
+
+/// 黄金誓言的范围判定（Bullet 10660000）放大到半径 30 米的版本
+const AREA_BULLET: i32 = 10669000;
+#[repr(C, align(16))]
+struct SpawnData([u8; 0x110]);
+type Spawn = unsafe extern "C" fn(*mut std::ffi::c_void, *mut i32, *const SpawnData, *mut i32);
+/// 以玩家为原点发射一个范围判定（不播动作）。布局与 star_stream 的 SpawnData / fromsoftware-rs 的 BulletSpawnData 一致
+fn spawn_area(chr: &ChrIns, bullet: i32) -> Result<(), String> {
+    use eldenring::cs::{Bullet, CSBulletManager};
+    let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "参数未就绪")?;
+    if params.get::<Bullet>(bullet as u32).is_none() { return Err(format!("bullet {bullet} missing")); }
+    if size_of::<eldenring::cs::BulletSpawnData>() != size_of::<SpawnData>() { return Err("spawn layout mismatch".into()); }
+    let function = super::items::checked_function(0x3a2cb0, &[0x40, 0x53, 0x55, 0x56, 0x57, 0x48, 0x81, 0xec, 0x98, 0x07, 0x00, 0x00])?;
+    let manager = unsafe { CSBulletManager::instance_mut() }.map_err(|_| "bullet manager not ready")?;
+    let mut data = SpawnData([0; 0x110]);
+    let owner = unsafe { std::ptr::read_unaligned((&chr.field_ins_handle as *const eldenring::cs::FieldInsHandle).cast::<u64>()) };
+    let put_i32 = |data: &mut SpawnData, at: usize, v: i32| data.0[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    data.0[0..8].copy_from_slice(&owner.to_le_bytes());
+    put_i32(&mut data, 0x08, -1); // behavior
+    put_i32(&mut data, 0x0c, -1); // magic
+    put_i32(&mut data, 0x14, bullet);
+    put_i32(&mut data, 0x18, -1); // goods
+    put_i32(&mut data, 0x1c, -1); // dummy poly
+    data.0[0x20..0x28].fill(0xff); // target: none
+    let p = chr.modules.physics.position;
+    for (offset, row) in [(0x50, [1.0f32, 0.0, 0.0, 0.0]), (0x60, [0.0, 1.0, 0.0, 0.0]), (0x70, [0.0, 0.0, 1.0, 0.0]), (0x80, [p.0, p.1, p.2, 1.0])] {
+        for (i, v) in row.into_iter().enumerate() { data.0[offset + i * 4..offset + i * 4 + 4].copy_from_slice(&v.to_le_bytes()); }
+    }
+    let spawn: Spawn = unsafe { std::mem::transmute(function) };
+    let (mut out, mut error) = (0i32, 0i32);
+    unsafe { spawn((manager as *mut CSBulletManager).cast(), &mut out, &data, &mut error) };
+    if out == -1 { return Err(format!("spawn error {error}")); }
+    Ok(())
 }

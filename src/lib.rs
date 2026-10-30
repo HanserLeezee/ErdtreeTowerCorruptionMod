@@ -411,10 +411,14 @@ mod fallen_oath_page {
     #[test]
     fn curse_texts_and_rows_follow_the_level() {
         use crate::fallen_oaths::{effect,text};
-        assert_eq!(text(0,1,false),"最大生命 -8%");assert_eq!(text(0,3,true),"最大生命 +12%");
-        assert_eq!(text(1,2,false),"受到魔力／火／雷／圣伤害 +12%");assert_eq!(text(1,1,true),"受到魔力／火／雷／圣伤害 -10%");
-        assert_eq!(text(3,1,false),"精力消耗 +8%");assert_eq!(text(5,3,false),"战技伤害 -15%");
-        assert_eq!(effect(0,1,false),9600200);assert_eq!(effect(5,3,true),9600257);
+        assert_eq!(text(0,1,false,0),"最大生命 -8%");assert_eq!(text(0,3,true,0),"最大生命 +12%");
+        assert_eq!(text(1,2,false,1),"受到火焰伤害 +12%");assert_eq!(text(1,1,true,3),"受到神圣伤害 -10%");
+        assert_eq!(text(3,1,false,2),"精力消耗 +8%");assert_eq!(text(5,3,false,2),"战技伤害 -15%");
+        assert_eq!(effect(0,1,false,0),9600200);assert_eq!(effect(5,3,true,3),9600257);
+        // 属性伤害：每种属性单独的行
+        assert_eq!(effect(1,1,false,0),9600260);assert_eq!(effect(1,3,true,3),9600297);
+        let elements:std::collections::BTreeSet<u8>=(0..64u64).map(|s|crate::fallen_oaths::FallenOath::roll(crate::contracts::Kind::Iron,s).element).collect();
+        assert_eq!(elements.len(),4,"all four elements can be rolled");
     }
 }
 
