@@ -79,6 +79,10 @@ pub enum Action {
     Gear(usize),
     SkipGear,
     SkipContract,
+    /// [HansFix] 堕落首领第三页：立一份堕落誓约（None 为不立）
+    FallenOath(Option<usize>),
+    /// 开局前切换堕落模式
+    ToggleWander,
 }
 
 #[derive(Clone)]
@@ -282,6 +286,9 @@ struct Runtime {
     /// 双生的灵唤铃：待补回的骨灰与开始补的时间
     twin_refund: Option<(u32,Instant)>,
     growth: super::scaling::Growth,
+    hansfix_descent: super::hansfix::Descent,
+    storm_revive_wait: Option<Instant>,
+    fallen_spend: super::hansfix::FallenSpend,
     law_fight: super::law::Fight,
     ember_fight: super::embers::Fight,
     bout: super::debug_menu::Bout,
@@ -300,6 +307,7 @@ struct Runtime {
     /// 本局结束（死亡或通关）时这场战斗的敌人：先留在场上，复活或 15 秒后再撤，不在死亡瞬间消失
     lingering:Option<(Pending,Instant)>,
     action_guard: super::input::ActionGuard,
+    shop_guard: super::native_shop::StockGuard,
     last_blessing_sync: Option<Instant>,
     room: Option<super::rooms::Room>,
     event_start: Option<Instant>,
@@ -347,6 +355,9 @@ fn fresh_runtime()->Runtime {
         boss_guard: Default::default(),
         twin_refund: None,
         growth: Default::default(),
+        hansfix_descent: Default::default(),
+        storm_revive_wait: None,
+        fallen_spend: Default::default(),
         law_fight: Default::default(),
         ember_fight: Default::default(),
         bout: Default::default(),
@@ -363,6 +374,7 @@ fn fresh_runtime()->Runtime {
         victory_cleanup:None,
         lingering:None,
         action_guard: Default::default(),
+        shop_guard: Default::default(),
         last_blessing_sync: None,
         room: None,
         event_start: None,
@@ -531,8 +543,9 @@ fn stop_map_combat(state:&Runtime,world:&mut WorldChrMan) {
 fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,order:erdtree_tower::party_game::Order)->Result<(),String> {
     use erdtree_tower::party_game::Order;
     if matches!(order,Order::Enter{epoch,..} if epoch==state.party.as_ref().unwrap().epoch){return Ok(());}
-    if let Order::Enter{act,ref visited,node,..}=order {
-        let run=state.view.run.as_ref().ok_or("队友旅程尚未开启")?;
+    if let Order::Enter{act,ref visited,node,wander,..}=order {
+        let run=state.view.run.as_mut().ok_or("队友旅程尚未开启")?;
+        if run.wander!=wander {run.follow_wander(wander);super::log(format!("WANDER follow host: {wander}"));}
         if run.act!=act||&run.visited!=visited||!run.available().contains(&node){return Err("队友路线与房主不同，未执行传送".into());}
     }
     if !state.party.as_mut().unwrap().accept(&order)?{return Ok(());}
@@ -623,6 +636,13 @@ fn recover_party_at_hub(state:&mut Runtime,world:&WorldChrMan,game:&GameMan) {
     state.party=None;state.party_pending=None;state.party_error=None;
     state.command=None;state.view.ballots.clear();state.view.busy=false;
     super::log("Empty or closed Seamless session released at hub; personal progress retained");
+}
+fn toggle_wander(state:&mut Runtime)->Result<(),String> {
+    if !super::hansfix::wander() {return Err("未安装堕落模式补丁".into());}
+    if state.party.as_ref().is_some_and(|p|!p.host()) {return Err("联机时由房主在开局前决定堕落模式".into());}
+    let run=state.view.run.as_mut().ok_or("旅程未加载")?;
+    let on=!run.wander;run.set_wander(on)?;record_checked(run)?;
+    super::log(format!("WANDER mode={on}"));Ok(())
 }
 fn attendant_disabled()->bool {
     static OFF:std::sync::LazyLock<bool>=std::sync::LazyLock::new(||std::env::var("ERDTREE_TOWER_NO_ATTENDANT").as_deref()==Ok("1"));
@@ -848,7 +868,8 @@ fn tick_revival(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     if state.party_death_wave!=wave {
         state.party_death_wave=wave;state.party_death=Default::default();super::seamless_revival::cancel();
     }
-    let victory=link.is_some_and(|p|p.victory||p.event.victory());
+    // [HansFix] 跑城（史东薇尔突围）与战车挑战：有队友完成即算胜利，倒下的队员也在原地复活
+    let victory=link.is_some_and(|p|p.victory||p.event.victory()||p.event.storm_decision==Some(erdtree_tower::stormveil::Decision::Complete));
     if epoch.is_some()&&victory {super::seamless_revival::tick(world,game);}
     let player=world.main_player.as_ref().map(|p|{
         let pos=&p.chr_ins.modules.physics.position;
@@ -1004,6 +1025,8 @@ fn tick_locked() {
     // 调试的无敌、秒杀：联机（含无缝联机）时一律关掉
     super::debug_menu::apply_cheats(state.party.is_some()||super::seamless::active());
     let lobby=state.view.run.is_none();
+    super::hansfix::curses_tick(state.view.run.as_ref());
+    super::hansfix::night_tick(state.view.run.as_ref());
     if state.party.as_mut().is_some_and(|link|link.poll_force_end(lobby)) {
         super::log("HOME_SYNC received host force end before room processing");
         QUICK_END.store(true,std::sync::atomic::Ordering::Relaxed);
@@ -1211,7 +1234,7 @@ fn tick_locked() {
         state.view.dummy=Some(dummy.view(clock));
     } else if let Some(dummy)=state.dummy.take() {dummy.retire(world);state.view.dummy=None;}
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
-    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
+    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});{let data=player.player_game_data.as_ptr();super::contracts::lifeline::tick(&mut player.chr_ins,unsafe {&*data},contract_run);}super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
     if !game.warp_requested&&!state.view.travelling {
         if let Some(player)=world.main_player.as_mut(){super::star_stream::tick(&mut player.chr_ins,contract_run);}
     }
@@ -1255,7 +1278,7 @@ fn tick_locked() {
     let player_data = unsafe { &mut *player.player_game_data.as_ptr() };
     state.view.runes = player_data.rune_count;
     if state.build_checked.is_none_or(|t|t.elapsed()>=Duration::from_secs(1)) {
-        state.build_checked=Some(Instant::now());state.view.build=equipped_build(player_data);
+        state.build_checked=Some(Instant::now());state.view.build=equipped_build(player_data,state.view.run.as_ref());
         state.view.stats=super::stats::collect(&player.chr_ins);
     }
     if let Some(run)=state.view.run.as_mut(){run.gold=player_data.rune_count;}
@@ -1777,6 +1800,10 @@ fn tick_locked() {
         return;
     }
     if state.room.is_some() {
+        let shop=state.view.run.as_ref().and_then(|r|match r.phase {Phase::Node{id} if r.nodes[id].kind==erdtree_tower::NodeKind::Shop=>Some((r.seed,id)),_=>None})
+            .filter(|_|super::hansfix::merchant()&&!game.warp_requested&&state.room.as_ref().is_some_and(|room|!room.view.loading));
+        let runes=world.main_player.as_ref().map_or(0,|p|unsafe {p.player_game_data.as_ref()}.rune_count);
+        state.shop_guard.tick(shop,runes);
         tick_room(&mut state, world, game, player_dead);
         return;
     }
@@ -1786,7 +1813,7 @@ fn tick_locked() {
         super::log(format!("DEBUG_MENU {message}"));report(&mut state,message);
     }
     if let Some(action) = state.command.take() {
-        let journaled=state.party.is_some()&&matches!(action,Action::KeepCurrency|Action::Story(_)|Action::Claim(_)|Action::Camp(_));
+        let journaled=state.party.is_some()&&matches!(action,Action::KeepCurrency|Action::Story(_)|Action::Claim(_)|Action::Camp(_)|Action::FallenOath(_));
         let story_message=if let Action::Story(choice)=action {
             state.view.run.as_ref().filter(|r|r.story_index().is_ok()).map(|r|erdtree_tower::events::story_outcome(r,choice))
         }else{None};
@@ -1797,9 +1824,10 @@ fn tick_locked() {
                     run.and_then(|run|state.party.as_mut().unwrap().enter(&run,id))
                 }else {request_travel(&mut state, world, game, id)}
             },
+            Action::ToggleWander => toggle_wander(&mut state),
             Action::KeepCurrency => transact(&mut state, world, action, journaled),
             Action::Contract(_) | Action::Gear(_) | Action::SkipGear | Action::SkipContract => contract_action(&mut state,world,action),
-            Action::Story(_) | Action::Claim(_) | Action::Camp(_) => {
+            Action::Story(_) | Action::Claim(_) | Action::Camp(_) | Action::FallenOath(_) => {
                 transact(&mut state, world, action, journaled)
             }
         };
@@ -1815,7 +1843,9 @@ fn tick_locked() {
             state.view.busy = false;
             let message=state.view.run.as_ref().filter(|r|r.act>1&&r.visited.is_empty()&&r.phase==Phase::Map)
                 .map(|r|format!("第 {} 幕已开启，生命、专注与圣杯瓶已回满。下一战：{}。",r.act,super::arenas::for_run(r,state.party.is_some()).name))
-                .unwrap_or_else(||story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into()));
+                .unwrap_or_else(||if matches!(action,Action::ToggleWander) {
+                    if state.view.run.as_ref().is_some_and(|r|r.wander) {"堕落模式已开启：可沿连线向上或向下进入相邻、未去过的关卡。".into()} else {"堕落模式已关闭，恢复只能向上选择关卡。".into()}
+                } else {story_message.unwrap_or_else(||"行动完成，请选择下一层节点。".into())});
             report(&mut state, message);
         }
     }
@@ -1850,6 +1880,7 @@ fn tick_locked() {
             let flasks=runtime.flasks.as_ref().map(|f|f.total());
             runtime.boss_fight.tick(world,&handles,authority,flasks);
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
+            runtime.hansfix_descent.tick(world,(run.seed,run.act,id),run.descent_level(id),&handles,authority);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             // Boss 房的 Boss 卡在 1 点生命太久：视为转阶段锁血，直接放行
             if run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Boss) {
@@ -2001,6 +2032,8 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
                 Command::Oath(kind,level)=>{next.debug_oath(kind,level)?;format!("{} 设为 {}",kind.name(),["移除","I","II","III"][usize::from(level)])},
                 Command::Ember(ember,held)=>{next.debug_ember(ember,held)?;format!("{}余烬「{}」",if held{"获得"}else{"移除"},ember.name())},
                 Command::Law(law)=>{next.debug_law(law)?;format!("苦难律法改为 {} 分（{}）",law.score(),law.code())},
+                Command::FallenStart=>{next.debug_fallen_start()?;"已在红篝火开启堕落挑战：现在只能向下".to_owned()},
+                Command::FallenValue(value)=>{next.debug_fallen_value(value)?;format!("继承的堕落值设为 {value}（当前堕落值 {}）",next.descents())},
                 _=>unreachable!(),
             };
             if let Some(flasks)=state.flasks.as_mut() {
@@ -2018,12 +2051,12 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
 }
 
 /// 当前握在手里的武器与身上防具中的词条装备
-fn equipped_build(data:&eldenring::cs::PlayerGameData)->Vec<super::reward_ui::Gear> {
+fn equipped_build(data:&eldenring::cs::PlayerGameData,run:Option<&erdtree_tower::Run>)->Vec<super::reward_ui::Gear> {
     let equipment=&data.equipment.chr_asm;
     let weapons=[equipment.equipment.active_right_weapon_slot() as usize,equipment.equipment.active_left_weapon_slot() as usize];
     weapons.into_iter().filter_map(|slot|equipment.equipment_param_ids.get(slot).copied().filter(|id|*id>0).map(|id|id as u32/100*100))
         .chain((12..=15).filter_map(|slot|equipment.equipment_param_ids.get(slot).copied().filter(|id|*id>0).map(|id|0x10000000|id as u32)))
-        .filter_map(super::reward_ui::affix_summary).collect()
+        .filter_map(|id|super::reward_ui::affix_summary_in(run,id)).collect()
 }
 
 /// 精英战胜利免费送一个圣杯滴露（与奖励三选一无关）；发放失败只记日志，不影响领奖
@@ -2077,6 +2110,8 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         },
         Action::Story(choice) => {effect = next.resolve_story(choice)?;item_reward=item_reward.or(effect.item);},
         Action::KeepCurrency => next.decline_reward()?,
+        Action::FallenOath(Some(index)) => next.choose_fallen_oath(index)?,
+        Action::FallenOath(None) => {if !next.fallen_oath_pending() {return Err("现在不是选择堕落誓约的时候".into());}next.decline_reward()?},
         _ => return Err("无效节点行动".into()),
     }
     let (mut next_hp, mut next_fp) =
@@ -2315,6 +2350,19 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 state.view.run = Some(next);
                 super::log(format!("Native shop blessings applied: {pending:?}"));
             }
+            // [HansFix] 堕落商店：这家店累计消费满 3 万卢恩，送一件“两个词条 ×2、一个 ×(-2)”的传说装备
+            if let Some(run)=state.view.run.as_ref()&&let Phase::Node{id}=run.phase&&super::hansfix::wander()&&run.red_shop(id)
+                &&run.fallen.as_ref().is_some_and(|f|!f.bonus.contains(&id)) {
+                let runes=unsafe {player.player_game_data.as_ref()}.rune_count;
+                if state.fallen_spend.update((run.seed,id),runes)>=erdtree_tower::descent::SHOP_BONUS_RUNES {
+                    let mut next=run.clone();
+                    let item=next.grant_shop_bonus(id)?;
+                    super::items::give_reward(unsafe {player.player_game_data.as_mut()},item)?;
+                    record_checked(&next)?;state.view.run=Some(next);
+                    super::log(format!("HANSFIX_SHOP bonus granted item={item}"));
+                    report(state,"堕落商店：消费满 3 万卢恩，获得一件堕落的传说装备。");
+                }
+            }
         }
         if flags.virtual_memory_flag.get_flag(base + 994) {
             flags.virtual_memory_flag.set_flag(base + 994, false);
@@ -2323,7 +2371,10 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
             if matches!(run.phase, Phase::Node { .. }) {
                 match room.kind {
                     erdtree_tower::NodeKind::Camp => run.leave_camp()?,
-                    erdtree_tower::NodeKind::Shop => run.leave_shop()?,
+                    erdtree_tower::NodeKind::Shop => {
+                        if let Some(player)=world.main_player.as_ref() {super::hansfix::keep_fallen_purchases(run,unsafe {player.player_game_data.as_ref()})?;}
+                        run.leave_shop()?
+                    },
                     erdtree_tower::NodeKind::Event => run.leave_regional_event()?,
                     _ => return Err("宝箱尚未领取".into()),
                 }
@@ -3078,7 +3129,14 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
         link.event.storm_finish=reached;
         link.event.storm_decision==Some(Decision::Complete)
     }else{reached};
-    if !complete{return Ok(());}
+    if !complete{state.storm_revive_wait=None;return Ok(());}
+    // [HansFix] 队友先到终点时，倒下的队员先在原地复活再一起结束挑战（最多等 20 秒，复活不可用时照常结束）
+    if !alive&&state.party.is_some()&&super::seamless_revival::available() {
+        let since=*state.storm_revive_wait.get_or_insert_with(Instant::now);
+        if since.elapsed()<Duration::from_secs(20) {return Ok(());}
+        super::log("PARTY_REVIVE stormveil: revival did not finish in 20 s; completing while dead");
+    }
+    state.storm_revive_wait=None;
     let mut next=state.view.run.clone().ok_or("旅程未加载")?;
     if next.regional_event.stormveil!=Some(Progress::Running){return Err("跑城进度不匹配".into());}
     super::elite::validate()?;
@@ -3180,10 +3238,11 @@ fn request_travel(
         id,
         state.travel.is_some() || state.pending.as_ref().is_some_and(|p| !p.completed),
     )?;
-    let kind = run.nodes[id].kind;
+    // [HansFix] 进入后的旅程（堕落挑战会在进入时重排地图），房间类型与商店货物都按它来
+    let entered={let mut next=run.clone();next.enter(id)?;next};
+    let kind = entered.nodes[id].kind;
     if !kind.combat() && super::rooms::destination(kind).is_none() {
-        let mut next = run.clone();
-        next.enter(id)?;
+        let next = entered.clone();
         state.view.run = Some(next);
         state.view.busy = false;
         report(state, "请选择节点行动。");
@@ -3200,7 +3259,7 @@ fn request_travel(
         clear_chariot()?;
         state.event_start=None;
         let shop_stock=if kind == erdtree_tower::NodeKind::Shop {
-            Some(super::native_shop::prepare(run,id,true,unsafe {&mut *player.player_game_data.as_ptr()})?)
+            Some(super::native_shop::prepare(&entered,id,true,unsafe {&mut *player.player_game_data.as_ptr()})?)
         }else{None};
         if kind == erdtree_tower::NodeKind::Chest {
             super::loot::prepare(run, id,unsafe {player.player_game_data.as_ref()})?;
@@ -3211,8 +3270,7 @@ fn request_travel(
             player.chr_ins.modules.data.hp,
             player.chr_ins.modules.data.fp,
         )?;
-        let mut next = run.clone();
-        next.enter(id)?;
+        let mut next = entered;
         if shop_stock.is_some(){next.shop_stock=shop_stock;record(&next);}
         if kind==erdtree_tower::NodeKind::Event {
             let eligible=state.party.as_ref().map_or_else(||loot::count(unsafe {player.player_game_data.as_ref()},0x40001f40)>0,|p|p.event.has_stonesword_key);

@@ -17,6 +17,7 @@ for index,(name,w,h) in enumerate([('cards',1254,1254),('background',1672,941),(
 textures[200003]=np.frombuffer((assets/'reward-art/card.rgba').read_bytes(),dtype=np.uint8).reshape(1536,1024,4)
 textures[200004]=np.frombuffer((assets/'reward-art/rarity-cards.rgba').read_bytes(),dtype=np.uint8).reshape(1024,1536,4)
 textures[200005]=np.frombuffer((assets/'reward-art/rare-blue.rgba').read_bytes(),dtype=np.uint8).reshape(1774,887,4)
+textures[200010]=np.frombuffer((assets/'oath-art/cards2.rgba').read_bytes(),dtype=np.uint8).reshape(1680,1680,4)
 for file in root.glob('*.draw'):
     with file.open() as stream:
         w, h = map(int, next(stream).split())

@@ -254,7 +254,9 @@ pub fn node_roster(run:&erdtree_tower::Run,id:usize)->Vec<Enemy> {
     let node=&run.nodes[id];
     let ordinal=run.visited.iter().take_while(|&&visited|visited!=id)
         .filter(|&&visited|run.nodes[visited].kind==node.kind).count();
-    roster(node.kind,run.seed,ordinal,node.layer*11/(run.floors()-1),run.act)
+    // [HansFix] 堕落首领与本幕首领不同：用另一个种子抽
+    let seed=if Some(id)==run.fallen_id() {erdtree_tower::mix(run.seed^0xfa11_e7b0)} else {run.seed};
+    roster(node.kind,seed,ordinal,node.layer*11/(run.floors()-1),run.act)
 }
 pub fn placement(index: usize, count: usize) -> [f32; 3] {
     if count == 1 { return [0.0, 0.05, 0.0]; }

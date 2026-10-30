@@ -26,6 +26,7 @@ pub fn get()->&'static Options {&OPTIONS}
 pub fn label(hotkey:Hotkey)->&'static str {OPTIONS.key(hotkey)}
 pub fn key(hotkey:Hotkey)->Key {to_key(OPTIONS.key(hotkey)).unwrap_or_else(||to_key(hotkey.default_key()).unwrap_or(Key::Home))}
 
+pub fn key_named(name:&str)->Option<Key> {to_key(name)}
 fn to_key(name:&str)->Option<Key> {
     use Key::*;
     const LETTERS:[Key;26]=[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z];

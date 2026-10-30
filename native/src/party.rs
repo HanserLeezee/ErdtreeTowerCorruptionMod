@@ -482,7 +482,7 @@ mod tests {
         link.accept(&Order::EventStart(Job{wave:2,kind:Kind::Scarabs(1),..guard})).unwrap();
         assert!(link.event.guards_cleared);
         link.accept(&Order::EventDone{epoch:4,wave:2,killed:2}).unwrap();
-        link.accept(&Order::Enter{epoch:5,act:1,visited:vec![],node:0,has_stonesword_key:false}).unwrap();
+        link.accept(&Order::Enter{epoch:5,act:1,visited:vec![],node:0,has_stonesword_key:false,wander:false}).unwrap();
         assert!(!link.event.guards_cleared);
     }
     #[test]
@@ -749,7 +749,7 @@ mod tests {
         assert!(link.accept(&Order::Engage{epoch:0}).is_err());
         link.bound=true;link.accept(&Order::Engage{epoch:0}).unwrap();assert!(link.fighting);
         assert!(link.accept(&Order::Engage{epoch:1}).is_err());
-        events.send(Receive::Order(Order::Enter{epoch:1,act:1,visited:vec![],node:0,has_stonesword_key:false})).unwrap();
+        events.send(Receive::Order(Order::Enter{epoch:1,act:1,visited:vec![],node:0,has_stonesword_key:false,wander:false})).unwrap();
         events.send(match signal {
             0=>Receive::Fault("lost peer".into()),
             1=>Receive::Order(Order::Stop("host stopped".into())),
@@ -761,7 +761,7 @@ mod tests {
             assert!(matches!(orders.as_slice(),[Order::Stop(_)]));
             assert_eq!(link.epoch,0);
         }
-        assert!(link.accept(&Order::Enter{epoch:1,act:1,visited:vec![],node:0,has_stonesword_key:false}).is_err());
+        assert!(link.accept(&Order::Enter{epoch:1,act:1,visited:vec![],node:0,has_stonesword_key:false,wander:false}).is_err());
         assert!(link.open_rewards().is_err());
         }
     }
@@ -835,7 +835,7 @@ mod tests {
                 match event {
                     ClientEvent::Message(HostMessage::Game(Order::Votes{epoch:0,ballots}))=>{
                         assert_eq!(ballots[0].node,Some(3));replayed=true;
-                        tx.send(Send::Broadcast(Order::Enter{epoch:1,act:1,visited:vec![],node:3,has_stonesword_key:false})).unwrap();
+                        tx.send(Send::Broadcast(Order::Enter{epoch:1,act:1,visited:vec![],node:3,has_stonesword_key:false,wander:false})).unwrap();
                     },
                     ClientEvent::Message(HostMessage::Game(Order::Enter{epoch:1,node:3,..}))=>entered=true,
                     ClientEvent::Disconnected=>panic!("worker disconnected after pre-connection votes"),
@@ -898,7 +898,7 @@ fn worker(config:Config,commands:Receiver<Send>,events:&SyncSender<Receive>,runn
                 ClientEvent::Connected(id) if id==config.player=>connected=true,
                 ClientEvent::Message(HostMessage::Game(order@Order::MapDrawing(_)))=>backlog.latest(0,Receive::Order(order)),
                 ClientEvent::Message(HostMessage::Game(order))=>emit(&mut backlog,Receive::Order(order))?,
-                ClientEvent::Mismatch(version)=>return Err(format!("爬塔协议版本不匹配：本机 {VERSION}，房主 {version}。请所有玩家更新同一版爬塔补丁。")),
+                ClientEvent::Mismatch(version)=>return Err(format!("爬塔协议版本不匹配：本机 {}，房主 {version}。请所有玩家更新同一版爬塔补丁。",wire_version())),
                 ClientEvent::Disconnected if !connected&&attempt<3=>{client=connect(&mut attempt)?;break;},
                 ClientEvent::Disconnected if !connected=>return Err("爬塔房主拒绝连接或未响应（已重试 3 次）".into()),
                 ClientEvent::Disconnected=>return Err("爬塔房主已断开".into()),

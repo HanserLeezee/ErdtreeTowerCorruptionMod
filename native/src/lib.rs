@@ -22,6 +22,8 @@ use hudhook::{
 
 mod blessings;
 mod options;
+mod hansfix;
+mod hansfix_text;
 mod stats;
 mod enemies;
 mod chariot;
@@ -287,6 +289,9 @@ impl ImguiRenderLoop for TowerPreview {
 
     fn render(&mut self, ui: &mut Ui) {
         diagnostics::frame();
+        if let Some(text)=hansfix::stale() {
+            ui.get_foreground_draw_list().add_text([24.0,24.0],hudhook::imgui::ImColor32::from_rgb(255,96,72),text);
+        }
         if ui.is_key_pressed_no_repeat(options::key(Hotkey::Settle)) {
             if runtime::PLAYER_READY.load(Ordering::Relaxed) {
                 runtime::QUICK_END.store(true,Ordering::Relaxed);
@@ -345,7 +350,19 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let key=format!("UI visible={} snapshot={} capture={} settlement={} view={:?}",self.visible,snapshot.is_some(),input::CAPTURE.load(Ordering::Relaxed),run_screen,view.as_ref().map(|v|(v.ready,v.busy,v.travelling,v.room.is_some(),v.shared_event,v.prompt)));
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
-        if run_screen {return;}
+        if run_screen {map_ui::set_peek_because(false,"run-screen");return;}
+        // [HansFix7] N opens/closes a read-only route map anywhere in a journey (not over the normal map).
+        let journey=view.as_ref().and_then(|v|v.run.as_ref()).filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won));
+        if !hansfix::merchant() {map_ui::set_peek_because(false,"disabled");}
+        else if journey.is_none() {map_ui::set_peek_because(false,"no-journey");}
+        else if map_open {map_ui::set_peek_because(false,"route-map");}
+        else if ui.is_key_pressed_no_repeat(hansfix::map_key())&&!ui.io().want_text_input&&map_ui::peek_settled(ui.time()) {
+            map_ui::peek_toggled(ui.time());map_ui::set_peek(!map_ui::peek());
+        }
+        if map_ui::peek()&&let (Some(run),Some(view))=(journey,view.as_ref()) {
+            if map_ui::draw_peek(ui,run,view) {map_ui::set_peek_because(false,"esc-or-b");}
+            return;
+        }
         if let Some(view) = &view {
             if let Some(run)=&view.run {scenery::observe(run);}
             scenery::draw_card(ui);
@@ -393,7 +410,8 @@ impl ImguiRenderLoop for TowerPreview {
                             format!("生命 {}/{}    专注 {}/{}", s.hp, s.max_hp, s.fp, s.max_fp)
                         })
                         .unwrap_or_default();
-                    if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
+                    if run.fallen_oath_pending() {self.rewards.draw_fallen_oaths(ui,run,view);}
+                    else if run.contract.as_ref().is_some_and(|c|c.selection_pending()) {self.rewards.draw_contract(ui,run,view);}
                     else if run.contract_pending()||matches!(run.phase,Phase::Reward{..}) {self.rewards.draw(ui,run,view);}
                     else {
                         map_ui::draw(ui, run, view, &vitals);
@@ -416,6 +434,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
     let address = module.0 as usize;
     std::thread::spawn(move || {
         diagnostics::startup(address);
+        hansfix::init(diagnostics::module_path(address));
         options::init(diagnostics::module_path(address));
         diagnostics::watchdog();
         if std::env::var("ERDTREE_TOWER_PREVIEW").as_deref() != Ok("1") {

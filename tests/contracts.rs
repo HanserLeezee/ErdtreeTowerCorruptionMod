@@ -88,11 +88,11 @@ fn contract_pool_is_white_or_blue_varied_and_keeps_matching_ammunition() {
     let tiers:std::collections::HashMap<u32,u8>=include_str!("../scene-assets/reward-rarities.tsv").lines().map(|l| {
         let (id,tier)=l.split_once('\t').unwrap();(id.parse().unwrap(),tier.parse().unwrap())
     }).collect();
-    for kind in Kind::ALL {
+    for kind in Kind::LEGACY {
         let mut seen=std::collections::HashSet::new();
         for seed in 0..128 {
             let mut s=State::new(seed,Class::Prophet,1,None,0);s.offers[0]=kind;
-            s.offers[1]=*Kind::ALL.iter().find(|k|**k!=kind).unwrap();
+            s.offers[1]=*Kind::LEGACY.iter().find(|k|**k!=kind).unwrap();
             s.choose(0,seed,Class::Prophet).unwrap();
             assert!(s.valid(1));
             for id in s.gear {assert!(tiers[&id]<=1);seen.insert(id);}

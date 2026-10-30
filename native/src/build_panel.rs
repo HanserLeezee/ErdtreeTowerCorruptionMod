@@ -187,7 +187,8 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             heading(ui, s, "装备词条", Some(view.build.len()).filter(|n| *n > 0));
             if view.build.is_empty() {empty(ui, s, "手中武器与身上防具没有词条");}
             for gear in &view.build {
-                let lines: Vec<_> = gear.lines.iter().map(|line| (format!("· {line}"), WHITE)).collect();
+                let color = if gear.cursed {crate::reward_ui::LIGHT_RED} else {WHITE};
+                let lines: Vec<_> = gear.lines.iter().map(|line| (format!("· {line}"), color)).collect();
                 // 名字由下面单独用品质特效画，这里留空标题占位
                 let start = ui.cursor_screen_pos();
                 entry(ui, s, Badge::Icon(icon(gear.icon)), "　", WHITE, &lines);

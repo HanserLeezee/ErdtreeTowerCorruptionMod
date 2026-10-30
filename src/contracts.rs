@@ -2,13 +2,23 @@ use serde::{Deserialize,Serialize};
 use crate::{Class,RuleResult};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
-pub enum Kind {Steel,Breaker,Combo,Guard,Mystic,Hunter,Execution,Feather,Blood,Ascetic}
+pub enum Kind {Steel,Breaker,Combo,Guard,Mystic,Hunter,Execution,Feather,Blood,Ascetic,
+    // [HansFix6] 新誓约：灵辉（属性↑物理↓）、锻铁（物理↑属性↓）、磐石（减伤）、贪婪（卢恩）、疫血（异常触发）
+    Radiant,Iron,Bulwark,Greed,Plague,
+    // [HansFix] 吊命之誓：每局首次致命伤害保留 1 点生命，短时无敌并减少精力消耗；喝下圣杯灵药后重置
+    Lifeline}
 impl Kind {
-    pub const ALL:[Self;10]=[Self::Steel,Self::Breaker,Self::Combo,Self::Guard,Self::Mystic,Self::Hunter,Self::Execution,Self::Feather,Self::Blood,Self::Ascetic];
+    pub const ALL:[Self;16]=[Self::Steel,Self::Breaker,Self::Combo,Self::Guard,Self::Mystic,Self::Hunter,Self::Execution,Self::Feather,Self::Blood,Self::Ascetic,
+        Self::Radiant,Self::Iron,Self::Bulwark,Self::Greed,Self::Plague,Self::Lifeline];
+    /// 旧规则（每幕一份）只用最初的十种，旧存档与旧参数不受影响
+    pub const LEGACY:[Self;10]=[Self::Steel,Self::Breaker,Self::Combo,Self::Guard,Self::Mystic,Self::Hunter,Self::Execution,Self::Feather,Self::Blood,Self::Ascetic];
+    /// 卡面插画：0–5 为原图集，6–11 为新誓约封面图集（磐石、吊命、贪婪、灵辉、锻铁、疫血）
+    pub fn art(self)->usize {match self {Self::Bulwark=>6,Self::Lifeline=>7,Self::Greed=>8,Self::Radiant=>9,Self::Iron=>10,Self::Plague=>11,other=>other.index()%6}}
     pub fn name(self)->&'static str {match self {
         Self::Steel=>"蓄力之誓",Self::Breaker=>"凌空之誓",Self::Combo=>"连击之誓",
         Self::Guard=>"坚盾之誓",Self::Mystic=>"秘法之誓",Self::Hunter=>"猎手之誓",
         Self::Execution=>"处刑之誓",Self::Feather=>"轻羽之誓",Self::Blood=>"血契之誓",Self::Ascetic=>"苦修之誓",
+        Self::Radiant=>"灵辉之誓",Self::Iron=>"锻铁之誓",Self::Bulwark=>"磐石之誓",Self::Greed=>"贪婪之誓",Self::Plague=>"疫血之誓",Self::Lifeline=>"吊命之誓",
     }}
     pub fn boon(self)->&'static str {match self {
         Self::Steel=>"蓄力重攻击伤害 +20%",Self::Breaker=>"跳跃攻击伤害 +25%",
@@ -18,6 +28,7 @@ impl Kind {
         Self::Feather=>"轻负重时伤害 +15%\n精力恢复 +5 点/秒",
         Self::Blood=>"生命低于 50%\n伤害 +25%",
         Self::Ascetic=>"胜利恢复最大生命 10%\n最大专注 15%",
+        Self::Radiant|Self::Iron|Self::Bulwark|Self::Greed|Self::Plague|Self::Lifeline=>"",
     }}
     pub fn bane(self)->&'static str {match self {
         Self::Steel|Self::Hunter=>"战技伤害 -20%",Self::Breaker=>"战技专注消耗 +25%",
@@ -27,6 +38,10 @@ impl Kind {
         Self::Feather=>"受到物理伤害 +10%",
         Self::Blood=>"红圣杯瓶恢复量 -20%",
         Self::Ascetic=>"红、蓝圣杯瓶恢复量 -35%",
+        Self::Radiant=>"物理伤害 -15%",Self::Iron=>"魔力／火／雷／圣伤害 -25%",
+        Self::Bulwark=>"最大专注 -20%",Self::Greed=>"受到伤害 +10%",
+        Self::Plague=>"出血、毒、腐败抗性 -30%",
+        Self::Lifeline=>"最大生命 -10%",
     }}
     pub fn hint(self)->&'static str {match self {
         Self::Steel=>"抓住敌人硬直，以蓄力重击换取爆发。",
@@ -39,6 +54,12 @@ impl Kind {
         Self::Feather=>"装备重量低于最大负重的 30% 时获得增益。",
         Self::Blood=>"以低血量换取更高伤害。",
         Self::Ascetic=>"胜利恢复按最大生命和专注计算，不超过上限。",
+        Self::Radiant=>"魔力、火、雷、圣属性伤害提高，物理伤害降低；适合法术与属性武器。",
+        Self::Iron=>"物理伤害提高，所有属性伤害降低；适合纯物理武器。",
+        Self::Bulwark=>"受到的所有伤害降低，代价是最大专注降低。",
+        Self::Greed=>"击败敌人获得的卢恩提高；首领额外卢恩不受影响。",
+        Self::Plague=>"附近发生出血、中毒或腐败时，20 秒内伤害提高。",
+        Self::Lifeline=>"每局第一次受到致命伤害时生效；喝下圣杯灵药后可再次生效。",
     }}
     pub fn index(self)->usize {Self::ALL.iter().position(|k|*k==self).unwrap()}
     /// 新规则下各等级的增益（1–3 级）
@@ -53,6 +74,12 @@ impl Kind {
             Self::Feather=>format!("轻负重时伤害 +{}%\n精力恢复 +{} 点/秒",[20,30,40][l],[5,7,10][l]),
             Self::Blood=>format!("生命低于 50%\n伤害 +{}%",[35,55,75][l]),
             Self::Ascetic=>{let (hp,fp)=ASCETIC[l];format!("胜利恢复最大生命 {hp}%\n最大专注 {fp}%")},
+            Self::Radiant=>format!("魔力／火／雷／圣伤害 +{}%",[25,40,55][l]),
+            Self::Iron=>format!("物理伤害 +{}%",[15,25,35][l]),
+            Self::Bulwark=>format!("受到伤害 -{}%",[10,15,20][l]),
+            Self::Greed=>format!("卢恩获取 +{}%",[25,40,60][l]),
+            Self::Plague=>format!("附近出血／中毒／腐败时\n20 秒内伤害 +{}%",[15,22,30][l]),
+            Self::Lifeline=>format!("首次致命伤害时保留 1 点生命\n{0} 秒无敌，精力消耗 -90%",LIFELINE_SECONDS[l]),
         }
     }
     /// 新规则下的代价：不随等级加重
@@ -63,6 +90,18 @@ impl Kind {
 /// 苦修之誓各等级的胜利恢复（最大生命 %、最大专注 %）
 pub const ASCETIC:[(u8,u8);3]=[(15,20),(20,25),(25,30)];
 pub const MAX_LEVEL:u8=3;
+/// 吊命之誓各等级的无敌与减耗时长（秒）
+pub const LIFELINE_SECONDS:[u8;3]=[10,15,20];
+/// 新规则每幕的新誓约数量（新誓约补丁开启时）
+pub const OFFERS:usize=3;
+/// [HansFix] 新誓约的效果行是否在 regulation 里（堕落模式补丁带的 regulation 才有）。核心库默认开启；DLL 按补丁标记设置。
+static EXTENDED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(true);
+pub fn set_extended(on:bool) {EXTENDED.store(on,std::sync::atomic::Ordering::Relaxed);}
+pub fn extended()->bool {EXTENDED.load(std::sync::atomic::Ordering::Relaxed)}
+/// 当前可出现的誓约
+/// 每幕誓约界面的誓约池：始终与官方相同（新誓约只在堕落首领处出现，见 fallen_oaths）
+pub fn pool()->&'static [Kind] {&Kind::LEGACY}
+fn offer_count()->usize {2}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct Oath {pub kind:Kind,pub level:u8}
 /// 誓约界面上的一张卡
@@ -73,7 +112,8 @@ pub enum Card {Oath(Kind),Deepen(Kind)}
 pub struct Gift {pub index:usize,pub delivered:[bool;2]}
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct State {
-    pub act:u8,pub offers:[Kind;2],pub chosen:Option<Kind>,pub gear:[u32;3],
+    /// 旧规则与旧存档两张，新规则三张（存档为数组，长度兼容）
+    pub act:u8,pub offers:Vec<Kind>,pub chosen:Option<Kind>,pub gear:[u32;3],
     pub gear_done:bool,pub peak:u8,pub gift:Option<Gift>,
     /// 0：旧规则（每幕一份、下一幕作废）；1：誓约整局保留，可以深化
     #[serde(default)] pub rules:u8,
@@ -102,22 +142,24 @@ impl State {
         let preferred=if class.sorcerer()||class.cleric(){Kind::Mystic}else{
             [Kind::Steel,Kind::Breaker,Kind::Combo,Kind::Guard][roll as usize%4]
         };
-        let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|Some(*k)!=previous).collect();
+        let mut pool:Vec<_>=Kind::LEGACY.into_iter().filter(|k|Some(*k)!=previous).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
         let first=if Some(preferred)!=previous{preferred}else{pool[0]};
         let second=*pool.iter().find(|k|**k!=first).unwrap();
-        Self{act,offers:[first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:0,held:vec![],deepen:None,deepened:false}
+        Self{act,offers:vec![first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:0,held:vec![],deepen:None,deepened:false}
     }
-    /// 新规则：两份新誓约（不与已有的重复），已有誓约未满级时加一张深化卡
+    /// 新规则：三份新誓约（不与已有的重复），已有誓约未满级时加一张深化卡。
+    /// [HansFix] 首张按职业倾向，其余随机。
     pub fn start(seed:u64,class:Class,act:u8,held:Vec<Oath>,peak:u8)->Self {
         let roll=crate::mix(seed^0xc071ac7);
         let preferred=preferred(class,roll);
-        let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|!held.iter().any(|o|o.kind==*k)).collect();
+        let mut pool:Vec<_>=pool().iter().copied().filter(|k|!held.iter().any(|o|o.kind==*k)).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
-        let first=if pool.contains(&preferred){preferred}else{pool[0]};
-        let second=*pool.iter().find(|k|**k!=first).unwrap();
+        // v99：首张仍按职业倾向（不在池中时随机）；其余两张随机
+        if let Some(at)=pool.iter().position(|k|*k==preferred) {let first=pool.remove(at);pool.insert(0,first);}
+        let offers:Vec<Kind>=pool.into_iter().take(offer_count()).collect();
         let deepen=held.iter().rev().filter(|o|o.level<MAX_LEVEL).max_by_key(|o|o.level).map(|o|o.kind);
-        Self{act,offers:[first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:1,held,deepen,deepened:false}
+        Self{act,offers,chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:1,held,deepen,deepened:false}
     }
     /// 进入下一幕：旧规则换一份新契约，新规则保留已有誓约
     pub fn next_act(&self,seed:u64,class:Class,act:u8)->Self {
@@ -183,7 +225,9 @@ impl State {
                 &&(!self.deepened||self.chosen.is_some()&&self.chosen==self.deepen),
             _=>false,
         };
-        self.act==act&&self.peak<=50&&self.offers[0]!=self.offers[1]&&held_ok
+        let offers_ok=self.offers.iter().enumerate().all(|(i,k)|!self.offers[..i].contains(k))
+            &&if self.rules==0 {self.offers.len()==2&&self.offers.iter().all(|k|Kind::LEGACY.contains(k))}else{(2..=OFFERS).contains(&self.offers.len())};
+        self.act==act&&self.peak<=50&&offers_ok&&held_ok
             &&self.chosen.is_none_or(|k|self.offers.contains(&k)||self.deepened)
             &&if self.chosen.is_none()||self.deepened{self.gift.is_none()&&self.gear==[0;3]}else{
                 self.gear.iter().enumerate().all(|(i,id)|!self.gear[..i].contains(id)&&crate::rewards::lookup(*id).is_some_and(|r|r.kind==crate::rewards::ItemKind::Weapon))
@@ -208,7 +252,9 @@ fn gear(kind:Kind,_class:Class,seed:u64,epic:bool)->[u32;3] {
             Kind::Execution=>matches!(family,1|5|30),
             Kind::Feather=>matches!(family,1|5|7|21|22),
             Kind::Blood=>(1..=23).contains(&family),
-            Kind::Ascetic=>(1..=23).contains(&family)||matches!(family,33|34),
+            Kind::Ascetic|Kind::Radiant=>(1..=23).contains(&family)||matches!(family,33|34),
+            Kind::Iron|Kind::Greed|Kind::Plague|Kind::Lifeline=>(1..=23).contains(&family),
+            Kind::Bulwark=>matches!(family,2|3|11|16|18|31|32),
         };matches.then_some(id)
     }).collect();
     pool.sort_by_key(|id|crate::mix(seed^u64::from(*id)^0x9ea7));
