@@ -18,3 +18,9 @@ GPARAM format byte-for-byte); `oz.c` (mingw, run with the game's oo2core_6_win64
 them to Kraken DCX. Output goes to `scene-assets/param/drawparam/`.
 
 r14: m45_02 (Limgrave colosseum) is not shipped — its night gparam made the game abort on load (fail-fast 7) while m45_00/m45_01 load fine; cause still unknown.
+
+r18: none of the night gparams are shipped any more. After the v101 port the game also aborted (same
+fail-fast 7 site) while loading m45_00 with the night file, which had loaded fine on v99. Editing the
+colosseum gparams is not reliable; the patch ships the vanilla files for all three so unpacking over
+an older patch restores them. Night for the fallen challenge needs another approach (e.g. EMEVD
+`Activate Gparam Override` with a vanilla night gparam sub-id).
