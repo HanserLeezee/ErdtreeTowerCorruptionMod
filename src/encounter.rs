@@ -78,7 +78,8 @@ impl<H: Copy + Eq> Encounter<H> {
 pub enum Role {Weak,Strong,Boss}
 /// 单人同时在场的敌人上限（Boss 组除外）
 pub const SOLO_CAP:usize=2;
-/// 联机与 Boss 组一起出；其余单人战斗同时在场最多 SOLO_CAP 只，普通战清完弱怪后才出强怪。
+/// 联机与 Boss 组一起出（联机的精英战仍按苦难律法「精英成双」等前面的精英，房主与成员按同一规则各自放出预置实体）；
+/// 其余单人战斗同时在场最多 SOLO_CAP 只，普通战清完弱怪后才出强怪。
 /// previous 为本组中排在 index 之前的敌人状态，未生成的敌人记为 Waiting。
 pub fn may_spawn(networked:bool,monster_node:bool,roles:&[Role],index:usize,previous:&[Outcome])->bool {
     may_spawn_paced(networked,monster_node,false,roles,index,previous)
@@ -98,8 +99,9 @@ impl Pacing {
 }
 /// held：这只精英按 Pacing::waits 需要等前面的精英（由运行时按生命算好）
 pub fn may_spawn_paced(networked:bool,monster_node:bool,held:bool,roles:&[Role],index:usize,previous:&[Outcome])->bool {
-    if networked||roles.iter().all(|r|*r==Role::Boss) {return true;}
+    if roles.iter().all(|r|*r==Role::Boss) {return true;}
     if held&&roles[index]==Role::Strong {return false;}
+    if networked {return true;}
     if previous.iter().filter(|o|**o!=Outcome::Victory).count()>=SOLO_CAP {return false;}
     !(monster_node&&roles[index]!=Role::Weak&&roles[..index].iter().zip(previous).any(|(r,o)|*r==Role::Weak&&*o!=Outcome::Victory))
 }
@@ -183,6 +185,12 @@ mod tests {
         assert!(may_spawn(false,false,&elite,1,&[Waiting]),"elite and escorts together");
         assert!(!may_spawn(false,false,&elite,2,&[Waiting,Waiting]));
         assert!(may_spawn(false,false,&elite,2,&[Victory,Waiting]),"next enemy fills a freed slot");
+        // 联机：没有同时在场上限，但精英战的精英照样按「精英成双」等前一只
+        let pair=[Role::Strong,Role::Strong,Role::Weak];
+        assert!(may_spawn_paced(true,false,false,&pair,1,&[Waiting]),"party: no cap");
+        assert!(!may_spawn_paced(true,false,true,&pair,1,&[Waiting]),"party: the second elite waits");
+        assert!(may_spawn_paced(true,false,true,&pair,2,&[Waiting,Waiting]),"escorts never wait");
+        assert!(may_spawn_paced(true,false,true,&[Role::Boss,Role::Boss],1,&[Waiting]),"boss groups spawn together");
         assert!(may_spawn(true,true,&monsters,3,&[Waiting,Waiting,Waiting]),"party keeps group spawning");
         // 精英战：精英怪池的两只精英一只一只上；苦难律法「精英成双」时一起上；Boss 组（精英版双人组）不受影响
         let pair=[Role::Strong,Role::Strong,Role::Weak];
@@ -193,6 +201,6 @@ mod tests {
         assert!(Pacing::HalfHealth.waits(&alive_full)&&Pacing::HalfHealth.waits(&not_yet)&&!Pacing::HalfHealth.waits(&alive_half)&&!Pacing::HalfHealth.waits(&dead));
         assert!(!Pacing::Together.waits(&alive_full));
         assert!(may_spawn_paced(false,false,true,&duo,1,&[Waiting]),"boss duos are untouched");
-        assert!(may_spawn_paced(true,false,true,&pair,1,&[Waiting]),"party is untouched");
+        assert!(!may_spawn_paced(true,false,true,&pair,1,&[Waiting]),"party elites follow the same pacing");
     }
 }

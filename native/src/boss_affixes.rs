@@ -66,8 +66,11 @@ pub fn validate(empowered:bool)->Result<(),String> {
     if EFFECTS.iter().chain(EMPOWERED.iter().filter(|_|empowered)).any(|id|params.get::<SpEffectParam>(*id as u32).is_none()){return Err("缺少 Boss 词条参数，请使用完整启动包".into());}Ok(())
 }
 struct Foe {handle:FieldInsHandle,hp:i32,hurt:Instant,proud:bool,reborn:bool}
+/// 联机：房主按所有玩家的掉血算吸血；成员只算自己的（腐败、荆棘），护盾的时机跟房主（看 Boss 身上的护盾效果）
 #[derive(Default)]
-pub struct Fight {key:Option<(u64,u8,usize)>,affixes:Vec<Affix>,empowered:bool,foes:Vec<Foe>,flasks:Option<u8>,shield_at:Option<Instant>,shield_until:Option<Instant>,rot_at:Option<Instant>,missing:bool,player_hp:Option<i32>}
+pub struct Fight {key:Option<(u64,u8,usize)>,affixes:Vec<Affix>,empowered:bool,foes:Vec<Foe>,flasks:Option<u8>,shield_at:Option<Instant>,shield_until:Option<Instant>,rot_at:Option<Instant>,missing:bool,player_hp:Option<i32>,
+    /// 房主：每个玩家上一帧的生命（吸血按全队受到的伤害）
+    players:Vec<(FieldInsHandle,i32)>,drinks:erdtree_tower::party_law::DrinkDeltas}
 impl Fight {
     /// empowered：苦难律法「词条强化」
     pub fn begin(&mut self,key:(u64,u8,usize),affixes:Vec<Affix>,empowered:bool) {
@@ -87,32 +90,44 @@ impl Fight {
         }
         self.shield_at.filter(|at|*at>now&&at.duration_since(now)<=Duration::from_secs(2)).map(|_|("黄金护盾即将展开".to_owned(),true))
     }
-    pub fn tick(&mut self,world:&mut WorldChrMan,handles:&[FieldInsHandle],authority:bool,flasks:Option<u8>) {
+    /// authority：房主或单人（只有它改 Boss 的状态）；party：联机（荆棘只按自己与自己召唤物的伤害反弹）；team：联机时全队的喝药次数
+    pub fn tick(&mut self,world:&mut WorldChrMan,handles:&[FieldInsHandle],authority:bool,party:bool,flasks:Option<u8>,team:Option<&[(u64,u64)]>) {
         if self.affixes.is_empty(){return;}
         if let Err(error)=validate(self.empowered){if !self.missing{super::log(error);self.missing=true;}return;}
         let now=Instant::now();let tuning=self.tuning();
         let (pride,envy)=if self.empowered {(PRIDE+1,ENVY+1)}else{(PRIDE,ENVY)};
-        let drank=matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before);self.flasks=flasks;
-        let shield=self.affixes.contains(&Affix::Golden)&&match self.shield_at {Some(at)=>now>=at,None=>{self.shield_at=Some(now+Duration::from_secs(tuning.shield_every));false}};
+        let drank=team.map_or_else(||u64::from(matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before)),|counts|self.drinks.take(counts));self.flasks=flasks;
+        // 护盾：房主按时机展开；成员看到 Boss 身上出现护盾效果时开始 5 秒倒计时（提示用）
+        let golden=self.affixes.contains(&Affix::Golden);
+        let shield=authority&&golden&&match self.shield_at {Some(at)=>now>=at,None=>{self.shield_at=Some(now+Duration::from_secs(tuning.shield_every));false}};
         if shield {self.shield_at=Some(now+Duration::from_secs(tuning.shield_every));self.shield_until=Some(now+Duration::from_secs(5));}
-        // 玩家这一帧受到的伤害（吸血）与 Boss 受到的伤害（荆棘）
+        if !authority&&golden&&self.shield_until.is_none_or(|until|now>=until)
+            &&handles.iter().filter_map(|h|world.chr_ins_by_handle(h)).any(|c|c.special_effect.entries().any(|e|e.param_id==SHIELD)) {
+            self.shield_until=Some(now+Duration::from_secs(5));
+        }
+        // 本机玩家这一帧受到的伤害（腐败）；房主再算全队受到的伤害（吸血）
         let player_hp=world.main_player.as_ref().map(|p|p.chr_ins.modules.data.hp);
         let taken=match (self.player_hp,player_hp) {(Some(before),Some(after)) if after<before=>before-after,_=>0};self.player_hp=player_hp;
+        let team_taken=if authority&&party {
+            let now_hp:Vec<_>=world.player_chr_set.characters().map(|p|(p.chr_ins.field_ins_handle,p.chr_ins.modules.data.hp)).collect();
+            let lost=now_hp.iter().map(|(h,hp)|self.players.iter().find(|(p,_)|p==h).map_or(0,|(_,before)|(before-hp).max(0))).sum::<i32>();
+            self.players=now_hp;lost
+        }else{taken};
+        let own:Vec<FieldInsHandle>=world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect();
         let mut reflected=0i64;
         for handle in handles {
             let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
             if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
-            if !authority {continue;}
             let index=match self.foes.iter().position(|f|f.handle==*handle) {Some(i)=>i,None=>{self.foes.push(Foe{handle:*handle,hp:chr.modules.data.hp,hurt:now,proud:false,reborn:false});self.foes.len()-1}};
             let foe=&mut self.foes[index];
+            let (hp,max)=(chr.modules.data.hp,chr.modules.data.max_hp);
+            // 荆棘：单人按 Boss 受到的伤害；联机只按自己与自己召唤物打的（看 last_hit_by），由各自在本机反弹给自己
+            if hp<foe.hp&&self.affixes.contains(&Affix::Thorned)&&(!party||own.contains(&chr.last_hit_by)) {reflected+=i64::from(foe.hp-hp)*tuning.thorn_percent/100;}
+            if !authority {foe.hp=hp;continue;}
             let present:Vec<i32>=chr.special_effect.entries().map(|e|e.param_id).collect();
             for id in self.affixes.iter().filter_map(|a|resident(*a,self.empowered)) {if !present.contains(&id){chr.apply_speffect(id,false);}}
-            let (hp,max)=(chr.modules.data.hp,chr.modules.data.max_hp);
-            if hp<foe.hp {
-                foe.hurt=now;if foe.proud{chr.remove_speffect(pride);foe.proud=false;}
-                if self.affixes.contains(&Affix::Thorned) {reflected+=i64::from(foe.hp-hp)*tuning.thorn_percent/100;}
-            }
-            if self.affixes.contains(&Affix::Leeching)&&taken>0&&max>0 {
+            if hp<foe.hp {foe.hurt=now;if foe.proud{chr.remove_speffect(pride);foe.proud=false;}}
+            if self.affixes.contains(&Affix::Leeching)&&team_taken>0&&max>0 {
                 chr.modules.data.hp=(i64::from(hp)+i64::from(max)*tuning.leech_permille/1000).min(i64::from(max)) as i32;
                 chr.apply_speffect(LEECH_FLASH,false);
             }
@@ -121,7 +136,7 @@ impl Fight {
             // 迅猛：持续把动作播放速度保持在 1.2 倍（强化 1.3 倍）
             if self.affixes.contains(&Affix::Swift)&&chr.modules.behavior.animation_speed<tuning.swift_speed {chr.modules.behavior.animation_speed=tuning.swift_speed;}
             if self.affixes.contains(&Affix::Proud)&&!foe.proud&&now.duration_since(foe.hurt)>=Duration::from_secs(tuning.proud_after) {chr.apply_speffect(pride,false);foe.proud=true;}
-            if self.affixes.contains(&Affix::Envious)&&drank {chr.apply_speffect(envy,false);}
+            if self.affixes.contains(&Affix::Envious)&&drank>0 {chr.apply_speffect(envy,false);}
             if shield {chr.apply_speffect(SHIELD,false);}
             if self.affixes.contains(&Affix::Reborn)&&!foe.reborn&&max>0&&i64::from(hp)*10<=i64::from(max) {
                 chr.modules.data.hp=(i64::from(max)*tuning.reborn_percent/100) as i32;foe.hp=chr.modules.data.hp;foe.reborn=true;chr.apply_speffect(REBORN,false);
@@ -129,12 +144,12 @@ impl Fight {
             }
         }
         let Some(player)=world.main_player.as_mut().filter(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()) else{return};
-        // 荆棘：反弹给本机玩家，不会致死（由房主计算 Boss 受到的伤害）
+        // 荆棘：反弹给本机玩家，不会致死
         if reflected>0 {
             let data=&mut player.chr_ins.modules.data;
             data.hp=(i64::from(data.hp)-reflected).max(1) as i32;self.player_hp=Some(data.hp);
         }
-        // 腐败的：攻击附带猩红腐败，玩家每次受伤积累一次（词条强化积累两次）；同一次攻击的多段伤害 0.4 秒内只算一次
+        // 腐败的：攻击附带猩红腐败，玩家每次受伤积累一次（词条强化积累两次）；同一次攻击的多段伤害 0.4 秒内只算一次。每个玩家在本机给自己挂
         if self.affixes.contains(&Affix::Rot)&&taken>0&&self.rot_at.is_none_or(|at|now>=at) {
             for _ in 0..tuning.rot_per_hit {player.chr_ins.apply_speffect(ROT_BUILDUP,true);}
             self.rot_at=Some(now+Duration::from_millis(400));

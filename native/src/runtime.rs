@@ -169,6 +169,8 @@ fn tick_party_scene(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Re
         }
         if let Some(guards)=scene.guards.take(){guards.retire();}
         let healed=heal_victory(world,&scene.run);if !healed.is_empty(){super::log(&healed);state.view.status=healed;state.view.prompt=state.view.prompt.wrapping_add(1);}
+        // 召唤师「群灵」：与单人的守卫战相同，胜利时召唤物还活着就补回这次用掉的骨灰
+        if keep_summoned_ash(world,&scene.run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
         link.event.applied=Some(job.wave);state.view.shared_event=false;return Ok(());
     }
     if game.warp_requested||world.main_player.as_ref().is_none_or(|p|i32::from(p.current_block_id)!=scene.block){return Ok(());}
@@ -572,6 +574,8 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
         },
         Order::Defeat{..}=>{
             stop_map_combat(state,world);
+            // 全队倒下：房主与成员都记下这场战斗（单人在战斗结算时记）
+            if let Some(run)=state.view.run.as_ref()&&let Phase::Combat{id}=run.phase {record_fight(run,Some(id),false);}
             if let Some(run)=state.view.run.as_mut(){run.end_on_death();record_checked(run)?;}
             Ok(())
         },
@@ -750,23 +754,31 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
     if state.hub.as_ref().is_some_and(|h|h.active){return Ok(());}
     if run.seed!=erdtree_tower::party_game::act_seed(link.config.seed,run.act)?{return Err("队伍种子不匹配，未同步游戏状态".into());}
     if let Phase::Combat{id}=run.phase {
-        if !link.host()&&!link.bound {
+        if !link.host()&&!link.victory&&!link.defeated {
             let arena=super::arenas::for_act(run.act);
             let in_arena=world.main_player.as_ref().is_some_and(|p|i32::from(p.current_block_id)==arena.block)&&!game.warp_requested;
             if in_arena {
                 let roster=super::enemies::node_roster(run,id);
                 let ids=super::enemies::map_entities(&roster)?;
-                for (slot,&entity) in ids.iter().enumerate(){super::enemies::position_map_entity(entity,slot)?;}
-                let ready=ids.iter().map(|&id|super::enemies::request_map_entity(id,true)).collect::<Result<Vec<_>,_>>()?;
-                let mut seen=vec![false;roster.len()];
-                for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
-                    for (slot,spec) in roster.iter().enumerate(){
-                        if ready[slot]&&chr.event_entity_id==ids[slot]&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc
-                            &&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()
-                            &&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status){seen[slot]=true;}
-                    }
+                // 精英成双：与房主同一规则，前面的精英还没倒下（或没到半血）时，后面的精英先不放出来，也不等它
+                let held=member_held(world,run,id,&roster,&ids);
+                let mut ready=vec![false;roster.len()];
+                for (slot,&entity) in ids.iter().enumerate() {
+                    if held[slot] {continue;}
+                    super::enemies::position_map_entity(entity,slot)?;
+                    ready[slot]=super::enemies::request_map_entity(entity,true)?;
                 }
-                link.bound=!seen.is_empty()&&seen.iter().all(|x|*x);
+                if !link.bound {
+                    let mut seen=held.clone();
+                    for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
+                        for (slot,spec) in roster.iter().enumerate(){
+                            if ready[slot]&&chr.event_entity_id==ids[slot]&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc
+                                &&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()
+                                &&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status){seen[slot]=true;}
+                        }
+                    }
+                    link.bound=held.iter().any(|h|!h)&&seen.iter().all(|x|*x);
+                }
             }
             if !link.bound&&link.encounter.is_some_and(|t|t.elapsed()>Duration::from_secs(90)){
                 let roster=super::enemies::node_roster(run,id);
@@ -776,7 +788,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
             }
         }
         if !link.host() {
-            super::spirits::set_active(link.bound&&!link.victory&&alive);
+            super::spirits::set_active(link.bound&&!link.victory&&alive&&!run.law.lone_wolf());
             if link.victory&&alive&&state.reward_wait.is_none(){
                 // 不马上撤敌人：房主在生命归零时就判定胜利，被处决的敌人要等处决动画播完才真正死亡；
                 // 在本机死亡之前撤掉，成员就拿不到这只敌人的卢恩（看起来直接消失、不掉魂）
@@ -788,6 +800,14 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
                 if keep_summoned_ash(world,run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
                 world.summon_buddy_manager.disappear_requested=true;
                 give_elite_tear(world,run,id);
+                // 与房主、单人相同：Boss 词条的额外卢恩，以及记进本局的战斗记录（结算的回顾、职业熟练度与灵光成就都按它算）
+                let bonus=erdtree_tower::boss_affixes::bonus_runes(run,id);
+                if let Some(player)=world.main_player.as_mut().filter(|_|bonus>0) {
+                    let data=unsafe {player.player_game_data.as_mut()};
+                    data.rune_count=data.rune_count.saturating_add(bonus).min(999_999_999);
+                    super::log(format!("BOSS_AFFIX bonus runes={bonus}"));
+                }
+                record_fight(run,Some(id),true);
                 super::log(format!("Party victory received epoch={}",link.epoch));
             }
         }
@@ -1152,7 +1172,9 @@ fn tick_locked() {
     super::spirits::set_active(local_combat&&!super::law::lone_wolf(state.view.run.as_ref()));
     super::spirits::set_twin(local_combat&&state.pending.as_ref().map(|p|&p.next_run).or(state.view.run.as_ref()).is_some_and(|r|r.embers.contains(&erdtree_tower::embers::Ember::SpiritTwin)));
     super::enemies::set_party(state.party.is_some());
-    if let Some(spirits)=encounter_state(&mut state.party_spirits,summon_scope,summon_available) {
+    // 苦难律法「孤狼」：与房主、单人相同，联机成员与守卫战也不开放召唤点
+    let lone_wolf=super::law::lone_wolf(state.view.run.as_ref());
+    if let Some(spirits)=encounter_state(&mut state.party_spirits,summon_scope,summon_available&&!lone_wolf) {
         if let Err(error)=spirits.poll(world,summon_scope.unwrap().2,true){super::log(format!("Party spirit registration: {error}"));}
     }
     let bar_affixes=state.pending.as_ref().map(|p|&p.next_run).or(state.view.run.as_ref())
@@ -1181,20 +1203,23 @@ fn tick_locked() {
         }}
     }
     super::boss_bars::sync(super::boss_bars::select(bars));
-    if !game.warp_requested {member_embers(&mut state,world);}
+    if !game.warp_requested {member_combat(&mut state,world);}
     // [fix] Diagnostic switch: ERDTREE_TOWER_NO_ATTENDANT=1 skips the arena-side NPC entirely, to test
     // whether it is what triggers the arena-arrival crash. The fog gate and fight do not need it.
     let attendant_allowed=!attendant_disabled()&&state.room.is_none()&&!game.warp_requested
         &&world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp>0&&(
             (state.travel.is_some()&&state.view.run.as_ref().is_some_and(|r|super::arenas::for_run(r,state.party.is_some()).block==i32::from(p.current_block_id))&&super::native_talk::flag(45007993).unwrap_or(false))
-            ||state.pending.as_ref().is_some_and(|fight|fight.block==i32::from(p.current_block_id)&&fight.foes.iter().all(|f|f.entity_address.is_some()))));
+            ||state.pending.as_ref().is_some_and(|fight|fight.block==i32::from(p.current_block_id)&&fight.foes.iter().all(|f|f.entity_address.is_some()))
+            // 联机成员没有 Pending：敌人同步后、收到胜利前同样留着
+            ||member_live(&state)&&state.view.run.as_ref().is_some_and(|r|super::arenas::for_act(r.act).block==i32::from(p.current_block_id))));
     if attendant_allowed {
         if state.attendant.is_none() {
             match super::rooms::Room::attendant(i32::from(world.main_player.as_ref().unwrap().current_block_id)) {Ok(room)=>state.attendant=Some(room),Err(e)=>super::log(e)}
         }
         let roster=if let Some((travel,_,_,_))=&state.travel {
             state.view.run.as_ref().map(|run|super::enemies::node_roster(run,travel.node)).unwrap_or_default()
-        }else{state.pending.as_ref().map(|p|p.foes.iter().map(|f|f.spec).collect()).unwrap_or_default()};
+        }else if let Some(pending)=state.pending.as_ref() {pending.foes.iter().map(|f|f.spec).collect()
+        }else{state.view.run.as_ref().and_then(|run|if let Phase::Combat{id}=run.phase {Some(super::enemies::node_roster(run,id))}else{None}).unwrap_or_default()};
         let texts=super::enemies::preview_texts(&roster);
         if let Some(room)=state.attendant.as_mut() {room.set_enemies(&texts);if let Err(e)=room.poll(world,game){super::log_repeating(format!("Arena attendant: {e}"));}}
     } else if let Some(room)=state.attendant.take() {room.retire(world);}
@@ -1275,7 +1300,8 @@ fn tick_locked() {
     // 否则客机拍不到开战时的骨灰快照，召唤师「群灵」胜利时补不回骨灰
     let client_fighting=state.party.as_ref().is_some_and(|p|!p.host()&&p.bound&&!p.victory)
         &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
-    let ash_fighting=state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting;
+    // 联机的守卫战（所有人都没有 Pending）也拍快照，胜利时补骨灰要用
+    let ash_fighting=state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting||state.party.as_ref().is_some_and(|p|p.event.combat_active());
     if ash_fighting&&!state.ash_tracking {
         match super::loadout::ash_snapshot(player_data) {
             Ok(before)=>{
@@ -1575,8 +1601,9 @@ fn tick_locked() {
             run.flasks = count;
             run.physick_empty=super::physick::empty(player_data);
             if !matches!(run.phase,Phase::Reward{..}) {
-                for entry in player_data.equipment.equip_inventory_data.items_data.items().filter(|e|e.quantity>0&&e.item_id.category()==eldenring::cs::ItemCategory::Goods&&erdtree_tower::rewards::progression_good(0x40000000|e.item_id.param_id())) {
-                    let id=0x40000000|entry.item_id.param_id();
+                // 磨刀石等是重要物品：无缝联机下 items() 读不到，改按背包的全部列表找
+                for item in super::loot::bag_items(player_data).into_iter().filter(|i|i.category()==eldenring::cs::ItemCategory::Goods&&erdtree_tower::rewards::progression_good(0x40000000|i.param_id())) {
+                    let id=0x40000000|item.param_id();
                     if !run.claimed_items.contains(&id){run.claimed_items.push(id);}
                 }
             }
@@ -1831,9 +1858,11 @@ fn tick_locked() {
     }
 
     let Some(_) = state.pending.as_mut().filter(|pending| !pending.completed) else {
-        if state.view.boss_affixes.is_some(){state.boss_fight=Default::default();state.view.boss_affixes=None;state.view.boss_alert=None;state.view.boss_affix_list.clear();}
+        // 联机成员的律法与 Boss 词条由 member_combat 维护，打完（收到胜利）才清掉
+        let member=member_live(&state);
+        if state.view.boss_affixes.is_some()&&!member{state.boss_fight=Default::default();state.view.boss_affixes=None;state.view.boss_alert=None;state.view.boss_affix_list.clear();}
         if state.dual_fight.active(){state.dual_fight=Default::default();state.view.boss_alert=None;}
-        if state.view.law_clock.is_some(){state.law_fight=Default::default();state.view.law_clock=None;}
+        if state.view.law_clock.is_some()&&!member{state.law_fight=Default::default();state.view.law_clock=None;}
         // 联机成员的余烬状态由 member_embers 维护，不在这里清掉
         if state.ember_fight.active()&&!member_fighting(&state){state.ember_fight=Default::default();}
         if state.bout.active(){state.bout.end(world);}
@@ -1843,7 +1872,8 @@ fn tick_locked() {
     let stall_authority=state.party.as_ref().is_none_or(|p|p.host());
     let pending=state.pending.as_mut().unwrap();
     let (outcome, enemy_hp, bound) = poll_group(pending, world, player_dead&&!party_mode, block,stall_authority);
-    let all_bound=pending.foes.iter().all(|foe|foe.fight.handle().is_some());
+    // 联机「精英成双」：还在等前一只的精英没请求过生成，不算未绑定（否则全队等不到开战）
+    let all_bound=pending.foes.iter().all(|foe|foe.fight.handle().is_some()||foe.requested.is_none())&&pending.foes.iter().any(|foe|foe.fight.handle().is_some());
     if let Some(link)=state.party.as_mut(){link.bound=all_bound;}
     let pending=state.pending.as_mut().unwrap();
     if bound && !player_dead && matches!(pending.next_run.phase, Phase::Combat { .. }) {
@@ -1859,7 +1889,8 @@ fn tick_locked() {
             let handles:Vec<_>=pending.foes.iter().filter_map(|f|f.fight.handle()).collect();
             let authority=runtime.party.as_ref().is_none_or(|p|p.host());
             let flasks=runtime.flasks.as_ref().map(|f|f.total());
-            runtime.boss_fight.tick(world,&handles,authority,flasks);
+            let team=runtime.party.as_ref().map(|p|p.gate.flask_uses());
+            runtime.boss_fight.tick(world,&handles,authority,runtime.party.is_some(),flasks,team.as_deref());
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             // Boss 房的 Boss 卡在 1 点生命太久：视为转阶段锁血，直接放行
@@ -1920,11 +1951,7 @@ fn tick_locked() {
         _ => Ok(()),
     };
     let next = pending.next_run.clone();
-    if matches!(outcome,Outcome::Victory|Outcome::PlayerDied) {
-        if let Some(path)=SESSION_PATH.lock().ok().and_then(|p|p.clone()).map(|p|p.with_extension("history")) {
-            super::run_log::append(&path,&super::run_log::entry(&next,fought,outcome==Outcome::Victory,&names));
-        }
-    }
+    if matches!(outcome,Outcome::Victory|Outcome::PlayerDied) {append_history(&next,fought,outcome==Outcome::Victory,&names);}
     // 玩家死亡时不撤敌人：像原版一样留在场上（“你死了”画面里不会突然消失），回大赐福结算时统一撤下
     if matches!(outcome,Outcome::LostEntity|Outcome::SpawnTimedOut){retire_group(pending,world);}
     state.view.enemy_hp = enemy_hp;
@@ -2040,6 +2067,18 @@ fn give_elite_tear(world:&mut WorldChrMan,run:&Run,id:usize) {
     }
 }
 
+/// 本局战斗记录（.history）：结算回顾、职业熟练度、灵光成就按它算
+fn append_history(run:&Run,node:Option<usize>,won:bool,names:&[&str]) {
+    if let Some(path)=SESSION_PATH.lock().ok().and_then(|p|p.clone()).map(|p|p.with_extension("history")) {
+        super::run_log::append(&path,&super::run_log::entry(run,node,won,names));
+    }
+}
+/// 联机：按这个节点的敌人名单记一场战斗
+fn record_fight(run:&Run,node:Option<usize>,won:bool) {
+    let roster=node.map(|id|super::enemies::node_roster(run,id)).unwrap_or_default();
+    let names:Vec<&'static str>=roster.iter().map(|e|e.name).collect();
+    append_history(run,node,won,&names);
+}
 /// 叠层余烬：击倒与致命一击记进本局。界面上的 run、房主与单人战斗结算用的 next_run、等传送门时暂存的 run 都记
 /// （它们之后会互相覆盖，各记一次才不会丢），层数效果立即生效
 fn record_ember_gains(state:&mut Runtime,gains:Vec<erdtree_tower::embers::Gain>) {
@@ -2067,7 +2106,7 @@ fn grant_feast(flasks:Option<&mut super::flasks::Flasks>,world:&mut WorldChrMan)
         }
     }
 }
-/// 房主与单人的余烬结算一帧（作用在敌人身上的余烬只由房主计算）
+/// 房主与单人的余烬结算一帧；联机时房主还执行成员发来的敌人侧效果
 fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let Some(pending)=state.pending.as_ref() else{return};
     let run=&pending.next_run;
@@ -2075,11 +2114,16 @@ fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let authority=state.party.as_ref().is_none_or(|p|p.host());
     let flasks=state.flasks.as_ref().map(|f|f.total());
     let embers=super::embers::held(Some(run));
-    let foes:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec)))).collect();
+    // 名单位置：联机时 Pending 的敌人按名单顺序排（单人时不用）
+    let foes:Vec<_>=pending.foes.iter().enumerate().filter_map(|(slot,f)|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec),slot as u8))).collect();
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
-    let events=state.ember_fight.tick(world,(run.seed,run.act,id),&embers,&foes,authority,flasks,keeper);
+    let events=state.ember_fight.tick(world,(run.seed,run.act,id),&embers,&foes,authority,state.party.is_some(),flasks,keeper);
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
     record_ember_gains(state,events.gains);
+    // 房主：执行成员发来的敌人侧余烬效果
+    if let Some(link)=state.party.as_ref().filter(|p|p.host()) {
+        for (member,held,requests) in link.gate.strikes() {state.ember_fight.apply_remote(world,&foes,member,&held,&requests);}
+    }
 }
 /// 联机成员在战斗里：敌人已同步，直到传送门结算前都算（房主在生命归零时就判定胜利，被处决的敌人在成员这边要等动画播完才倒下，
 /// 收到胜利后继续结算，这一下击倒才不会漏掉）
@@ -2087,10 +2131,34 @@ fn member_fighting(state:&Runtime)->bool {
     state.party.as_ref().is_some_and(|p|!p.host()&&p.bound)
         &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))
 }
-/// 联机成员的余烬：成员没有本地的战斗记录，敌人按地图里的预置实体找（与 Boss 血条相同的找法，倒下的也留着，用来判断击倒）。
-/// 只算作用在自己与自己召唤物身上的余烬；作用在敌人身上的（出血、冻伤、死诞之焰等）仍只由房主按房主自己的余烬计算
-fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
+/// 联机成员正在打、还没收到胜利：律法限时与 Boss 词条在这段时间结算
+fn member_live(state:&Runtime)->bool {member_fighting(state)&&state.party.as_ref().is_some_and(|p|p.fighting&&!p.victory)}
+/// 联机成员的战斗结算。成员没有本地的战斗记录，敌人按地图里的预置实体找（与 Boss 血条相同的找法，倒下的也留着，用来判断击倒）。
+/// - 苦难律法：限时倒计时与超时失血（敌人的强化由房主挂）
+/// - Boss 词条：屏幕上的词条与护盾提示、腐败积累、荆棘反弹（改 Boss 状态的由房主做）
+/// - 余烬：作用在自己与召唤物身上的直接生效；作用在敌人身上的（出血、冻伤、死诞之焰等）算出后随汇报交给房主执行
+fn member_combat(state:&mut Runtime,world:&mut WorldChrMan) {
     if !member_fighting(state) {return;}
+    let Some(run)=state.view.run.as_ref() else{return};
+    let Phase::Combat{id}=run.phase else{return};
+    let key=(run.seed,run.act,id);
+    let flasks=state.flasks.as_ref().map(|f|f.total());
+    let roster=super::enemies::node_roster(run,id);
+    let handles:Vec<_>=super::enemies::map_entities(&roster).map(|ids|roster.iter().zip(ids).filter_map(|(spec,entity)|
+        world.chr_sets.iter().flatten().flat_map(|set|set.characters())
+            .find(|chr|chr.event_entity_id==entity&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
+            .map(|chr|chr.field_ins_handle)).collect()).unwrap_or_default();
+    if member_live(state) {
+        state.law_fight.tick(world,key,run.law,&handles,false,flasks,None);
+        state.view.law_clock=state.law_fight.clock();
+        state.boss_fight.begin(key,erdtree_tower::boss_affixes::roll(run,id),run.law.empowered_affixes());
+        state.boss_fight.tick(world,&handles,false,true,flasks,None);
+        state.view.boss_affixes=state.boss_fight.title();state.view.boss_alert=state.boss_fight.alert();state.view.boss_affix_list=state.boss_fight.affixes().to_vec();
+    }
+    member_embers(state,world);
+}
+/// 联机成员的余烬（见 member_combat）
+fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let Some(run)=state.view.run.as_ref() else{return};
     let Phase::Combat{id}=run.phase else{return};
     let embers=super::embers::held(Some(run));
@@ -2100,14 +2168,38 @@ fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     let foes:Vec<_>=roster.iter().enumerate().filter_map(|(slot,spec)|{
         let chr=world.chr_sets.iter().flatten().flat_map(|set|set.characters())
             .find(|chr|ids.get(slot)==Some(&chr.event_entity_id)&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))?;
-        Some((chr.field_ins_handle,super::enemies::bar_rank(spec)))
+        Some((chr.field_ins_handle,super::enemies::bar_rank(spec),slot as u8))
     }).collect();
     let key=(run.seed,run.act,id);
     let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
     let flasks=state.flasks.as_ref().map(|f|f.total());
-    let events=state.ember_fight.tick(world,key,&embers,&foes,false,flasks,keeper);
+    let events=state.ember_fight.tick(world,key,&embers,&foes,false,true,flasks,keeper);
     if events.feast {grant_feast(state.flasks.as_mut(),world);}
     record_ember_gains(state,events.gains);
+    // 作用在敌人身上的余烬交给房主执行
+    if !events.strikes.is_empty() && let Some(link)=state.party.as_mut() {link.push_strikes(&events.strikes);}
+}
+/// 联机成员：按与房主相同的苦难律法「精英成双」规则，名单里哪些位置还要等前面的精英（按本机看到的敌人状态）
+fn member_held(world:&WorldChrMan,run:&Run,id:usize,roster:&[super::enemies::Enemy],ids:&[u32])->Vec<bool> {
+    use erdtree_tower::encounter::{Outcome as Spawn,Pacing,Role};
+    let elite=run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Elite);
+    let pacing=if elite {run.law.elite_pacing()}else{Pacing::Together};
+    let roles:Vec<_>=roster.iter().map(super::enemies::role).collect();
+    // 每个位置：(已倒下, 生命, 最大生命)；还没放出来的为 None
+    let state:Vec<Option<(bool,i32,i32)>>=roster.iter().zip(ids).map(|(spec,&entity)|{
+        world.chr_sets.iter().flatten().flat_map(|set|set.characters())
+            .find(|chr|chr.event_entity_id==entity&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc&&!chr.debug_flags.character_disabled()
+                &&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
+            .map(|chr|(chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(),chr.modules.data.hp,chr.modules.data.max_hp))
+    }).collect();
+    (0..roster.len()).map(|i|{
+        let earlier:Vec<_>=(0..i).filter(|&j|roles[j]==Role::Strong).map(|j|match state[j] {
+            Some((true,_,_))=>(Spawn::Victory,None),
+            Some((false,hp,max))=>(Spawn::Waiting,Some((hp,max))),
+            None=>(Spawn::Waiting,None),
+        }).collect();
+        !erdtree_tower::encounter::may_spawn_paced(true,false,pacing.waits(&earlier),&roles,i,&[])
+    }).collect()
 }
 fn enemy_loaded(status: ChrLoadStatus) -> bool {
     // The pinned 1.17.1 game uses state 4 for the live player and debug-spawned enemies.
@@ -2633,7 +2725,8 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         if altar && slot==0 {
             vitals.hp=(vitals.hp-(vitals.hp*30+99)/100).max(1);
         } else if outcome==EventOutcome::Explosion {
-            if in_blast {vitals.hp=(vitals.hp-(vitals.max_hp*30+99)/100).max(0);}
+            // 联机时爆炸不致死（至少留 1 点）：房间里没有战斗胜利，倒下的人等不到队友救援，全队会卡在这个节点
+            if in_blast {vitals.hp=(vitals.hp-(vitals.max_hp*30+99)/100).max(i32::from(state.party.is_some()));}
             set_flag(45010943+slot as u32,true)?;
             room.view.message=if in_blast {"箱中火药爆炸！范围 5 米，损失最大生命的 30%。"}else{"箱中火药爆炸！你已离开 5 米爆炸范围。"}.into();
         } else if outcome==EventOutcome::Guards {
@@ -3326,7 +3419,8 @@ fn request_travel(
     super::native_talk::set_flag(45007990, true)?;
     world.summon_buddy_manager.disappear_requested=true;
     let data=unsafe {player.player_game_data.as_ref()};
-    if !data.equipment.equip_inventory_data.items_data.items().any(|e|e.quantity>0&&e.item_id.category()==eldenring::cs::ItemCategory::Goods&&e.item_id.param_id()==8158) {
+    // 灵唤铃是重要物品：用 loot::count 读（无缝联机下 items() 读不到，会每次出发都再发一个）
+    if super::loot::count(data,0x40000000|8158)==0 {
         super::items::give(&[(0x40000000|8158,1,-1)])?;
     }
     state.travel = Some((

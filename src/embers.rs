@@ -102,6 +102,39 @@ impl Ember {
     /// 召唤流余烬：只有身上带着骨灰时才会出现在奖励里
     pub fn needs_spirit(self)->bool {matches!(self,Self::SpiritLink|Self::SpiritBurst|Self::SpiritFeast|Self::SpiritCommand|Self::SpiritTwin|Self::SpiritKeeper)}
 }
+/// 作用在敌人身上的余烬效果。联机成员在本机算出（只算自己与自己召唤物的命中、击倒），随汇报发给房主，由房主执行。
+/// slot：这场战斗敌人名单（enemies::node_roster）里的位置，房主与成员一致
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub enum Strike {
+    /// 命中：鲜血君王的赐福、永冻吐息的异常积累
+    Buildup{slot:u8,ember:Ember},
+    /// 按目标最大生命的百分比扣血（Boss 有上限）：死诞之焰、圣杯余响、灵骸迸裂
+    Wound{slot:u8,ember:Ember},
+    /// 荆棘之躯：按成员受到的伤害反弹
+    Thorns{slot:u8,taken:i32},
+}
+/// 荆棘之躯一次反弹按受到的伤害计，超过这个数视为无效请求
+pub const THORNS_TAKEN_LIMIT:i32=100_000;
+/// 汇报里最多带的敌人侧效果条数（最近的若干条；房主按序号执行没执行过的）
+pub const STRIKE_WINDOW:usize=32;
+impl Strike {
+    pub fn slot(self)->u8 {match self {Self::Buildup{slot,..}|Self::Wound{slot,..}|Self::Thorns{slot,..}=>slot}}
+    pub fn ember(self)->Ember {match self {Self::Buildup{ember,..}|Self::Wound{ember,..}=>ember,Self::Thorns{..}=>Ember::Thorns}}
+    /// 成员确实带着这个余烬，且效果类型与余烬对得上
+    pub fn valid(self,held:&[Ember])->bool {
+        held.contains(&self.ember())&&match self {
+            Self::Buildup{ember,..}=>matches!(ember,Ember::Bloodlord|Ember::Frost),
+            Self::Wound{ember,..}=>wound_percent(ember).is_some(),
+            Self::Thorns{taken,..}=>(1..=THORNS_TAKEN_LIMIT).contains(&taken),
+        }
+    }
+}
+/// 按目标最大生命百分比扣血的余烬
+pub fn wound_percent(ember:Ember)->Option<u32> {match ember {
+    Ember::Deathflame=>Some(DEATHFLAME_PERCENT),Ember::Echo=>Some(ECHO_PERCENT),Ember::SpiritBurst=>Some(SPIRIT_BURST_PERCENT),_=>None,
+}}
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub struct StrikeRequest {pub seq:u32,pub strike:Strike}
 /// 战斗中让叠层余烬加层的事件
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Gain {
@@ -251,6 +284,19 @@ mod tests {
         assert_eq!(enemy_damage(10000,DEATHFLAME_PERCENT,true),100);
         assert_eq!(thorns_damage(400,10000,false),100);assert_eq!(thorns_damage(4000,10000,true),100);
         assert_eq!(enemy_damage(-5,ECHO_PERCENT,false),0);
+    }
+    #[test]
+    fn member_strikes_need_the_matching_ember() {
+        let held=[Ember::Bloodlord,Ember::Deathflame,Ember::Thorns];
+        assert!(Strike::Buildup{slot:0,ember:Ember::Bloodlord}.valid(&held));
+        assert!(!Strike::Buildup{slot:0,ember:Ember::Frost}.valid(&held),"frost not held");
+        assert!(!Strike::Buildup{slot:0,ember:Ember::Deathflame}.valid(&held),"not a buildup ember");
+        assert!(Strike::Wound{slot:1,ember:Ember::Deathflame}.valid(&held));
+        assert!(!Strike::Wound{slot:1,ember:Ember::Bloodlord}.valid(&held),"bloodlord does not wound");
+        assert!(!Strike::Wound{slot:1,ember:Ember::Echo}.valid(&held));
+        assert!(Strike::Thorns{slot:2,taken:300}.valid(&held));
+        assert!(!Strike::Thorns{slot:2,taken:0}.valid(&held)&&!Strike::Thorns{slot:2,taken:THORNS_TAKEN_LIMIT+1}.valid(&held));
+        assert!(Ember::ALL.into_iter().filter(|e|e.affects_enemies()).all(|e|wound_percent(e).is_some()||matches!(e,Ember::Bloodlord|Ember::Frost|Ember::Thorns)),"every enemy-side ember can be requested");
     }
     #[test]
     fn embers_show_up_in_combat_rewards_and_persist() {

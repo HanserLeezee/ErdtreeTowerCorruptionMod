@@ -55,15 +55,19 @@ pub struct Report {
     #[serde(default)] pub storm_finish:bool,
     #[serde(default)] pub chariot_ready:bool,
     #[serde(default)] pub chariot:bool,
+    /// 成员带着的余烬：房主据此核对代为执行的敌人侧效果
+    #[serde(default)] pub embers:Vec<crate::embers::Ember>,
+    /// 成员算出的敌人侧余烬效果（最近 STRIKE_WINDOW 条，带序号），由房主执行没执行过的
+    #[serde(default)] pub strikes:Vec<crate::embers::StrikeRequest>,
     pub epoch:u64,pub seed:u64,pub act:u8,pub visited:Vec<usize>,pub map_ready:bool,
     pub arrived:bool,pub bound:bool,pub alive:bool,
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
@@ -183,6 +187,7 @@ impl Gate {
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
         if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
+        if report.embers.len()>crate::embers::Ember::ALL.len()||report.strikes.len()>crate::embers::STRIKE_WINDOW{return Err("队员余烬汇报过长".into());}
         self.peers.iter_mut().find(|p|p.0==id).ok_or("未知队员")?.1=Some(report);Ok(())
     }
     fn all(&self,f:impl Fn(&Report)->bool)->bool {
@@ -220,6 +225,10 @@ impl Gate {
         if matches!(self.stage,Stage::Travel|Stage::Combat|Stage::Fighting|Stage::Service)&&self.all(|r|!r.alive){self.stage=Stage::Stopped;Some(Order::Defeat{epoch:self.epoch})}else{None}
     }
     pub fn members(&self)->Vec<u64> {self.peers.iter().map(|p|p.0).collect()}
+    /// 成员的敌人侧余烬效果（只取本场战斗、在场的成员），以及核对用的余烬
+    pub fn strikes(&self)->Vec<(u64,Vec<crate::embers::Ember>,Vec<crate::embers::StrikeRequest>)> {
+        self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present&&r.epoch==self.epoch&&!r.strikes.is_empty()).map(|r|(*id,r.embers.clone(),r.strikes.clone()))).collect()
+    }
     /// 全队当前汇报的称号（没汇报过的队员不列出）
     pub fn titles(&self)->Vec<(u64,u8)> {
         self.peers.iter().filter_map(|(id,r)|r.as_ref().filter(|r|r.present).map(|r|(*id,r.title))).collect()
@@ -248,6 +257,19 @@ mod tests {
         gate.report(2,Report::unavailable(0)).unwrap();
         assert_eq!(gate.titles(),vec![(3,7),(1,2)],"members that are loading are left out");
         assert_eq!(gate.members(),vec![3,1,2]);
+    }
+    #[test]
+    fn member_strikes_reach_the_host_with_the_embers_to_check_them() {
+        use crate::embers::{Ember,Strike,StrikeRequest,STRIKE_WINDOW};
+        let mut run=Run::new(42,crate::Class::Samurai);run.embers=vec![Ember::Bloodlord];
+        let mut gate=Gate::new(vec![1,2,3]);
+        let strike=StrikeRequest{seq:1,strike:Strike::Buildup{slot:0,ember:Ember::Bloodlord}};
+        let mut a=Report::new(&run,0,true,true,true);a.strikes=vec![strike];gate.report(2,a.clone()).unwrap();
+        gate.report(3,Report::new(&run,0,true,true,true)).unwrap();
+        assert_eq!(gate.strikes(),vec![(2,vec![Ember::Bloodlord],vec![strike])],"members without strikes are left out");
+        let mut stale=a.clone();stale.epoch=1;assert!(gate.report(2,stale).is_err(),"another fight");
+        let mut long=a.clone();long.strikes=vec![strike;STRIKE_WINDOW+1];assert!(gate.report(2,long).is_err());
+        let mut away=a;away.present=false;gate.report(2,away).unwrap();assert!(gate.strikes().is_empty());
     }
     #[test]
     fn reward_portal_waits_for_every_living_member_two_to_eight_players() {

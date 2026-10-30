@@ -28,6 +28,12 @@ pub fn count(data:&eldenring::cs::PlayerGameData,id:u32)->u64 {
 /// 持有数量（背包 + 仓库）。不用 items()：它只读“当前”重要物品列表，联机时（无缝联机下即使只有自己一人）
 /// 这个列表切换成联机用的重要物品列表，里面只有圣杯瓶类与露滴的复制品，泪滴幼体、石剑钥匙这类重要物品读不到。
 /// 这里普通物品照常累加，重要物品取单机列表与联机列表中较多的那份（复制品两边数量相同，不会重复计数）
+/// 背包里持有的物品编号（普通列表与两份重要物品列表都看；理由同 held）
+pub fn bag_items(data:&eldenring::cs::PlayerGameData)->Vec<eldenring::cs::ItemId> {
+    use fromsoftware_shared::NonEmptyIteratorExt;
+    let bag=&data.equipment.equip_inventory_data.items_data;
+    bag.normal_entries().iter().chain(bag.key_entries()).chain(bag.multiplay_key_entries()).non_empty().filter(|e|e.quantity>0).map(|e|e.item_id).collect()
+}
 pub fn held(data:&eldenring::cs::PlayerGameData,owns:impl Fn(eldenring::cs::ItemId)->bool)->u64 {
     use fromsoftware_shared::NonEmptyIteratorExt;
     let sum=|list:&[fromsoftware_shared::MaybeEmpty<eldenring::cs::EquipInventoryDataListEntry>]|list.iter().non_empty().filter(|e|owns(e.item_id)).map(|e|u64::from(e.quantity)).sum::<u64>();
@@ -124,10 +130,8 @@ pub fn regional_reward(data:&mut eldenring::cs::PlayerGameData,run:&erdtree_towe
     for attempt in 0..1024 {
         let item=choose_for_run(run,seed.wrapping_add(attempt),node);
         if !erdtree_tower::rewards::castable(item.id as u32,tools){continue;}
-        if (item.id as u32)>>28==4 {
-            let owns=|id:eldenring::cs::ItemId,quantity:u32|id.param_id()==(item.id as u32&0x0fffffff)&&id.category()==eldenring::cs::ItemCategory::Goods&&quantity>0;
-            if data.equipment.equip_inventory_data.items_data.items().any(|e|owns(e.item_id,e.quantity))||data.storage.as_ref().is_some_and(|s|s.items_data.items().any(|e|owns(e.item_id,e.quantity))){continue;}
-        }
+        // 已有的道具不再发（磨刀石等是重要物品：用 count 读，无缝联机下 items() 读不到）
+        if (item.id as u32)>>28==4&&count(data,item.id as u32)>0 {continue;}
         super::items::give_reward(data,item.id as u32)?;
         return Ok(item);
     }
