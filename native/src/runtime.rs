@@ -1234,7 +1234,7 @@ fn tick_locked() {
         state.view.dummy=Some(dummy.view(clock));
     } else if let Some(dummy)=state.dummy.take() {dummy.retire(world);state.view.dummy=None;}
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
-    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});{let data=player.player_game_data.as_ptr();super::contracts::lifeline::tick(&mut player.chr_ins,unsafe {&*data},contract_run);}super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
+    if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});{let data=player.player_game_data.as_ptr();super::contracts::lifeline::tick(&mut player.chr_ins,unsafe {&*data},contract_run);}super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});super::torch_proto::sync(&mut player.chr_ins,unsafe {&*data});}
     if !game.warp_requested&&!state.view.travelling {
         if let Some(player)=world.main_player.as_mut(){super::star_stream::tick(&mut player.chr_ins,contract_run);}
     }
@@ -2020,6 +2020,8 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
             data.rune_count=data.rune_count.saturating_add(amount).min(999_999_999);next.gold=data.rune_count;state.view.runes=data.rune_count;
             format!("卢恩 +{amount}")
         },
+        Command::TorchGive=>{super::torch_proto::grant()?;"已获得实验火把（黄金誓言）".to_owned()},
+        Command::TorchLock(lock)=>{super::torch_proto::set_lock(lock);format!("火把战灰{}",if lock{"已锁定"}else{"已解锁"})},
         Command::Item(id)=>{
             super::items::give_reward(data,id)?;
             format!("已获得 {}",erdtree_tower::rewards::lookup(id).map_or("物品",|i|i.name))
@@ -2151,6 +2153,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         super::blessings::Blessings::deliver(unsafe {player.player_game_data.as_mut()}, &mut next)?;
     }
     if let Some(id)=item_reward {super::items::give_reward_with_ash(unsafe {player.player_game_data.as_mut()},id,reward_ash)?;}
+    if matches!(action,Action::Claim(_)) {super::torch_proto::on_reward_claimed();}
     if sacred_tear {super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR)?;}
     if upgrade_stone {super::items::give_stack(unsafe {player.player_game_data.as_mut()},super::smith::VOUCHER)?;}
     if next.flask_bonus!=old.flask_bonus {

@@ -24,6 +24,7 @@ mod blessings;
 mod options;
 mod hansfix;
 mod hansfix_text;
+mod torch_proto;
 mod stats;
 mod enemies;
 mod chariot;
