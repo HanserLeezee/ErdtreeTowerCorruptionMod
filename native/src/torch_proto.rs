@@ -25,17 +25,31 @@ static STATE: Mutex<State> = Mutex::new(State { lock: true, lock_applied: None, 
 pub fn locked() -> bool { STATE.lock().map(|s| s.lock).unwrap_or(true) }
 pub fn set_lock(lock: bool) { if let Ok(mut s) = STATE.lock() { s.lock = lock; } }
 
-/// 发一把带实验战灰的火把
-pub fn grant() -> Result<(), String> {
-    super::random_ashes::give(&[(TORCH as i32, 1, GEM)])?;
-    super::log(format!("HANSFIX_TORCH granted torch={TORCH} gem={GEM}"));
+fn torches(data: &PlayerGameData) -> u64 {
+    super::loot::held(data, |e| e.category() == eldenring::cs::ItemCategory::Weapon && e.param_id() / 100 * 100 == TORCH)
+}
+fn set_mount(mount: u8) {
+    if let Ok(params) = unsafe { SoloParamRepository::instance_mut() } {
+        if let Some(row) = params.get_mut::<EquipParamWeapon>(TORCH) { row.set_gem_mount_type(mount); }
+    }
+}
+/// 发一把带实验战灰的火把。锁定（不可更换战灰）时游戏可能拒收带战灰的火把，所以发放的瞬间临时解锁
+pub fn grant(data: &PlayerGameData) -> Result<(), String> {
+    let before = torches(data);
+    set_mount(2);
+    let result = super::random_ashes::give(&[(TORCH as i32, 1, GEM)]);
+    if locked() { set_mount(1); }
+    result?;
+    let after = torches(data);
+    super::log(format!("HANSFIX_TORCH granted torch={TORCH} gem={GEM} torches {before}->{after}"));
+    if after <= before { return Err("游戏没有收下实验火把（背包数量未变化）".into()); }
     Ok(())
 }
 
 /// 原型：领取关卡奖励后额外发放（概率 100%）
-pub fn on_reward_claimed() {
+pub fn on_reward_claimed(data: &PlayerGameData) {
     if !super::hansfix::wander() { return; }
-    if let Err(e) = grant() { super::log(format!("HANSFIX_TORCH grant failed: {e}")); }
+    if let Err(e) = grant(data) { super::log(format!("HANSFIX_TORCH grant failed: {e}")); }
 }
 
 fn left_weapon(data: &PlayerGameData) -> Option<(i32, i32)> {

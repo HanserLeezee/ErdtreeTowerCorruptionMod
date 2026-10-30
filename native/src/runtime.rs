@@ -2020,7 +2020,7 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
             data.rune_count=data.rune_count.saturating_add(amount).min(999_999_999);next.gold=data.rune_count;state.view.runes=data.rune_count;
             format!("卢恩 +{amount}")
         },
-        Command::TorchGive=>{super::torch_proto::grant()?;"已获得实验火把（黄金誓言）".to_owned()},
+        Command::TorchGive=>{super::torch_proto::grant(data)?;"已获得实验火把（黄金誓言）".to_owned()},
         Command::TorchLock(lock)=>{super::torch_proto::set_lock(lock);format!("火把战灰{}",if lock{"已锁定"}else{"已解锁"})},
         Command::Item(id)=>{
             super::items::give_reward(data,id)?;
@@ -2153,7 +2153,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         super::blessings::Blessings::deliver(unsafe {player.player_game_data.as_mut()}, &mut next)?;
     }
     if let Some(id)=item_reward {super::items::give_reward_with_ash(unsafe {player.player_game_data.as_mut()},id,reward_ash)?;}
-    if matches!(action,Action::Claim(_)) {super::torch_proto::on_reward_claimed();}
+    if matches!(action,Action::Claim(_)) {super::torch_proto::on_reward_claimed(unsafe {player.player_game_data.as_ref()});}
     if sacred_tear {super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR)?;}
     if upgrade_stone {super::items::give_stack(unsafe {player.player_game_data.as_mut()},super::smith::VOUCHER)?;}
     if next.flask_bonus!=old.flask_bonus {
