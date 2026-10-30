@@ -26,7 +26,7 @@ pub const BASE_RELEASE:&str="v101";
 pub const BASE_INSTALL_VERSION:u64=101;
 pub const BASE_REGULATION_LEN:u64=3451488;
 /// 堕落模式补丁带的 regulation.bin（v101 + 堕落誓约效果 + 向下强化与扭曲词条效果）
-pub const HANSFIX_REGULATION_LEN:u64=3401104;
+pub const HANSFIX_REGULATION_LEN:u64=3401728;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}

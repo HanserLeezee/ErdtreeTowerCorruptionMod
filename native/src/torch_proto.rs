@@ -3,7 +3,7 @@
 //! 原型阶段：每次领取关卡奖励都会额外得到一把实验火把（黄金誓言）。
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use eldenring::cs::{CSGaitemImp, CSWepGaitemIns, ChrAsmArmStyle, ChrIns, ChrInsExt, EquipParamWeapon, PlayerGameData, SoloParamRepository, SpEffectParam};
+use eldenring::cs::{CSGaitemImp, CSWepGaitemIns, ChrAsmArmStyle, ChrIns, ChrInsExt, PlayerGameData, SoloParamRepository, SpEffectParam};
 use fromsoftware_shared::{FromStatic, Superclass};
 
 /// 原版火把
@@ -12,34 +12,24 @@ pub const TORCH: u32 = 24000000;
 pub const GEM: i32 = 990000;
 /// 黄金誓言的增益效果（原版祷告的范围判定挂的就是它）
 const GOLDEN_VOW: i32 = 1660000;
+/// 施法确认：0.5 秒的标记效果，只在玩家身上播放这个法术原版的释放特效与音效（不做动作）
+const CAST_FLASH: i32 = 9600300;
 const HOLD: Duration = Duration::from_secs(10);
 
 struct State {
-    lock: bool,
-    lock_applied: Option<bool>,
     held_since: Option<Instant>,
     last: Option<(i32, i32, bool, bool)>,
 }
-static STATE: Mutex<State> = Mutex::new(State { lock: true, lock_applied: None, held_since: None, last: None });
+static STATE: Mutex<State> = Mutex::new(State { held_since: None, last: None });
 
-pub fn locked() -> bool { STATE.lock().map(|s| s.lock).unwrap_or(true) }
-pub fn set_lock(lock: bool) { if let Ok(mut s) = STATE.lock() { s.lock = lock; } }
 
 fn torches(data: &PlayerGameData) -> u64 {
     super::loot::held(data, |e| e.category() == eldenring::cs::ItemCategory::Weapon && e.param_id() / 100 * 100 == TORCH)
 }
-fn set_mount(mount: u8) {
-    if let Ok(params) = unsafe { SoloParamRepository::instance_mut() } {
-        if let Some(row) = params.get_mut::<EquipParamWeapon>(TORCH) { row.set_gem_mount_type(mount); }
-    }
-}
-/// 发一把带实验战灰的火把。锁定（不可更换战灰）时游戏可能拒收带战灰的火把，所以发放的瞬间临时解锁
+/// 发一把带实验战灰的火把（法术战灰只能装在火把上，火把之间可以互换）
 pub fn grant(data: &PlayerGameData) -> Result<(), String> {
     let before = torches(data);
-    set_mount(2);
-    let result = super::random_ashes::give(&[(TORCH as i32, 1, GEM)]);
-    if locked() { set_mount(1); }
-    result?;
+    super::random_ashes::give(&[(TORCH as i32, 1, GEM)])?;
     let after = torches(data);
     super::log(format!("HANSFIX_TORCH granted torch={TORCH} gem={GEM} torches {before}->{after}"));
     if after <= before { return Err("游戏没有收下实验火把（背包数量未变化）".into()); }
@@ -73,16 +63,6 @@ fn left_weapon(data: &PlayerGameData) -> Option<(i32, i32)> {
 /// 每帧
 pub fn sync(chr: &mut ChrIns, data: &PlayerGameData) {
     let Ok(mut state) = STATE.lock() else { return };
-    // 锁定：火把行的战灰安装方式改为“不可更换”（1），解锁恢复为“可更换”（2）
-    if state.lock_applied != Some(state.lock) {
-        if let Ok(params) = unsafe { SoloParamRepository::instance_mut() } {
-            if let Some(row) = params.get_mut::<EquipParamWeapon>(TORCH) {
-                row.set_gem_mount_type(if state.lock { 1 } else { 2 });
-                super::log(format!("HANSFIX_TORCH gem lock={} (gemMountType={})", state.lock, row.gem_mount_type()));
-                state.lock_applied = Some(state.lock);
-            }
-        }
-    }
     let (weapon, gem) = left_weapon(data).unwrap_or((-1, -1));
     let ours = weapon >= 0 && weapon as u32 / 100 * 100 == TORCH && gem == GEM;
     let requests = &chr.modules.action_request.action_requests;
@@ -101,6 +81,7 @@ pub fn sync(chr: &mut ChrIns, data: &PlayerGameData) {
     state.held_since = Some(Instant::now());
     let present = unsafe { SoloParamRepository::instance() }.ok().is_some_and(|p| p.get::<SpEffectParam>(GOLDEN_VOW as u32).is_some());
     if present {
+        chr.apply_speffect(CAST_FLASH, false);
         chr.apply_speffect(GOLDEN_VOW, false);
         super::log("HANSFIX_TORCH cast golden vow after 10s raised");
     }

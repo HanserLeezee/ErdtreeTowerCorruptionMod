@@ -1805,6 +1805,15 @@ fn tick_locked() {
             .filter(|_|super::hansfix::merchant()&&!game.warp_requested&&state.room.as_ref().is_some_and(|room|!room.view.loading));
         let runes=world.main_player.as_ref().map_or(0,|p|unsafe {p.player_game_data.as_ref()}.rune_count);
         state.shop_guard.tick(shop,runes);
+        // [HansFix] 服务房间（商店、篝火、事件）里点的调试命令：给物品、卢恩、回复照常执行，改旅程的命令当场取消，
+        // 以免排队到离开房间后才一起生效（例如在商店里点了“切换到第 1 幕”，出门时整张地图被重置）
+        while let Some(command)=super::debug_menu::take() {
+            use super::debug_menu::Command;
+            let message=if matches!(command,Command::Heal|Command::Runes(_)|Command::Item(_)|Command::Cheats(..)|Command::TorchGive) {
+                match debug_command(&mut state,world,command) {Ok(message)=>message,Err(error)=>format!("调试失败：{error}")}
+            } else {"调试取消：在服务房间里不能改旅程，请离开房间后再操作".to_owned()};
+            super::log(format!("DEBUG_MENU {message}"));report(&mut state,message);
+        }
         tick_room(&mut state, world, game, player_dead);
         return;
     }
@@ -2021,7 +2030,6 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
             format!("卢恩 +{amount}")
         },
         Command::TorchGive=>{super::torch_proto::grant(data)?;"已获得实验火把（黄金誓言）".to_owned()},
-        Command::TorchLock(lock)=>{super::torch_proto::set_lock(lock);format!("火把战灰{}",if lock{"已锁定"}else{"已解锁"})},
         Command::Item(id)=>{
             super::items::give_reward(data,id)?;
             format!("已获得 {}",erdtree_tower::rewards::lookup(id).map_or("物品",|i|i.name))
