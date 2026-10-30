@@ -16,3 +16,5 @@ Steps: `export-gparam.ps1` (run on Windows next to the game; read-only) pulls th
 Data0.bdt using `bhd.py`'s offsets; `night.py` builds the new gparams (`gpwrite.py` round-trips the
 GPARAM format byte-for-byte); `oz.c` (mingw, run with the game's oo2core_6_win64.dll) compresses
 them to Kraken DCX. Output goes to `scene-assets/param/drawparam/`.
+
+r14: m45_02 (Limgrave colosseum) is not shipped — its night gparam made the game abort on load (fail-fast 7) while m45_00/m45_01 load fine; cause still unknown.

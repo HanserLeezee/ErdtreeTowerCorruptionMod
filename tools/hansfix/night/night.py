@@ -23,7 +23,8 @@ for p in gpwrite.load(open(G+'m60_00_0000.gparam','rb').read()):
     # 只有在宁姆格福里本来就按时间分段的参数才分段；其余参数（以及 Float3 等从不分段的类型）保持原样，避免游戏报错
     if len(ent)>1: ref[(p['group'],p['name'])]=(p['type'],ent)
 report={}
-for f in ['m45_00_0000','m45_01_0000','m45_02_0000']:
+# m45_02（宁姆格福竞技场）的夜晚版本会让游戏读图时中止，暂不发布
+for f in ['m45_00_0000','m45_01_0000']:
     b=open(G+f+'.gparam','rb').read();ps=gpwrite.load(b);changed=0
     for p in ps:
         t=p['type'];r=ref.get((p['group'],p['name']))
