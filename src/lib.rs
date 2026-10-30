@@ -232,6 +232,9 @@ pub struct Run {
     pub ember_rewards: bool,
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub embers: Vec<embers::Ember>,
+    /// 叠层余烬的层数（整局保留）：击倒、致命一击由运行时记录，精英与 Boss 胜利在 win_combat 里记录
+    #[serde(default,skip_serializing_if="embers::Stacks::is_empty")]
+    pub ember_stacks: embers::Stacks,
     /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；旧存档为 0，等概率
     #[serde(default)]
     pub ember_rules: u8,
@@ -549,6 +552,7 @@ impl Run {
             ember_rules: 1,
             stone_rewards: true,
             embers: vec![],
+            ember_stacks: Default::default(),
             debug: false,
             event_rules: 3,
             act:1,
@@ -826,6 +830,7 @@ impl Run {
             return Err("战斗状态无效".into());
         }
         self.checkpoint = None;
+        if matches!(kind,NodeKind::Elite|NodeKind::Boss) {self.ember_stacks.gain(&self.embers,embers::Gain::Slain);}
         self.phase = Phase::Reward {
             id,
             offers: self.offers(id),

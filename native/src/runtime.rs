@@ -1150,7 +1150,7 @@ fn tick_locked() {
         music.track=super::bgm::selection(music_run,i32::from(player.current_block_id),player.chr_ins.modules.data.hp>0&&!player.chr_ins.chr_flags1c5.death_flag(),game.warp_requested,state.view.travelling,music.active,music_wave);
     }
     super::spirits::set_active(local_combat&&!super::law::lone_wolf(state.view.run.as_ref()));
-    super::spirits::set_twin(local_combat&&state.party.is_none()&&state.pending.as_ref().map(|p|&p.next_run).or(state.view.run.as_ref()).is_some_and(|r|r.embers.contains(&erdtree_tower::embers::Ember::SpiritTwin)));
+    super::spirits::set_twin(local_combat&&state.pending.as_ref().map(|p|&p.next_run).or(state.view.run.as_ref()).is_some_and(|r|r.embers.contains(&erdtree_tower::embers::Ember::SpiritTwin)));
     super::enemies::set_party(state.party.is_some());
     if let Some(spirits)=encounter_state(&mut state.party_spirits,summon_scope,summon_available) {
         if let Err(error)=spirits.poll(world,summon_scope.unwrap().2,true){super::log(format!("Party spirit registration: {error}"));}
@@ -1181,6 +1181,7 @@ fn tick_locked() {
         }}
     }
     super::boss_bars::sync(super::boss_bars::select(bars));
+    if !game.warp_requested {member_embers(&mut state,world);}
     // [fix] Diagnostic switch: ERDTREE_TOWER_NO_ATTENDANT=1 skips the arena-side NPC entirely, to test
     // whether it is what triggers the arena-arrival crash. The fog gate and fight do not need it.
     let attendant_allowed=!attendant_disabled()&&state.room.is_none()&&!game.warp_requested
@@ -1833,7 +1834,8 @@ fn tick_locked() {
         if state.view.boss_affixes.is_some(){state.boss_fight=Default::default();state.view.boss_affixes=None;state.view.boss_alert=None;state.view.boss_affix_list.clear();}
         if state.dual_fight.active(){state.dual_fight=Default::default();state.view.boss_alert=None;}
         if state.view.law_clock.is_some(){state.law_fight=Default::default();state.view.law_clock=None;}
-        if state.ember_fight.active(){state.ember_fight=Default::default();}
+        // 联机成员的余烬状态由 member_embers 维护，不在这里清掉
+        if state.ember_fight.active()&&!member_fighting(&state){state.ember_fight=Default::default();}
         if state.bout.active(){state.bout.end(world);}
         return;
     };
@@ -1881,17 +1883,8 @@ fn tick_locked() {
                 let named:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,f.spec.name))).collect();
                 if let Some(message)=runtime.bout.tick(world,&named) {runtime.view.status=message;}
             }
-            let embers=super::embers::held(Some(run));
-            let foes:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec)<=1))).collect();
-            if runtime.ember_fight.tick(world,(run.seed,run.act,id),&embers,&foes,authority,flasks) {
-                if let (Some(flasks),Some(player))=(runtime.flasks.as_mut(),world.main_player.as_mut()) {
-                    match flasks.grant(unsafe {player.player_game_data.as_mut()},[1,0]) {
-                        Ok(granted)=>super::log(format!("TOWER_EMBER feast granted={granted}")),
-                        Err(error)=>super::log(format!("TOWER_EMBER feast failed: {error}")),
-                    }
-                }
-            }
         }
+        if bound {host_embers(&mut state,world);}
         // 双王共命：把超时的那只重置为“待生成”，下一帧在尸体的位置重新生成
         if let Some((index,at))=rise && let Some(pending)=state.pending.as_mut() {
             let foe=&mut pending.foes[index];
@@ -1912,6 +1905,8 @@ fn tick_locked() {
             }
         }
     }
+    // 最后一只倒下的那一帧就判定了胜利：余烬再结算这一帧，最后的击倒（往往是 Boss）也算进叠层
+    if outcome==Outcome::Victory {host_embers(&mut state,world);}
     state.boss_fight=Default::default();state.view.boss_affixes=None;
     state.law_fight=Default::default();state.view.law_clock=None;state.ember_fight=Default::default();state.bout.end(world);
     let pending = state.pending.as_mut().unwrap();
@@ -2045,6 +2040,75 @@ fn give_elite_tear(world:&mut WorldChrMan,run:&Run,id:usize) {
     }
 }
 
+/// 叠层余烬：击倒与致命一击记进本局。界面上的 run、房主与单人战斗结算用的 next_run、等传送门时暂存的 run 都记
+/// （它们之后会互相覆盖，各记一次才不会丢），层数效果立即生效
+fn record_ember_gains(state:&mut Runtime,gains:Vec<erdtree_tower::embers::Gain>) {
+    if gains.is_empty() {return;}
+    let mut raised=Vec::new();
+    for event in gains {
+        for run in state.view.run.iter_mut().chain(state.pending.iter_mut().map(|p|&mut p.next_run)).chain(state.reward_wait.iter_mut().map(|(_,run)|run)) {
+            for ember in run.ember_stacks.gain(&run.embers.clone(),event) {
+                let level=run.ember_stacks.level(ember);
+                if !raised.iter().any(|(e,l)|*e==ember&&*l>=level) {raised.retain(|(e,_)|*e!=ember);raised.push((ember,level));}
+            }
+        }
+    }
+    for (ember,level) in raised {
+        super::log(format!("TOWER_EMBER stack {} {level}",ember.name()));
+        state.view.status=format!("余烬「{}」第 {level} 层：{}",ember.name(),ember.stack_bonus(level).unwrap_or_default());state.view.prompt=state.view.prompt.wrapping_add(1);
+    }
+}
+/// 噬神之蛇的饱食：补回 1 次红圣杯瓶
+fn grant_feast(flasks:Option<&mut super::flasks::Flasks>,world:&mut WorldChrMan) {
+    if let (Some(flasks),Some(player))=(flasks,world.main_player.as_mut()) {
+        match flasks.grant(unsafe {player.player_game_data.as_mut()},[1,0]) {
+            Ok(granted)=>super::log(format!("TOWER_EMBER feast granted={granted}")),
+            Err(error)=>super::log(format!("TOWER_EMBER feast failed: {error}")),
+        }
+    }
+}
+/// 房主与单人的余烬结算一帧（作用在敌人身上的余烬只由房主计算）
+fn host_embers(state:&mut Runtime,world:&mut WorldChrMan) {
+    let Some(pending)=state.pending.as_ref() else{return};
+    let run=&pending.next_run;
+    let Phase::Combat{id}=run.phase else{return};
+    let authority=state.party.as_ref().is_none_or(|p|p.host());
+    let flasks=state.flasks.as_ref().map(|f|f.total());
+    let embers=super::embers::held(Some(run));
+    let foes:Vec<_>=pending.foes.iter().filter_map(|f|Some((f.fight.handle()?,super::enemies::bar_rank(&f.spec)))).collect();
+    let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
+    let events=state.ember_fight.tick(world,(run.seed,run.act,id),&embers,&foes,authority,flasks,keeper);
+    if events.feast {grant_feast(state.flasks.as_mut(),world);}
+    record_ember_gains(state,events.gains);
+}
+/// 联机成员在战斗里：敌人已同步，直到传送门结算前都算（房主在生命归零时就判定胜利，被处决的敌人在成员这边要等动画播完才倒下，
+/// 收到胜利后继续结算，这一下击倒才不会漏掉）
+fn member_fighting(state:&Runtime)->bool {
+    state.party.as_ref().is_some_and(|p|!p.host()&&p.bound)
+        &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))
+}
+/// 联机成员的余烬：成员没有本地的战斗记录，敌人按地图里的预置实体找（与 Boss 血条相同的找法，倒下的也留着，用来判断击倒）。
+/// 只算作用在自己与自己召唤物身上的余烬；作用在敌人身上的（出血、冻伤、死诞之焰等）仍只由房主按房主自己的余烬计算
+fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
+    if !member_fighting(state) {return;}
+    let Some(run)=state.view.run.as_ref() else{return};
+    let Phase::Combat{id}=run.phase else{return};
+    let embers=super::embers::held(Some(run));
+    if embers.is_empty() {return;}
+    let roster=super::enemies::node_roster(run,id);
+    let Ok(ids)=super::enemies::map_entities(&roster) else{return};
+    let foes:Vec<_>=roster.iter().enumerate().filter_map(|(slot,spec)|{
+        let chr=world.chr_sets.iter().flatten().flat_map(|set|set.characters())
+            .find(|chr|ids.get(slot)==Some(&chr.event_entity_id)&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))?;
+        Some((chr.field_ins_handle,super::enemies::bar_rank(spec)))
+    }).collect();
+    let key=(run.seed,run.act,id);
+    let keeper=run.ember_stacks.level(erdtree_tower::embers::Ember::SpiritKeeper);
+    let flasks=state.flasks.as_ref().map(|f|f.total());
+    let events=state.ember_fight.tick(world,key,&embers,&foes,false,flasks,keeper);
+    if events.feast {grant_feast(state.flasks.as_mut(),world);}
+    record_ember_gains(state,events.gains);
+}
 fn enemy_loaded(status: ChrLoadStatus) -> bool {
     // The pinned 1.17.1 game uses state 4 for the live player and debug-spawned enemies.
     matches!(
