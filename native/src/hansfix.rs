@@ -26,7 +26,7 @@ pub const BASE_RELEASE:&str="v101";
 pub const BASE_INSTALL_VERSION:u64=101;
 pub const BASE_REGULATION_LEN:u64=3451488;
 /// 堕落模式补丁带的 regulation.bin（v101 + 堕落誓约效果 + 向下强化与扭曲词条效果）
-pub const HANSFIX_REGULATION_LEN:u64=3400352;
+pub const HANSFIX_REGULATION_LEN:u64=3401344;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}
@@ -96,7 +96,7 @@ impl Descent {
         use fromsoftware_shared::FromStatic;
         if self.key!=Some(key){*self=Self{key:Some(key),..Default::default()};}
         let Some(level)=level.filter(|_|authority&&wander()) else{return};
-        let effect=erdtree_tower::descent::enemy_effect(level);
+        let effect=erdtree_tower::descent::enemy_effect(key.1,level);
         if !unsafe {SoloParamRepository::instance()}.is_ok_and(|p|p.get::<SpEffectParam>(effect).is_some()) {
             if !self.missing{crate::log(format!("HANSFIX_DESCENT missing effect {effect}; reinstall the wander patch regulation.bin"));self.missing=true;}
             return;
@@ -106,7 +106,7 @@ impl Descent {
             let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
             if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
             chr.apply_speffect(effect as i32,false);self.applied.push(*handle);
-            if self.applied.len()==1 {crate::log(format!("HANSFIX_DESCENT level={level} effect={effect} hp_x={:.3} attack_x={:.3}",erdtree_tower::descent::hp_rate(level),erdtree_tower::descent::attack_rate(level)));}
+            if self.applied.len()==1 {crate::log(format!("HANSFIX_DESCENT act={} level={level} effect={effect} hp_x={:.3} attack_x={:.3}",key.1,erdtree_tower::descent::hp_rate(key.1,level),erdtree_tower::descent::attack_rate(level)));}
         }
     }
 }

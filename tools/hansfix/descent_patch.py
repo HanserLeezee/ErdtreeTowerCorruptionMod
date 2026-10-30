@@ -2,7 +2,7 @@
 
 usage: python3 -I descent_patch.py <tools_dir> <paramdef SpEffect.xml> <input regulation.bin> <output regulation.bin> <build.json>
 
-- 9641001..9641060: descent k -> maxHpRate 1+1.4k (r15; was 2*1.1^(k-1)), *AttackPowerRate 1+0.05k (cloned from growth row 9640001)
+- 9641001..9641060 / 9641101..160 / 9641201..260: act 1/2/3, descent k -> maxHpRate 1+slope*k (slope 1.4/1.25/1.15; was 2*1.1^(k-1)), *AttackPowerRate 1+0.05k (cloned from growth row 9640001)
 - 9851000+kind*10+tier: affix effect 9850000+kind*10+tier with its value doubled
 - 9852000+kind*10+tier: the same effect negated
 - 9853000+kind*10+tier: the same effect x-2 (fallen boss / fallen shop bonus gear)
@@ -42,8 +42,10 @@ g = before[GROWTH1]
 assert abs(get(g, fields['maxHpRate']) - 1.03) < 1e-5 and all(abs(get(g, fields[a]) - 1.015) < 1e-5 for a in ATK), 'growth template changed'
 for k in range(1, 61):
     # hp = 2.0 * 1.1 ** (k - 1)   # original exponential curve, kept for a possible special mode
-    hp, atk = 1.0 + 1.4 * k, 1.0 + 0.05 * k
-    SPEC[ENEMY + k] = (GROWTH1, dict({'maxHpRate': hp}, **{a: atk for a in ATK}), f'Tower HansFix descent {k}')
+    # r16: one line per act, hp = 1 + slope * k with slope 1.4 / 1.25 / 1.15; rows ENEMY + (act-1)*100 + k
+    for act, slope in enumerate((1.4, 1.25, 1.15)):
+        hp, atk = 1.0 + slope * k, 1.0 + 0.05 * k
+        SPEC[ENEMY + act * 100 + k] = (GROWTH1, dict({'maxHpRate': hp}, **{a: atk for a in ATK}), f'Tower HansFix descent act {act + 1} {k}')
 for kind in range(21):
     if kind == 18: continue   # stateInfo 158 (talisman behaviour), not a number: never cursed
     for tier in range(4):

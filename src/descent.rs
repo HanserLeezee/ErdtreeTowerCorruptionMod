@@ -12,11 +12,13 @@ use serde::{Deserialize,Serialize};
 // pub const HP_START:f64=2.0;
 // pub const HP_STEP:f64=1.1;
 // pub fn hp_rate_exponential(level:u32)->f64 {HP_START*HP_STEP.powi(level.clamp(1,MAX_LEVEL) as i32-1)}
-/// 血量线性增长：第 k 次向下 ×(1 + 1.4k)
-pub const HP_PER_DESCENT:f64=1.4;
+/// 血量线性增长，每一幕一条线：血量 ×(1 + 斜率 × n)，n 为当前堕落值（第几次向下）；
+/// 斜率第一幕 1.4、第二幕 1.25、第三幕 1.15
+pub const HP_SLOPE:[f64;3]=[1.4,1.25,1.15];
+pub fn hp_slope(act:u8)->f64 {HP_SLOPE[usize::from(act.clamp(1,3)-1)]}
 /// 攻击伤害线性增长：第 k 次向下 ×(1 + 0.05k)，20 次时翻倍
 pub const ATTACK_PER_DESCENT:f64=0.05;
-/// 敌人强化效果：ENEMY_EFFECT_FIRST + k（k = 第几次向下，超过 MAX_LEVEL 按 MAX_LEVEL）
+/// 敌人强化效果：ENEMY_EFFECT_FIRST + (幕-1)×100 + k（k = 第几次向下，超过 MAX_LEVEL 按 MAX_LEVEL）
 pub const ENEMY_EFFECT_FIRST:u32=9641000;
 pub const MAX_LEVEL:u32=60;
 pub const AFFIX_FIRST:u32=9850000;
@@ -27,9 +29,9 @@ pub const NEGATE2_FIRST:u32=9853000;
 pub const AFFIX_KINDS:u32=21;
 pub const FIXED_KIND:u32=18;
 
-pub fn hp_rate(level:u32)->f64 {1.0+HP_PER_DESCENT*f64::from(level.clamp(1,MAX_LEVEL))}
+pub fn hp_rate(act:u8,level:u32)->f64 {1.0+hp_slope(act)*f64::from(level.clamp(1,MAX_LEVEL))}
 pub fn attack_rate(level:u32)->f64 {1.0+ATTACK_PER_DESCENT*f64::from(level.clamp(1,MAX_LEVEL))}
-pub fn enemy_effect(level:u32)->u32 {ENEMY_EFFECT_FIRST+level.clamp(1,MAX_LEVEL)}
+pub fn enemy_effect(act:u8,level:u32)->u32 {ENEMY_EFFECT_FIRST+u32::from(act.clamp(1,3)-1)*100+level.clamp(1,MAX_LEVEL)}
 
 /// 一件被扭曲的装备：物品编号（防具带 0x10000000 标记）与“原词条效果 → 新效果”
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
@@ -265,9 +267,10 @@ mod tests {
     use super::*;
     #[test]
     fn scaling_starts_at_double_and_grows_per_descent() {
-        assert!((hp_rate(1)-2.4).abs()<1e-9&&(attack_rate(1)-1.05).abs()<1e-9&&(attack_rate(20)-2.0).abs()<1e-9);
-        assert!((hp_rate(3)-5.2).abs()<1e-9&&(hp_rate(10)-15.0).abs()<1e-9&&(attack_rate(3)-1.15).abs()<1e-9);
-        assert_eq!(enemy_effect(0),ENEMY_EFFECT_FIRST+1);assert_eq!(enemy_effect(999),ENEMY_EFFECT_FIRST+MAX_LEVEL);
+        assert!((hp_rate(1,1)-2.4).abs()<1e-9&&(attack_rate(1)-1.05).abs()<1e-9&&(attack_rate(20)-2.0).abs()<1e-9);
+        assert!((hp_rate(1,10)-15.0).abs()<1e-9&&(hp_rate(2,10)-13.5).abs()<1e-9&&(hp_rate(3,10)-12.5).abs()<1e-9&&(attack_rate(3)-1.15).abs()<1e-9);
+        assert_eq!(enemy_effect(1,0),ENEMY_EFFECT_FIRST+1);assert_eq!(enemy_effect(1,999),ENEMY_EFFECT_FIRST+MAX_LEVEL);
+        assert_eq!(enemy_effect(2,5),ENEMY_EFFECT_FIRST+105);assert_eq!(enemy_effect(3,60),ENEMY_EFFECT_FIRST+260);
     }
     #[test]
     fn descriptions_match_the_generated_item_text_and_curses_change_one_or_two_lines() {
