@@ -18,7 +18,7 @@ impl Affix {
             Affix::Bulwark=>"受到的伤害 -25%",
             Affix::Frenzied=>"攻击 +25%，但受到的伤害 +10%",
             Affix::Regenerating=>"每秒回复 0.3% 最大生命；持续压制可以抵消",
-            Affix::Rot=>"身边 5 米内每秒积累腐败；保持距离或备好药",
+            Affix::Rot=>"攻击附带猩红腐败：每次打中你都会积累腐败；备好药",
             Affix::Envious=>"你喝圣杯瓶后，攻击 +30%，持续 10 秒",
             Affix::Proud=>"8 秒没挨打时攻击 +20%，被打中后清除",
             Affix::Golden=>"每 20 秒展开 5 秒金色护盾，受到的伤害 -70%",
@@ -28,6 +28,8 @@ impl Affix {
             Affix::Swift=>"动作速度 +20%：出招、收招、移动都更快，压得更紧",
         }
     }
+    /// 最早出现的幕：再生的第二幕起，吸血的第三幕起
+    pub fn first_act(self)->u8 {match self {Affix::Regenerating=>2,Affix::Leeching=>3,_=>1}}
     pub fn cost(self)->u8 {match self {Affix::Bulwark|Affix::Regenerating|Affix::Envious|Affix::Golden|Affix::Thorned=>2,Affix::Reborn=>3,_=>1}}
     /// 互斥组：同组只能出一个。规则 0 的分组（只有防御、续航两组）用于还原最早的组合表
     fn group(self)->u8 {
@@ -103,8 +105,8 @@ pub fn roll(run:&Run,node:usize)->Vec<Affix> {
     if !run.boss_affixes||budget==0 {return vec![];}
     // 规则 0（旧存档）只用最早的 9 个词条和原来的分组
     let (count,group):(usize,fn(Affix)->u8)=if run.boss_affix_rules>=1 {(Affix::ALL.len(),Affix::group)}else{(LEGACY_AFFIXES,Affix::legacy_group)};
-    // 傲慢的已移除：不再抽到（枚举、组合表与血条名称编号保留，旧组合的序号不变）
-    let mut pool:Vec<_>=Affix::ALL[..count].iter().copied().filter(|a|!RETIRED.contains(a)).collect();
+    // 傲慢的已移除：不再抽到（枚举、组合表与血条名称编号保留，旧组合的序号不变）；再生的第二幕起、吸血的第三幕起才会出现
+    let mut pool:Vec<_>=Affix::ALL[..count].iter().copied().filter(|a|!RETIRED.contains(a)&&run.act>=a.first_act()).collect();
     pool.sort_by_key(|a|crate::mix(run.seed^(node as u64).wrapping_mul(7919)^(u64::from(run.act)<<40)^a.index() as u64^0xb055_af1c));
     let (mut left,mut chosen)=(budget,Vec::new());
     for affix in pool {
@@ -139,6 +141,11 @@ mod tests {
         }}
         assert_eq!(seen.len(),Affix::ALL.len()-RETIRED.len(),"new runs can roll every affix that is not retired");
         assert!(RETIRED.iter().all(|a|!seen.contains(a)));
+        // 再生的第二幕起、吸血的第三幕起
+        for seed in 0..600 {for act in 1..=3 {
+            let mut run=Run::new(seed,Class::Samurai);run.act=act;let affixes=roll(&run,boss(&run));
+            assert!(affixes.iter().all(|a|act>=a.first_act()),"act {act}: {affixes:?}");
+        }}
     }
     #[test]
     fn every_roll_has_a_bar_name_and_the_combo_table_is_current() {

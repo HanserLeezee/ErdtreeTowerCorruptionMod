@@ -3,7 +3,7 @@ use eldenring::cs::{ChrInsExt,FieldInsHandle,SoloParamRepository,SpEffectParam,W
 use fromsoftware_shared::FromStatic;
 use erdtree_tower::boss_affixes::Affix;
 pub const FIRST:i32=9620000;
-/// 腐败光环每秒给玩家挂一次：原版“NPC：猩红腐败”（21001，每次积累 20，积满后照常发作、持续扣血）的复制，
+/// 腐败的：Boss 每次打中玩家给玩家挂一次：原版“NPC：猩红腐败”（21001，每次积累 20，积满后照常发作、持续扣血）的复制，
 /// 只打开了“作用于自身”。21001 本身不能作用于自身，直接挂给玩家会被游戏忽略（腐败条不涨）；更早自建的 FIRST+41 只有积累值、积满不发作
 const ROT_BUILDUP:i32=FIRST+42;const ENVY:i32=FIRST+70;const PRIDE:i32=FIRST+80;const SHIELD:i32=FIRST+90;pub(crate) const REBORN:i32=FIRST+95;
 /// 迅猛、荆棘的常驻光效，吸血回血时的闪光
@@ -13,8 +13,8 @@ const EFFECTS:[i32;13]=[FIRST,FIRST+10,FIRST+20,FIRST+30,FIRST+40,ROT_BUILDUP,EN
 const EMPOWERED:[i32;6]=[FIRST+1,FIRST+11,FIRST+21,FIRST+31,ENVY+1,PRIDE+1];
 /// 由运行时计算的词条数值；词条强化时换成 STRONG
 struct Tuning {
-    /// 腐败光环半径（米）
-    rot_radius:f32,
+    /// 腐败的：每次打中积累几次（每次 20）
+    rot_per_hit:u8,
     /// 吸血：每次打中玩家回复最大生命的千分比；荆棘：反弹受到伤害的百分比
     leech_permille:i64,thorn_percent:i64,
     /// 迅猛：动作播放速度倍率（出招、收招、移动都更快）
@@ -22,8 +22,8 @@ struct Tuning {
     /// 黄金律法：护盾间隔（秒）；不屈：回复到最大生命的百分比；傲慢：多久没挨打后触发（秒）
     shield_every:u64,reborn_percent:i64,proud_after:u64,
 }
-const NORMAL:Tuning=Tuning{rot_radius:5.0,leech_permille:15,thorn_percent:8,swift_speed:1.2,shield_every:20,reborn_percent:40,proud_after:8};
-const STRONG:Tuning=Tuning{rot_radius:7.0,leech_permille:25,thorn_percent:12,swift_speed:1.3,shield_every:15,reborn_percent:60,proud_after:6};
+const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:15,thorn_percent:8,swift_speed:1.2,shield_every:20,reborn_percent:40,proud_after:8};
+const STRONG:Tuning=Tuning{rot_per_hit:2,leech_permille:25,thorn_percent:12,swift_speed:1.3,shield_every:15,reborn_percent:60,proud_after:6};
 const BAR_MARKER:i32=FIRST+99;
 /// text-update 为新增词条的组合也写好血条名称后加入的第二个标记
 const BAR_MARKER_V2:i32=FIRST+98;
@@ -95,16 +95,13 @@ impl Fight {
         let drank=matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before);self.flasks=flasks;
         let shield=self.affixes.contains(&Affix::Golden)&&match self.shield_at {Some(at)=>now>=at,None=>{self.shield_at=Some(now+Duration::from_secs(tuning.shield_every));false}};
         if shield {self.shield_at=Some(now+Duration::from_secs(tuning.shield_every));self.shield_until=Some(now+Duration::from_secs(5));}
-        let player=world.main_player.as_ref().map(|p|p.chr_ins.modules.physics.position);
         // 玩家这一帧受到的伤害（吸血）与 Boss 受到的伤害（荆棘）
         let player_hp=world.main_player.as_ref().map(|p|p.chr_ins.modules.data.hp);
         let taken=match (self.player_hp,player_hp) {(Some(before),Some(after)) if after<before=>before-after,_=>0};self.player_hp=player_hp;
         let mut reflected=0i64;
-        let mut nearest=f32::MAX;
         for handle in handles {
             let Some(chr)=world.chr_ins_by_handle_mut(handle) else{continue};
             if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag(){continue;}
-            if let Some(p)=player {let q=chr.modules.physics.position;nearest=nearest.min(((p.0-q.0).powi(2)+(p.1-q.1).powi(2)+(p.2-q.2).powi(2)).sqrt());}
             if !authority {continue;}
             let index=match self.foes.iter().position(|f|f.handle==*handle) {Some(i)=>i,None=>{self.foes.push(Foe{handle:*handle,hp:chr.modules.data.hp,hurt:now,proud:false,reborn:false});self.foes.len()-1}};
             let foe=&mut self.foes[index];
@@ -137,9 +134,10 @@ impl Fight {
             let data=&mut player.chr_ins.modules.data;
             data.hp=(i64::from(data.hp)-reflected).max(1) as i32;self.player_hp=Some(data.hp);
         }
-        if self.affixes.contains(&Affix::Rot)&&nearest<=tuning.rot_radius&&self.rot_at.is_none_or(|at|now>=at) {
-            player.chr_ins.apply_speffect(ROT_BUILDUP,true);
-            self.rot_at=Some(now+Duration::from_secs(1));
+        // 腐败的：攻击附带猩红腐败，玩家每次受伤积累一次（词条强化积累两次）；同一次攻击的多段伤害 0.4 秒内只算一次
+        if self.affixes.contains(&Affix::Rot)&&taken>0&&self.rot_at.is_none_or(|at|now>=at) {
+            for _ in 0..tuning.rot_per_hit {player.chr_ins.apply_speffect(ROT_BUILDUP,true);}
+            self.rot_at=Some(now+Duration::from_millis(400));
         }
     }
 }
