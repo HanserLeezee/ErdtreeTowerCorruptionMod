@@ -9,7 +9,7 @@ type Cost=unsafe extern "C" fn(i32)->u64;
 
 /// 阶梯式升级价格：按本局已经升了几级分档（不看角色的绝对等级，各职业初始等级不同）
 /// (本局第几级起, 每级卢恩)
-pub const STEPS:[(u32,u64);4]=[(1,1000),(11,2000),(21,3500),(31,5000)];
+pub const STEPS:[(u32,u64);4]=[(1,1000),(11,1500),(21,2500),(31,3500)];
 fn fixed_cost(next:i32,start:u32)->Option<u64> {
     if start==0||next<=start as i32 {return None;}
     let bought=(next-start as i32) as u32;
@@ -56,11 +56,11 @@ mod tests {
         for start in [1,5,6,7,8,9,10] {
             assert_eq!(fixed_cost(start,start as u32),None);
             let cost=|bought:i32|fixed_cost(start+bought,start as u32).unwrap();
-            assert_eq!([1,10,11,20,21,30,31,200].map(cost),[1000,1000,2000,2000,3500,3500,5000,5000]);
+            assert_eq!([1,10,11,20,21,30,31,200].map(cost),[1000,1000,1500,1500,2500,2500,3500,3500]);
             for next in start+1..=713 {assert!(fixed_cost(next,start as u32).is_some());}
             // 一次升多级的合计：第 9～12 级跨过一个档位
-            assert_eq!((9..=12).map(cost).sum::<u64>(),1000*2+2000*2);
-            assert_eq!((1..=30).map(cost).sum::<u64>(),10_000+20_000+35_000);
+            assert_eq!((9..=12).map(cost).sum::<u64>(),1000*2+1500*2);
+            assert_eq!((1..=30).map(cost).sum::<u64>(),10_000+15_000+25_000);
         }
     }
 }

@@ -1,6 +1,7 @@
 using SoulsFormats;
 // 爬塔敌人强度：去掉原版按产地附带的区域强度，按「幕 × 弱怪/精英/Boss」换成 tower-scaling.txt 中的统一档位；
-// 档位直接复用原版区域强度效果 7000+档位×10。每层递增由运行时施加 9640001–9640011。
+// 档位用爬塔自己的区域强度效果 TierFirst+档位×10：复制原版 7000+档位×10，生命等不变，只把攻击倍率乘 TierAttackScale
+// （原版行不改，原版地图上的敌人照旧）。每层递增由运行时施加 9640001–9640011。
 static class TowerScalingAssets {
     public const int GrowthFirst=9640000,GrowthSteps=11;
     public const float GrowthHp=0.03f,GrowthAttack=0.015f;
@@ -8,7 +9,17 @@ static class TowerScalingAssets {
     public const int BossBonus=9640050;
     public const float BossHp=1.25f,BossAttack=1.10f;
     // 本体区域强度 7000–7280；DLC 的区域强度 20007000–20007150（敌人）与 20007200–20007350（人形 NPC），之后追加的 DLC Boss 带着它们
-    public static bool AreaScaling(int id)=>id>=7000&&id<=7280||id>=20007000&&id<=20007350;
+    // 爬塔的档位效果（TierFirst 起）也算区域强度，重跑时会被替换
+    public static bool AreaScaling(int id)=>id>=7000&&id<=7280||id>=20007000&&id<=20007350||id>=TierFirst&&id<TierFirst+300;
+    public const int TierFirst=9641000;
+    /// 档位攻击倍率：原版区域强度的攻击倍率再乘这个系数（全局降伤，生命不变）
+    public const float TierAttackScale=0.8f;
+    public static int TierEffect(int tier)=>TierFirst+tier*10;
+    static PARAM.Row TowerTier(PARAM effects,int tier) {
+        var row=new PARAM.Row(effects.Rows.Single(r=>r.ID==7000+tier*10)){ID=TierEffect(tier),Name=$"Tower area scaling tier {tier}"};
+        foreach(var key in Attacks)row[key].Value=Convert.ToSingle(row[key].Value)*TierAttackScale;
+        return row;
+    }
     static readonly string[] Attacks=["physicsAttackPowerRate","magicAttackPowerRate","fireAttackPowerRate","thunderAttackPowerRate","darkAttackPowerRate"];
     public record Target(int Id,int Act,string Role,string Name,bool Room=false);
     public static Dictionary<int,int[]> Tiers(string input)=>File.ReadAllLines(Path.Combine(input,"tower-scaling.txt")).Where(l=>!l.StartsWith('#')&&l.Length>0)
@@ -27,7 +38,7 @@ static class TowerScalingAssets {
         var slots=Slots(row);
         foreach(var slot in slots.Where(s=>AreaScaling(I(row,s))))row[slot].Value=Convert.ChangeType(-1,row[slot].Value.GetType());
         var free=slots.FirstOrDefault(s=>I(row,s)==-1)??throw new Exception($"No free SpEffect slot on NpcParam {row.ID}");
-        row[free].Value=Convert.ChangeType(7000+tier*10,row[free].Value.GetType());
+        row[free].Value=Convert.ChangeType(TierEffect(tier),row[free].Value.GetType());
     }
     static PARAM.Row Bonus(PARAM effects) {
         var row=Growth(effects,1);row.ID=BossBonus;row.Name="Tower boss room bonus";
@@ -53,6 +64,12 @@ static class TowerScalingAssets {
         var tiers=Tiers(input);var targets=Targets(input);
         foreach(var g in targets.GroupBy(t=>t.Id))if(g.Select(t=>Tier(tiers,t)).Distinct().Count()>1)throw new Exception($"NpcParam {g.Key} is shared by enemies with different tiers");
         targets=targets.GroupBy(t=>t.Id).Select(g=>g.First()).ToList();var report=new List<string>{"npc\tact\trole\tname\tbase_hp\told_tier\tnew_tier\told_hp\tnew_hp_layer1\tnew_hp_last_layer\told_attack\tnew_attack_layer1\tnew_attack_last_layer"};
+        // 报告里的“原来”按替换前的效果算
+        var previous=effects.Rows.Where(r=>AreaScaling(r.ID)).ToDictionary(r=>r.ID,r=>new PARAM.Row(r));
+        // 爬塔档位效果：用到的档位各一行，已有的替换（攻击系数改了就重算）
+        effects.Rows.RemoveAll(r=>r.ID>=TierFirst&&r.ID<TierFirst+300);
+        foreach(var tier in tiers.Values.SelectMany(v=>v).Distinct().OrderBy(t=>t))effects.Rows.Add(TowerTier(effects,tier));
+        effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));
         var area=effects.Rows.Where(r=>AreaScaling(r.ID)).ToDictionary(r=>r.ID);
         foreach(var t in targets) {
             var row=npcs.Rows.Single(r=>r.ID==t.Id);int tier=Tier(tiers,t);
@@ -63,10 +80,10 @@ static class TowerScalingAssets {
                 var free=Slots(row).FirstOrDefault(s=>I(row,s)==-1)??throw new Exception($"No free SpEffect slot for the boss bonus on NpcParam {row.ID}");
                 row[free].Value=Convert.ChangeType(BossBonus,row[free].Value.GetType());
             }
-            float Hp(int id)=>area.TryGetValue(id,out var e)?Convert.ToSingle(e["maxHpRate"].Value):1f;
-            float Atk(int id)=>area.TryGetValue(id,out var e)?Convert.ToSingle(e["physicsAttackPowerRate"].Value):1f;
-            int hp=I(row,"hp");int oldId=old.FirstOrDefault(-1);int newId=7000+tier*10;
-            report.Add(string.Join('\t',t.Id,t.Act,t.Role,t.Name,hp,oldId<0?0:(oldId-7000)/10,tier,(int)(hp*Hp(oldId)),(int)(hp*Hp(newId)),(int)(hp*Hp(newId)*(1+GrowthHp*GrowthSteps)),
+            int hp=I(row,"hp");int oldId=old.FirstOrDefault(-1);int newId=TierEffect(tier);
+            float Hp(int id)=>(area.TryGetValue(id,out var e)||previous.TryGetValue(id,out e))?Convert.ToSingle(e["maxHpRate"].Value):1f;
+            float Atk(int id)=>id==oldId&&previous.TryGetValue(id,out var p)?Convert.ToSingle(p["physicsAttackPowerRate"].Value):area.TryGetValue(id,out var e)?Convert.ToSingle(e["physicsAttackPowerRate"].Value):1f;
+            report.Add(string.Join('\t',t.Id,t.Act,t.Role,t.Name,hp,oldId<0?0:oldId>=TierFirst?(oldId-TierFirst)/10:(oldId-7000)/10,tier,(int)(hp*Hp(oldId)),(int)(hp*Hp(newId)),(int)(hp*Hp(newId)*(1+GrowthHp*GrowthSteps)),
                 Atk(oldId).ToString("0.00"),Atk(newId).ToString("0.00"),(Atk(newId)*(1+GrowthAttack*GrowthSteps)).ToString("0.00")));
         }
         if(effects.Rows.Any(r=>r.ID>GrowthFirst&&r.ID<=GrowthFirst+GrowthSteps)) {
@@ -96,7 +113,7 @@ static class TowerScalingAssets {
             }
             if(ids.Contains(row.ID)) {
                 var slots=Slots(row);var t=targets.First(x=>x.Id==row.ID);
-                if(slots.Select(s=>I(row,s)).Count(AreaScaling)!=1||!slots.Any(s=>I(row,s)==7000+Tier(tiers,t)*10))throw new Exception($"Scaling not applied: {row.ID}");
+                if(slots.Select(s=>I(row,s)).Count(AreaScaling)!=1||!slots.Any(s=>I(row,s)==TierEffect(Tier(tiers,t))))throw new Exception($"Scaling not applied: {row.ID}");
                 foreach(var s in slots)if(!AreaScaling(I(row,s))&&!AreaScaling(I(old,s))&&I(row,s)!=I(old,s)&&!(t.Room&&I(old,s)==-1&&I(row,s)==BossBonus))throw new Exception($"Non-scaling effect changed: {row.ID} {s}");
                 if(slots.Count(s=>I(row,s)==BossBonus)!=(t.Room?1:0))throw new Exception($"Boss bonus must be on boss-room rows only: {row.ID}");
             }

@@ -197,7 +197,7 @@ struct CombatCheckpoint {
 }
 
 /// 商店价格在第三幕最后一层的百分比（见 Run::shop_position_percent）
-pub const SHOP_PRICE_END:u32=200;
+pub const SHOP_PRICE_END:u32=150;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {

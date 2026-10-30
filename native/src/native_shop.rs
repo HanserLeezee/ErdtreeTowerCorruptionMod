@@ -38,10 +38,10 @@ fn refresh_special_prices(stock:&mut [Stock],run:&Run) {
         assert_eq!(final_price(&run,5000),5000,"first layer keeps the listed price");
         let per_act=run.nodes.iter().map(|n|n.layer+1).max().unwrap();
         run.act=3;run.reached_layer=per_act;assert_eq!(run.shop_position_percent(),erdtree_tower::SHOP_PRICE_END);
-        assert_eq!((final_price(&run,5000),final_price(&run,20),final_price(&run,2500)),(10000,40,5000));
-        run.law=run.law.toggle(19).toggle(20).toggle(21);assert_eq!(final_price(&run,5000),11500,"奸商 I：+15% 后再翻倍");
+        assert_eq!((final_price(&run,5000),final_price(&run,20),final_price(&run,2500)),(7500,30,3750));
+        run.law=run.law.toggle(19).toggle(20).toggle(21);assert_eq!(final_price(&run,5000),8650,"奸商 I：+15% 后再乘 1.5（5750 × 1.5 = 8625，取整到 50）");
         run.law=Default::default();
-        run.act=2;run.reached_layer=1;let mid=final_price(&run,3000);assert!(mid>3000&&mid<6000,"{mid}");
+        run.act=2;run.reached_layer=1;let mid=final_price(&run,3000);assert!(mid>3000&&mid<4500,"{mid}");
         let mut last=0;
         for act in 1..=3u8 {for layer in 1..=per_act {run.act=act;run.reached_layer=layer;let p=run.shop_position_percent();assert!(p>=last);last=p;}}
     }

@@ -429,12 +429,14 @@ mod tests {
         for act in 2..=3 {for seed in 0..600 {for kind in [NodeKind::Monster,NodeKind::Elite] {for party in [false,true] {
             assert!(roster_in(kind,seed,seed as usize%24,seed as usize%12,act,party).iter().all(|e|!slow.contains(&e.model)));
         }}}}
-        for act in 2..=3 {assert!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster&&selectable(e,true)).count()>=8,"four early fights still draw eight distinct weak enemies");}
+        for act in 2..=3 {assert!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster&&selectable(e,true)).count()>=7,"early fights still draw a varied set of weak enemies");}
+        // 第二幕的巨型螯虾改为精英：普通战里不再作为小怪出现，精英战与后几层的强怪可以抽到
+        assert!(POOLS.iter().any(|e|e.act==2&&e.model==4420&&e.kind==NodeKind::Elite));
     }
     #[test]
     fn appended_weak_enemies_join_solo_and_party_rosters() {
         let solo:Vec<_>=POOLS.iter().filter(|e|e.appended).collect();
-        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|e.kind==NodeKind::Monster&&e.act>=2&&(!e.retired||e.model==3661)&&!e.dlc&&!e.solo));
+        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|(e.kind==NodeKind::Monster||e.model==4420)&&e.act>=2&&(!e.retired||e.model==3661)&&!e.dlc&&!e.solo));
         let mut seen=std::collections::HashSet::new();
         for act in 2..=3 {for seed in 0..800 {
             let group=roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,true);
@@ -501,12 +503,14 @@ mod tests {
     }
     #[test]
     fn expanded_pools_deal_distinct_early_groups_and_shuffle_across_runs() {
-        for (act,weak,elite) in [(1,18,21),(2,26,19),(3,22,18)] {
+        for (act,weak,elite) in [(1,18,21),(2,25,20),(3,22,18)] {
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster).count(),weak);
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Elite).count(),elite);
             for seed in 0..100 {
                 let groups:Vec<_>=(0..4).flat_map(|n|roster(NodeKind::Monster,seed,n,0,act)).collect();
-                assert_eq!(groups.iter().map(|e|e.model).collect::<std::collections::HashSet<_>>().len(),8);
+                // 前四场普通战的 8 只小怪互不相同；第二幕只剩 7 种可抽的小怪（巨型螯虾改为精英），会有一种重复一次
+                let available=POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster&&selectable(e,false)).count();
+                assert_eq!(groups.iter().map(|e|e.model).collect::<std::collections::HashSet<_>>().len(),available.min(8));
                 assert!(groups.iter().all(|e|!e.retired));
             }
             let sequences:std::collections::HashSet<_>=(0..100).map(|seed|(0..6).map(|n|choose(NodeKind::Monster,seed*100,n,act).model).collect::<Vec<_>>()).collect();
