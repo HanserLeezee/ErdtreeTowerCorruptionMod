@@ -205,7 +205,7 @@ fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
 /// 试验中的 Boss 不会被抽到；仅单人的 Boss 联机时抽不到
 fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enemy> {
     let mut encounters=Vec::new();
-    for (id,_) in BOSSES.iter().filter(|(id,e)|!e.retired&&!(party&&(e.solo||relocated(e).is_some()))&&encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
+    for (id,_) in BOSSES.iter().filter(|(id,e)|!e.retired&&!(party&&(e.solo||relocated(e).is_some()||PARTY_UNSYNCED.contains(&e.name)))&&encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
     // 第三幕「双王共命」：每个双王组合是第三幕 Boss 战的一个选项，与每个单只 Boss 机会相同；组合里的 Boss 不再单独出现（机制见 dual_bosses.rs）
     let mut options:Vec<Vec<usize>>=Vec::new();
     let pairs:Vec<[usize;2]>=if dual(kind,act) {DUAL_PAIRS.iter().filter_map(|pair|{
@@ -220,6 +220,9 @@ fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enem
         let mut enemy=*e;enemy.act=act;enemy.kind=kind;if kind==NodeKind::Elite {enemy.npc+=1;enemy.bar=0;}enemy
     }).collect()
 }
+/// 联机地图里的预置实体还没同步的 Boss：联机时不抽。蕾娜菈改用第二阶段（c2031）后，联机地图的实体仍是一阶段模型 c2030，
+/// 读到二阶段的参数会站着不动（没有 AI）；在 Windows 上运行 party-boss-model-sync 并更新 scene-assets 的地图后从这里删掉
+const PARTY_UNSYNCED:[&str;1]=["“满月女王”蕾娜菈"];
 /// 第三幕双王共命的组合（Boss 名）：卡利亚双骑
 pub const DUAL_PAIRS:[[&str;2];1]=[["“圣树骑士”罗蕾塔","“双月骑士”蕾拉娜"]];
 /// 这一幕的 Boss 战可能是双王
@@ -446,18 +449,21 @@ mod tests {
     }
     #[test]
     fn appended_bosses_have_party_slots_and_reach_boss_rosters() {
-        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended).collect();
+        // 第一批追加的 13 个 Boss（序号 140–152）；之后序号 153 起的 DLC Boss 另见 late_dlc_bosses_are_solo_boss_fights_only
+        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended&&e.npc<950000000+LATE_BOSS_FIRST*2).collect();
         assert_eq!(trial.len(),13);
         assert!(trial.iter().all(|(_,e)|!e.solo&&!e.retired&&e.bar>0&&recommended_level(e.name).is_some()));
         let mut seen=std::collections::HashSet::new();
         for act in 1..=3 {for seed in 0..400 {for kind in [NodeKind::Elite,NodeKind::Boss] {
             assert!(roster_in(kind,seed,seed as usize%24,0,act,false).iter().all(|e|!e.retired));
             let group=roster_in(kind,seed,seed as usize%24,0,act,true);map_entities(&group).unwrap();
-            for e in group {if e.appended {assert_eq!(kind,NodeKind::Boss);seen.insert(e.npc);}}
+            for e in group {if e.appended {assert_eq!(kind,NodeKind::Boss);assert!(!PARTY_UNSYNCED.contains(&e.name),"unsynced bosses stay out of party fights");seen.insert(e.npc);}}
         }}}
-        assert_eq!(seen.len(),13);
-        // 仅单人的 Boss 排在预览名单里原有名字之后（再之后是仅单人的怪物），原有预览编号不变
-        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-22..names.len()-9],&trial.iter().map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
+        // 联机地图同步之前，蕾娜菈不进联机的 Boss 战（单人照常）
+        assert_eq!(seen.len(),13-PARTY_UNSYNCED.len());
+        assert!((0..2000).any(|seed|roster_in(NodeKind::Boss,seed,0,0,1,false).iter().any(|e|e.name=="“满月女王”蕾娜菈")));
+        // 第一批追加的 Boss 排在预览名单里原有名字之后，再之后是追加的普通怪（9）与序号 153 起的 Boss（5），原有预览编号不变
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-27..names.len()-14],&trial.iter().map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
     }
     #[test]
     fn map_entity_manifest_for_scene_crosscheck() {
