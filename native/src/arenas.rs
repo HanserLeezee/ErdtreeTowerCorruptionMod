@@ -30,6 +30,15 @@ impl Arena {
 pub fn for_act(act: u8) -> Arena {
     LEGACY[usize::from(act.clamp(1,3)-1)]
 }
+impl Arena {
+    /// [HansFix] 进场检查的“掉出地面”高度：竞技场原点附近为地面时是 -1.5；
+    /// 其他场地按场地中心与落点高度往下 5 米（地下河、湖底书库等场地的地面本身就在 y = -100 … -1700）
+    pub fn fall_floor(&self)->f32 {
+        if self.center==[0.0;3]&&self.arrival.is_none() {return -1.5;}
+        let ground=self.arrival.map_or(self.center[1],|a|a[1].min(self.center[1]));
+        ground-5.0
+    }
+}
 pub fn for_block(block: i32) -> Option<Arena> { ARENAS.iter().chain(LEGACY.iter()).chain(BUILT.iter().map(|(_,a)|a)).copied().find(|a| a.block == block) }
 
 /// 主题幕的战斗场地：scene-builder arena-build（Windows）把原版地图改造成战场后写出 scene-assets/arenas-built.txt，每行
@@ -85,6 +94,12 @@ mod tests {
             if let Some((_,arena))=sites.iter().find(|(k,_)|*k==theme.arena) {assert_eq!(arena.stone,super::for_act(theme.act).stone,"{}",theme.name);}
         }
         assert_eq!(sites.len(),2);
+    }
+    #[test]
+    fn underground_sites_are_not_mistaken_for_falling_through_the_floor() {
+        let (_,siofra)=super::parse_built("siofra_ancestor|m12_08_00_00|希芙拉河·祖灵洞窟|1546.102|-1736.05|1053.286|-12.443|1558.954|-1735.7|1054.25|1|0|1").unwrap();
+        assert!(-1735.7>siofra.fall_floor()&&siofra.fall_floor()>-1745.0);
+        assert_eq!(super::for_act(1).fall_floor(),-1.5);
     }
     #[test]
     fn built_site_rows_parse_and_reuse_the_first_arena_numbers() {
