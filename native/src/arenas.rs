@@ -62,6 +62,8 @@ fn parse_built(line:&str)->Option<(&'static str,Arena)> {
     Some((leak(p[0]),Arena{block:i32::from_be_bytes([map[0],map[1],map[2],map[3]]),entry:SITE_BASIS+2600,stone:SITE_BASIS+100,name:leak(p[2]),
         center:[f(3)?,f(4)?,f(5)?],yaw:f(6)?.to_radians(),arrival:Some([f(7)?,f(8)?,f(9)?])}))
 }
+/// [HansFix r19] 官方当前版本所有主题临时共用的单人战斗场地
+pub const TEMPORARY_SITE:&str="farum_dragonlord";
 /// 调试菜单“下一战指定场地”（单人）：场地键，空为按主题
 static OVERRIDE:std::sync::Mutex<Option<&'static str>>=std::sync::Mutex::new(None);
 pub fn set_override(key:Option<&'static str>) {if let Ok(mut o)=OVERRIDE.lock(){*o=key;}crate::log(format!("Arena override: {key:?}"));}
@@ -79,6 +81,10 @@ pub fn is_built(block:i32)->bool {BUILT.iter().any(|(_,a)|a.block==block)}
 pub fn for_run(run:&erdtree_tower::Run,party:bool)->Arena {
     if party {return for_act(run.act);}
     let theme=erdtree_tower::themes::for_run(run);
+    // [HansFix r19] 与官方 v101 发布版一致：作者调整各主题场地期间，单人战斗暂时都用龙王圆形平台（已生成时）；调试指定仍优先
+    if override_key().is_none() {
+        if let Some((_,a))=sites().find(|(k,_)|*k==TEMPORARY_SITE) {return *a;}
+    }
     let key=override_key().unwrap_or(theme.arena);
     if key.is_empty()||(theme.dlc&&erdtree_tower::dlc::mode()!=erdtree_tower::dlc::Mode::Full) {return for_act(run.act);}
     sites().find(|(k,_)|*k==key).map_or_else(||for_act(run.act),|(_,a)|*a)
