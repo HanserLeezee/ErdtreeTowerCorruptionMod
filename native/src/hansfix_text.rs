@@ -165,6 +165,9 @@ pub fn install_table(index:u32,mut entries:Vec<(u32,String)>)->bool {
     let Some(old)=read_u64(slot) else{return false};
     let mut head=[0u8;0x28];
     if old<0x10000||!read_bytes(old as usize,&mut head)||head[2]!=2 {return false;}
+    // 游戏查表时默认至少有一组（组数为 0 时会用 -1 当下标读越界而闪退，r21 实测：铁匠菜单查武器名）；
+    // 原版的空表里也放着一条占位，这里同样放一条编号 1 的空占位
+    if entries.is_empty() {entries.push((1,String::new()));}
     entries.sort_by_key(|(id,_)|*id);entries.dedup_by_key(|(id,_)|*id);
     // 连续编号合成一组
     let mut groups:Vec<(i32,i32,i32)>=Vec::new();
