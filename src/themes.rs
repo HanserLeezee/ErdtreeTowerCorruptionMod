@@ -2,7 +2,7 @@
 //! 主题只改“场景”——开幕标题卡、路线图配色、战斗场地与时间，不改敌人、奖励与数值。
 //! 每幕还有一个 DLC 主题，只在 DLC 模式为“完整”时参与抽选（联机的无缝入口强制完整模式，全队一致）。
 //! 战斗场地：Theme::arena 是 scene-assets/arena-sites.txt 的场地键；场地由 scene-builder arena-build 在 Windows 上生成后
-//! 写进 scene-assets/arenas-built.txt，没生成的场地、联机（预置敌人只在三座竞技场里）都退回本幕的竞技场。
+//! 写进 scene-assets/arenas-built.txt；单机和联机使用已生成的场地，主题无对应场地时按幕种子选择扩展池。
 pub struct Theme {
     pub id:u8,
     pub act:u8,
@@ -34,7 +34,7 @@ pub const THEMES:[Theme;12]=[
     t(6,2,"永恒之城","诺克伦 · 诺克史黛拉","坠落的星光照着沉睡的城","eternal",0xD6D8E4,0x22263A,0x9CA6D0,22,"nokstella_hall",false),
     t(7,3,"黄金王城","亚坛高原 · 王城罗德尔","黄金树的光，照不到它的根","loading3",0xF0E2BC,0x46361A,0xD0A040,12,"leyndell_tree",false),
     t(8,3,"巨人山顶","巨人山顶","风雪的尽头，火焰仍在燃烧","mountaintops",0xE2E8EE,0x2A3440,0xD07A3A,9,"",false),
-    t(9,3,"圣树与龙之王朝","米凯拉圣树 · 崩塌的法姆亚兹拉","在云端之上，神明也会腐朽","haligtree",0xF2E6D2,0x483A2A,0xC89A6A,7,"farum_maliketh",false),
+    t(9,3,"圣树与龙之王朝","米凯拉圣树 · 崩塌的法姆亚兹拉","在云端之上，神明也会腐朽","haligtree",0xF2E6D2,0x483A2A,0xC89A6A,7,"farum_dragonlord",false),
     // DLC 主题（幽影地）：只在 DLC 完整模式下参与抽选
     t(10,1,"幽影之塔","幽影地 · 贝鲁拉特高塔聚落","塔顶的神兽，仍在为谁起舞","shadowtower",0xE6DCCC,0x3A2E26,0xB8603A,15,"belurat_lion",true),
     t(11,2,"石棺深渊","幽影地 · 石棺巨坑","巨坑之底，腐败的骑士在等待","fissure",0xD8D0DC,0x2C2434,0x8C6AB0,1,"fissure_knight",true),
@@ -48,6 +48,9 @@ pub fn for_act_with(seed:u64,act:u8,dlc:bool)->&'static Theme {
 }
 pub fn for_run(run:&crate::Run)->&'static Theme {for_act(run.seed,run.act)}
 pub fn lookup(id:u8)->Option<&'static Theme> {THEMES.iter().find(|t|t.id==id)}
+pub fn arena_index(seed:u64,act:u8,count:usize)->Option<usize> {
+    (count>0).then(||(crate::mix(seed^0x6172656e6173^u64::from(act))%count as u64) as usize)
+}
 
 #[cfg(test)]
 mod tests {

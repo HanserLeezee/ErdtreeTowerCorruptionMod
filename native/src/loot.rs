@@ -90,8 +90,26 @@ pub fn chest_choice(seed:u64,node:usize,owned:impl Fn(u32)->bool)->Result<Loot,S
     }
     Err("未找到可领取的宝箱物品".into())
 }
+#[test]
+fn weapon_preference_chests_preserve_category_and_increase_selected_type() {
+    let mut run=erdtree_tower::Run::new(42,erdtree_tower::Class::Hero);run.affix_equipment=false;
+    run.weapon_preference=Some(erdtree_tower::weapon_training::Preference{kind:9,level:5});
+    let (mut old_count,mut new_count)=(0,0);
+    for seed in 0..5000 {
+        let old=choose(seed,8);let new=choose_for_run(&run,seed,8);
+        assert_eq!((old.id as u32)>>28,(new.id as u32)>>28);
+        old_count+=usize::from(old.id/1_000_000==9);new_count+=usize::from(new.id/1_000_000==9);
+    }
+    assert!(new_count>old_count*3/2,"{old_count} -> {new_count}");
+}
 fn choose_for_run(run:&erdtree_tower::Run,seed:u64,node:usize)->Loot {
     let mut item=choose(seed,node);
+    if !run.preferences().is_empty()&&(item.id as u32)>>28==0 {
+        let ids:Vec<_>=CATALOG.iter().filter(|i|i.kind==ItemKind::Weapon&&i.random_eligible()).map(|i|i.id).collect();
+        let roll=seed.wrapping_mul(0x9e3779b97f4a7c15)^(node as u64).wrapping_mul(7919);
+        let id=ids[erdtree_tower::weapon_training::pick_many(&ids,roll,run.preferences(),None)];
+        let chosen=erdtree_tower::rewards::lookup(id).unwrap();item=Loot{id:id as i32,name:chosen.name};
+    }
     if run.affix_equipment {
         if erdtree_tower::rewards::lookup(item.id as u32).is_some_and(|i|i.kind==ItemKind::Weapon)&&seed%4==0 {
             let armor:Vec<_>=CATALOG.iter().filter(|i|i.kind==ItemKind::Armor&&erdtree_tower::dlc::item_allowed(i.id)).collect();
@@ -104,7 +122,7 @@ fn choose_for_run(run:&erdtree_tower::Run,seed:u64,node:usize)->Loot {
     item
 }
 pub fn chest_choice_for_run(run:&erdtree_tower::Run,node:usize,owned:impl Fn(u32)->bool)->Result<Loot,String> {
-    if !run.affix_equipment{return chest_choice(run.seed,node,owned);}
+    if !run.affix_equipment&&run.preferences().is_empty(){return chest_choice(run.seed,node,owned);}
     for attempt in 0..1024 {
         let item=choose_for_run(run,run.seed.wrapping_add(attempt),node);
         if (item.id as u32)>>28!=4||!owned(item.id as u32){return Ok(item);}

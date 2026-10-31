@@ -155,7 +155,7 @@ fn chest_offers(run:&Run,node:usize)->Vec<Reward> {
         let pool:Vec<_>=crate::elite::EPIC.iter().chain(crate::elite::LEGENDARY).copied()
             .filter(|id|!run.claimed_items.contains(id)&&!result[1..].contains(&Reward::Item(*id))
                 &&lookup(*id).is_some_and(|i|i.kind.allowed(run.class)&&i.random_eligible())).collect();
-        if !pool.is_empty(){result[0]=Reward::Item(pool[crate::mix(roll^3) as usize%pool.len()]);}
+        if !pool.is_empty(){result[0]=Reward::Item(crate::weapon_training::reward(run,&pool,crate::mix(roll^3)));}
     }
     result
 }
@@ -221,13 +221,14 @@ fn ranked_pool(run:&Run,node:usize,spirits:bool,catalog:&[Item],base_only:bool)-
         if kind==ItemKind::Spirit&&!spirits {continue;}
         let mut pool:Vec<_>=catalog.iter().filter(|item|item.kind==kind&&kind.allowed(run.class)&&!run.claimed_items.contains(&item.id)&&crate::dlc::item_allowed(item.id)&&(!base_only||item.random_eligible())).collect();
         // 职业规则 1：武器约七成从职业擅长的类型里出
-        if kind==ItemKind::Weapon&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
+        if kind==ItemKind::Weapon&&run.preferences().is_empty()&&crate::mix(run.reward_seed()^(node as u64*131)^0xc1a5_5e5)%10<7 {
             let favored:Vec<_>=pool.iter().copied().filter(|i|run.class.weapon_types().contains(&((i.id&0x0fffffff)/1_000_000))).collect();
             if !favored.is_empty() {pool=favored;}
         }
         if !pool.is_empty() {
             let roll=crate::mix(run.reward_seed()^(node as u64*97+index as u64+1234));
-            categories.push(Reward::Item(pool[roll as usize%pool.len()].id));
+            let choice=if kind==ItemKind::Weapon&&!run.preferences().is_empty() {Some(crate::weapon_training::pick_many(&pool.iter().map(|i|i.id).collect::<Vec<_>>(),roll,run.preferences(),Some(run.class)))}else{None};
+            categories.push(Reward::Item(pool[choice.unwrap_or(roll as usize%pool.len())].id));
         }
     }
     let mut indexed:Vec<_>=categories.into_iter().enumerate().collect();

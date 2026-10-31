@@ -17,6 +17,8 @@ struct Steam {
 }
 #[derive(Default)]
 pub struct EventSync {
+    pub merchant_phase:u8,
+    pub merchant_bound:bool,
     pub chariot_pose:Option<(u64,[f32;3],Instant)>,
     pub trial_choice:Option<erdtree_tower::regional_events::Trial>,
     pub trial_decision:Option<erdtree_tower::regional_events::Trial>,
@@ -94,6 +96,13 @@ impl Departure {
     }
 }
 impl Link {
+    pub fn merchant_phase(&mut self,phase:u8)->Result<(),String> {
+        if !self.host()||self.defeated||self.stopped.is_some(){return Err("仅房主可结算商人挑战".into());}
+        if phase!=self.event.merchant_phase+1||phase>3{return Err("商人挑战阶段无效".into());}
+        if phase==2&&!self.gate.merchant_ready(){return Err("等待队员加载铃珠猎人".into());}
+        let order=Order::Merchant{epoch:self.epoch,phase};self.send(Send::Broadcast(order.clone()))?;
+        self.accept(&order)?;Ok(())
+    }
     pub fn poll_force_end(&mut self,lobby:bool)->bool {
         if self.host(){return false;}
         if let Err(error)=self.receive_steam(lobby){if !self.queued.iter().any(|e|matches!(e,Receive::Fault(_))) {self.queued.push_back(Receive::Fault(error));}}
@@ -182,6 +191,12 @@ impl Link {
         if run.phase!=erdtree_tower::Phase::Map||run.contract_pending()||!run.available().contains(&node){return Err("请选择可达路线".into());}
         self.selected=Some(node);self.last_report=Instant::now()-Duration::from_secs(1);Ok(())
     }
+    pub fn boss_test(&mut self,run:&Run,test:erdtree_tower::debug::BossTest)->Result<Order,String> {
+        if !self.host()||self.stopped.is_some(){return Err("仅就绪的房主可发起 Boss 测试".into());}
+        let order=self.gate.boss_test(run,test)?;
+        if let Err(error)=self.send(Send::Broadcast(order.clone())) {self.stop(error.clone());return Err(error);}
+        Ok(order)
+    }
     pub fn result(&mut self)->Result<(),String> {
         let order=self.gate.victory()?;self.send(Send::Broadcast(order))?;self.victory=true;Ok(())
     }
@@ -213,6 +228,11 @@ impl Link {
         if let Order::Titles(list)=order {if !self.host(){self.titles=list.iter().take(erdtree_tower::party_roster::MAX_PLAYERS).copied().collect();}return Ok(false);}
         if self.defeated&&!matches!(order,Order::NewRun{..}|Order::Stop(_)){return Ok(false);}
         match order {
+            Order::Merchant{epoch,phase} if *epoch==self.epoch=>{
+                if *phase==self.event.merchant_phase{return Ok(false);}
+                if *phase!=self.event.merchant_phase+1||*phase>3{return Err("商人挑战同步次序无效".into());}
+                self.event.merchant_phase=*phase;
+            },
             Order::Law{epoch,seed,law}=>{
                 if *epoch!=self.epoch||*seed!=self.config.seed||!law.valid(){return Err("律法同步指令无效或过期".into());}
             },
@@ -249,10 +269,10 @@ impl Link {
                 if ballots.is_empty()||ballots.len()>erdtree_tower::party_roster::MAX_PLAYERS||ballots.iter().enumerate().any(|(i,b)|b.player==0||ballots[..i].iter().any(|p|p.player==b.player)){return Err("无效队伍选路状态".into());}
                 self.ballots=ballots.clone();
             },
-            Order::Enter{epoch,has_stonesword_key,..}=>{
+            Order::Enter{epoch,..}|Order::BossTest{epoch,..}=>{
                 if *epoch==self.epoch{return Ok(false);}
                 if *epoch!=self.epoch+1{return Err("节点同步序号不连续，请重新组队".into());}
-                self.event=Default::default();self.ballots.clear();self.selected=None;self.event.has_stonesword_key=*has_stonesword_key;self.epoch=*epoch;self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;self.defeated=false;self.encounter=Some(Instant::now());
+                self.event=Default::default();self.ballots.clear();self.selected=None;self.event.has_stonesword_key=matches!(order,Order::Enter{has_stonesword_key:true,..});self.epoch=*epoch;self.arrived=false;self.bound=false;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;self.defeated=false;self.encounter=Some(Instant::now());
             }
             Order::EventStart(job) if job.epoch==self.epoch=>{
                 if self.event.job==Some(*job){return Ok(false);}
@@ -360,6 +380,8 @@ impl Link {
             self.last_report=Instant::now();
             if let Some(run)=run {
                 let mut report=Report::new(run,self.epoch,self.arrived,self.bound,alive);
+                report.testing=super::debug_menu::enabled();
+                report.merchant_bound=self.event.merchant_bound;
                 report.drawing=self.drawing.request();
                 report.flask_uses=self.law_flasks.uses;
                 report.has_stonesword_key=unsafe {eldenring::cs::PlayerIns::local_player()}.is_ok_and(|p|super::loot::count(unsafe {p.player_game_data.as_ref()},0x40001f40)>0);
@@ -483,6 +505,23 @@ pub fn random_entropy()->Result<u64,String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn boss_test_broadcast_is_host_only_and_resets_both_clients_once() {
+        use super::*;
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        let test=erdtree_tower::debug::BossTest{encounter:3,act:2};
+        let (mut host,_events,commands)=test_link(1);host.epoch=0;
+        let mut report=Report::new(&run,0,false,false,true);report.testing=true;
+        host.gate.report(1,report.clone()).unwrap();host.gate.report(2,report).unwrap();
+        let order=host.boss_test(&run,test).unwrap();
+        assert!(matches!(commands.try_recv().unwrap(),Send::Broadcast(Order::BossTest{epoch:1,..})));
+        assert!(host.accept(&order).unwrap());
+        let (mut guest,_events,commands)=test_link(2);guest.epoch=0;
+        assert!(guest.boss_test(&run,test).is_err());assert!(commands.try_recv().is_err());
+        assert!(guest.accept(&order).unwrap());assert!(!guest.accept(&order).unwrap());
+        assert_eq!(guest.epoch,host.epoch);
+        assert!(!guest.bound&&!guest.spawn&&!guest.fighting&&!guest.arrived&&!guest.victory&&!guest.rewards);
+    }
+    #[test]
     fn shared_guard_completion_survives_scarabs_but_resets_at_next_node() {
         use super::*;
         use erdtree_tower::party_events::{Job,Kind};
@@ -574,6 +613,16 @@ mod tests {
             assert!(link.drawing.canvas.as_ref().unwrap().strokes.is_empty());assert!(link.drawing.request().is_none());
             link.drawing.set_scope(None);assert!(link.drawing.canvas.is_none());
         }
+    }
+    #[test]
+    fn merchant_orders_reject_repeats_gaps_and_old_epochs() {
+        let (mut guest,_,_)=test_link(2);
+        assert!(guest.accept(&Order::Merchant{epoch:4,phase:3}).is_err());
+        for phase in 1..=3 {
+            let order=Order::Merchant{epoch:4,phase};assert!(guest.accept(&order).unwrap());assert!(!guest.accept(&order).unwrap());
+        }
+        assert!(guest.accept(&Order::Merchant{epoch:3,phase:1}).is_err());
+        assert!(guest.merchant_phase(1).is_err());
     }
     fn test_link(player:u64)->(super::Link,super::SyncSender<super::Receive>,super::Receiver<super::Send>) {
         use super::*;
@@ -882,7 +931,7 @@ fn worker(config:Config,commands:Receiver<Send>,events:&SyncSender<Receive>,runn
             for command in commands.try_iter(){if let Send::Broadcast(order)=command {
                 let snapshot=matches!(order,Order::Votes{..}|Order::MapDrawing(_));
                 if matches!(order,Order::Votes{..}) {votes=Some(order.clone());}
-                if matches!(order,Order::Enter{..}|Order::NewRun{..}|Order::Stop(_)) {votes=None;}
+                if matches!(order,Order::Enter{..}|Order::BossTest{..}|Order::NewRun{..}|Order::Stop(_)) {votes=None;}
                 for p in &config.peers{
                     if snapshot&&!connected.contains(&p.player) {continue;}
                     if let Err(error)=host.send(p.player,HostMessage::Game(order.clone())) {

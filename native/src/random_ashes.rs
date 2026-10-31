@@ -6,8 +6,13 @@ pub const SHOP_FIRST:u32=9500000;
 /// 原版的“战灰：无技能”（战技 10，原版中文名是占位的“DLC dummy”）：装上后武器没有战技，不能当随机战灰发
 pub const NO_SKILL:i32=30900;
 fn rollable(gem:i32)->bool {gem!=NO_SKILL&&erdtree_tower::dlc::gem_allowed(gem as u32)}
+// 原版弓弩兼容池中的射击战灰保留给弓弩，普通武器不再从混合池抽到它们。
+static BOW_ASHES:LazyLock<HashSet<i32>>=LazyLock::new(||include_str!("../../scene-assets/protected-ash-pools.tsv").lines().flat_map(|line|{
+    let p:Vec<_>=line.split('\t').collect();
+    if matches!(p[1].parse::<u32>().unwrap(),50|51|53|55|56){p[2].split(',').filter_map(|s|s.parse::<i32>().ok()).collect::<Vec<_>>()}else{Vec::new()}
+}).collect());
 // 没有 DLC 时 DLC 战灰不进池（DLL 启动时已按启动参数设好 DLC 模式，池子第一次用到时才建）
-static POOL:LazyLock<Vec<i32>>=LazyLock::new(||include_str!("../../scene-assets/unrestricted-ashes.txt").lines().map(|s|s.parse().unwrap()).filter(|gem:&i32|rollable(*gem)).collect());
+static POOL:LazyLock<Vec<i32>>=LazyLock::new(||include_str!("../../scene-assets/unrestricted-ashes.txt").lines().map(|s|s.parse().unwrap()).filter(|gem:&i32|rollable(*gem)&&!BOW_ASHES.contains(gem)).collect());
 static WEAPONS:LazyLock<HashSet<u32>>=LazyLock::new(||include_str!("../../scene-assets/random-ash-weapon-rows.txt").lines().map(|s|s.parse().unwrap()).collect());
 static PROTECTED:LazyLock<std::collections::HashMap<u32,Vec<i32>>>=LazyLock::new(||include_str!("../../scene-assets/protected-ash-pools.tsv").lines().map(|line|{
     let p:Vec<_>=line.split('\t').collect();(p[0].parse().unwrap(),p[2].split(',').filter(|s|!s.is_empty()).map(|s|s.parse().unwrap()).filter(|gem:&i32|rollable(*gem)).collect())
@@ -51,7 +56,7 @@ pub fn give(entries:&[(i32,i32,i32)])->Result<(),String> {
 }
 fn custom_fields(weapon:u32,gem:i32)->(i32,u8,i32) {((weapon/100*100) as i32,(weapon%100) as u8,gem)}
 pub fn shop_weapon(params:&mut SoloParamRepository,slot:u32,weapon:u32)->Result<i32,String> {
-    if slot>=super::native_shop::STOCK_COUNT{return Err("无效商店槽位".into());}
+    if slot>=super::native_shop::MAX_STOCK{return Err("无效商店槽位".into());}
     let gem=draw(weapon)?;
     if gem<0{return Err("该武器没有兼容随机战灰".into());}
     if params.get::<EquipParamGem>(gem as u32).is_none(){return Err("随机战灰参数缺失".into());}
@@ -66,6 +71,22 @@ pub fn shop_weapon(params:&mut SoloParamRepository,slot:u32,weapon:u32)->Result<
 mod tests {
     use super::*;
     #[test]
+    fn ordinary_weapons_never_roll_bow_skills_but_bows_keep_them() {
+        let bows=[40000,40100,40200,40400,40500,40600,548000];
+        assert!(POOL.iter().all(|gem|!bows.contains(gem)),"ordinary weapons still draw bow-only skills");
+        let run=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);
+        for weapon in [1000000,1000025,2000000] {for entropy in 0..1000 {
+            assert!(!bows.contains(&choose_for(weapon,entropy)));
+            assert!(!bows.contains(&preview(&run,entropy as usize,0,weapon)));
+        }}
+        for line in include_str!("../../scene-assets/protected-ash-pools.tsv").lines() {
+            let p:Vec<_>=line.split('\t').collect();let kind:u32=p[1].parse().unwrap();
+            if !matches!(kind,50|51|53|55|56){continue;}
+            let weapon=p[0].parse().unwrap();let allowed:Vec<i32>=p[2].split(',').filter_map(|g|g.parse().ok()).filter(|g|rollable(*g)).collect();
+            for entropy in 0..allowed.len(){assert_eq!(choose_for(weapon,entropy as u64),allowed[entropy]);}
+        }
+    }
+    #[test]
     fn the_no_skill_ash_is_never_rolled_or_shown_as_a_placeholder() {
         assert!(!super::POOL.contains(&super::NO_SKILL));
         assert!(super::PROTECTED.values().all(|pool|!pool.contains(&super::NO_SKILL)));
@@ -77,7 +98,7 @@ mod tests {
         let run=erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai);
         for line in include_str!("../../scene-assets/protected-ash-pools.tsv").lines() {
             let p:Vec<_>=line.split('\t').collect();let id:u32=p[0].parse().unwrap();
-            let pool:Vec<i32>=p[2].split(',').filter(|s|!s.is_empty()).map(|s|s.parse().unwrap()).collect();
+            let pool:Vec<i32>=p[2].split(',').filter(|s|!s.is_empty()).map(|s|s.parse().unwrap()).filter(|gem:&i32|rollable(*gem)).collect();
             if pool.is_empty(){assert!(!eligible(id),"Protected weapon {id} must retain its default skill");}
             for entropy in 0..pool.len(){assert_eq!(choose_for(id,entropy as u64),pool[entropy]);}
             for node in 0..20 {
@@ -116,7 +137,7 @@ mod tests {
         assert_eq!(custom_fields(160001218,400000),(160001200,18,400000));
     }
     #[test]
-    fn base_and_dlc_ashes_are_all_reachable_without_weapon_type_filtering() {
+    fn non_bow_base_and_dlc_ashes_remain_reachable() {
         assert!(POOL.len()>100);assert!(POOL.iter().any(|id|*id>=400000));
         let seen:std::collections::HashSet<_>=(0..POOL.len()).map(|n|choose(n as u64)).collect();
         assert_eq!(seen.len(),POOL.len());

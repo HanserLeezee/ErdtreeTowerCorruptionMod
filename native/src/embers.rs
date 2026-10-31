@@ -13,9 +13,55 @@ const FLASH:i32=FIRST+40;
 /// 灵唤铃的号令：挂在召唤物身上
 const SPIRIT_COMMAND:i32=FIRST+50;
 fn frenzy_effect(stack:u8)->i32 {FIRST+30+i32::from(stack)}
-/// 处刑之链：常驻 → 致命一击时触发 → 短暂的标记（运行时看到标记出现就加一层）
+/// 旧版本常驻效果只用于清理；原生处决由攻击表的 350501 事件识别。
 const CHAIN_RESIDENT:i32=FIRST+5;
+#[cfg(test)]
 const CHAIN_MARK:i32=FIRST+7;
+use std::sync::atomic::{AtomicUsize,AtomicBool,Ordering};
+static APPLY_ORIGINAL:AtomicUsize=AtomicUsize::new(0);
+static CHAIN_OWNER:AtomicUsize=AtomicUsize::new(0);
+static CRITICAL_PENDING:AtomicBool=AtomicBool::new(false);
+static CRITICAL_HOOK_READY:AtomicBool=AtomicBool::new(false);
+fn own_critical(owner:usize,source:usize,effect:i32)->bool {owner!=0&&source==owner&&effect==350501}
+unsafe extern "C" fn observe_native_critical(_target:usize,effect:i32,source:usize) {
+    if own_critical(CHAIN_OWNER.load(Ordering::Relaxed),source,effect){CRITICAL_PENDING.store(true,Ordering::Release);}
+}
+#[unsafe(naked)]
+unsafe extern "C" fn critical_entry() {
+    core::arch::naked_asm!(
+        "sub rsp, 0xc8", "mov [rsp+0x20], rax", "mov [rsp+0x28], rcx", "mov [rsp+0x30], rdx",
+        "mov [rsp+0x38], r8", "mov [rsp+0x40], r9", "mov [rsp+0x48], r10", "mov [rsp+0x50], r11",
+        "movdqu [rsp+0x60], xmm0", "movdqu [rsp+0x70], xmm1", "movdqu [rsp+0x80], xmm2",
+        "movdqu [rsp+0x90], xmm3", "movdqu [rsp+0xa0], xmm4", "movdqu [rsp+0xb0], xmm5",
+        "call {}", "movdqu xmm0, [rsp+0x60]", "movdqu xmm1, [rsp+0x70]", "movdqu xmm2, [rsp+0x80]",
+        "movdqu xmm3, [rsp+0x90]", "movdqu xmm4, [rsp+0xa0]", "movdqu xmm5, [rsp+0xb0]",
+        "mov rax, [rsp+0x20]", "mov rcx, [rsp+0x28]", "mov rdx, [rsp+0x30]", "mov r8, [rsp+0x38]",
+        "mov r9, [rsp+0x40]", "mov r10, [rsp+0x48]", "mov r11, [rsp+0x50]", "add rsp, 0xc8",
+        "jmp qword ptr [rip+{}]",sym observe_native_critical,sym APPLY_ORIGINAL);
+}
+pub unsafe fn install_critical_trace()->Result<(),String> {
+    use hudhook::mh::{MhHook,MH_EnableHook};
+    use std::ffi::c_void;
+    let address=super::items::checked_function(0x3e8e70,&[0x48,0x8b,0xc4,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x50])? as *mut c_void;
+    let hook=unsafe{MhHook::new(address,critical_entry as *mut c_void)}.map_err(|e|format!("Critical trace hook: {e:?}"))?;
+    APPLY_ORIGINAL.store(hook.trampoline() as usize,Ordering::Release);
+    unsafe{MH_EnableHook(address)}.ok().map_err(|e|format!("Critical trace enable: {e:?}"))?;
+    CRITICAL_HOOK_READY.store(true,Ordering::Release);
+    super::log("CHAIN_TEST native attack effect listener installed: 350501 / 3e8e70");Ok(())
+}
+#[derive(Clone,Copy,Default)]
+pub struct ChainTrace {pub level:u32,pub resident:bool,pub marker:bool,pub rate:Option<f32>,pub critical_only:bool,pub effects:usize}
+static CHAIN_TRACE:std::sync::Mutex<ChainTrace>=std::sync::Mutex::new(ChainTrace{level:0,resident:false,marker:false,rate:None,critical_only:false,effects:0});
+static CRITICAL_EVENTS:std::sync::atomic::AtomicU32=std::sync::atomic::AtomicU32::new(0);
+pub fn chain_trace()->(ChainTrace,u32) {(CHAIN_TRACE.lock().map(|t|*t).unwrap_or_default(),CRITICAL_EVENTS.load(std::sync::atomic::Ordering::Relaxed))}
+pub fn begin_chain_test(){CRITICAL_EVENTS.store(0,std::sync::atomic::Ordering::Relaxed);CRITICAL_PENDING.store(false,Ordering::Release);}
+fn observe_chain(chr:&ChrIns,level:u32) {
+    let present:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
+    let active:Vec<_>=slots(Ember::Chain).unwrap().into_iter().filter(|id|present.contains(id)).collect();
+    let row=unsafe{SoloParamRepository::instance()}.ok().and_then(|p|active.first().and_then(|id|p.get::<SpEffectParam>(*id as u32)));
+    if let Ok(mut trace)=CHAIN_TRACE.lock(){*trace=ChainTrace{level,resident:CRITICAL_HOOK_READY.load(Ordering::Acquire),marker:CRITICAL_PENDING.load(Ordering::Acquire),
+        rate:row.map(|r|r.physics_attack_rate()),critical_only:row.is_some_and(|r|r.state_info()==367&&r.throw_attack_param_change()),effects:active.len()};}
+}
 fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,CHAIN_RESIDENT].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
 /// 叠层余烬不设上限：每种两行轮换（灵魂收容挂在召唤物身上，其余挂在玩家身上）。
 /// 层数变了就把新倍率写进没挂着的那一行、换上它，再摘掉旧的那一行；不改正在生效的那一行
@@ -72,8 +118,9 @@ pub fn held(run:Option<&Run>)->Vec<Ember> {
 pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight) {
     let mut want=Vec::new();
     let embers=held(run);
+    let owner=if embers.contains(&Ember::Chain){std::ptr::from_ref(chr) as usize}else{0};
+    if CHAIN_OWNER.swap(owner,Ordering::AcqRel)!=owner{CRITICAL_PENDING.store(false,Ordering::Release);}
     if embers.contains(&Ember::Execution) {want.push(EXECUTION);}
-    if embers.contains(&Ember::Chain) {want.push(CHAIN_RESIDENT);}
     if fight.revenge_active() {want.push(REVENGE);}
     if fight.frenzy>0 {want.push(frenzy_effect(fight.frenzy));}
     let present:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
@@ -83,8 +130,9 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight) {
         swap(chr,&present,ember,scaled_slot(ember,level,&present));
     }
     for id in player_ids() {if present.contains(&id)&&!want.contains(&id){chr.remove_speffect(id);}}
-    if want.is_empty()||!ready(&want) {return;}
+    if want.is_empty()||!ready(&want) {observe_chain(chr,stacks.level(Ember::Chain));return;}
     for id in want {if !present.contains(&id){chr.apply_speffect(id,false);}}
+    observe_chain(chr,stacks.level(Ember::Chain));
 }
 fn distance(a:[f32;3],b:[f32;3])->f32 {((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+(a[2]-b[2]).powi(2)).sqrt()}
 /// slot：这场战斗敌人名单里的位置（联机时房主与成员一致，成员发来的敌人侧效果按它找敌人）
@@ -104,7 +152,7 @@ pub struct Fight {
     /// 上一帧在场的召唤物位置（灵骸迸裂在它消失时引爆）
     spirit:Option<[f32;3]>,
     /// 上一帧玩家身上有处刑之链的致命一击标记
-    marked:bool,
+    critical_edge:CriticalEdge,
     /// 房主：每个成员已执行到的敌人侧效果序号
     remote:Vec<(u64,u32)>,
     /// 联机时这场战斗是否已记过第一次“自己的命中”与“别人的命中”（日志，用来核对 last_hit_by 的归属）
@@ -125,9 +173,13 @@ impl Fight {
         let Some(player)=world.main_player.as_ref() else{return events};
         if player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag() {return events;}
         if has(Ember::Chain) {
-            let marked=player.chr_ins.special_effect.entries().any(|e|e.param_id==CHAIN_MARK);
-            if marked&&!self.marked {events.gains.push(Gain::Critical);}
-            self.marked=marked;
+            let marked=CRITICAL_PENDING.swap(false,Ordering::AcqRel);
+            let throwing=unsafe{std::ptr::addr_of!(player.chr_ins.modules.throw.throw_node.throw_state).cast::<u32>().read()}==3;
+            if self.critical_edge.observe(marked,throwing) {
+                events.gains.push(Gain::Critical);
+                let count=CRITICAL_EVENTS.fetch_add(1,std::sync::atomic::Ordering::Relaxed)+1;
+                super::log(format!("CHAIN_TEST real critical marker observed count={count}"));
+            }
         }
         let data=&player.chr_ins.modules.data;
         let (hp,max_hp,stamina,max_stamina)=(data.hp,data.max_hp,data.stamina,data.max_stamina);
@@ -283,6 +335,29 @@ impl Fight {
             self.strike(world,index,request.strike);
         }
     }
+}
+#[derive(Default)]
+struct CriticalEdge {counted:bool,clear_frames:u8}
+impl CriticalEdge {
+    fn observe(&mut self,marked:bool,throwing:bool)->bool {
+        if marked||throwing {self.clear_frames=0;}else{self.clear_frames=self.clear_frames.saturating_add(1);if self.clear_frames>=2{self.counted=false;}}
+        if marked&&!self.counted {self.counted=true;true}else{false}
+    }
+}
+#[test]
+fn critical_marker_counts_once_per_execution_not_per_damage_stage() {
+    let mut edge=CriticalEdge::default();
+    assert!(!edge.observe(false,false));assert!(!edge.observe(false,true));
+    assert!(edge.observe(true,true));assert!(!edge.observe(true,true));
+    assert!(!edge.observe(false,true));assert!(!edge.observe(true,true));
+    assert!(!edge.observe(true,false));assert!(!edge.observe(false,false));assert!(!edge.observe(false,false));
+    assert!(edge.observe(true,true));
+}
+#[test]
+fn critical_listener_rejects_other_players_and_noncritical_effects() {
+    assert!(own_critical(123,123,350501));
+    assert!(!own_critical(123,456,350501));assert!(!own_critical(0,0,350501));
+    for effect in [350500,350502,9670007,0,-1]{assert!(!own_critical(123,123,effect));}
 }
 
 #[cfg(test)]

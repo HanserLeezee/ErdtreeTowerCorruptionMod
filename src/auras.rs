@@ -7,7 +7,7 @@ pub const EFFECT_FIRST:i32=9870000;
 pub struct Aura {pub id:u8,pub name:&'static str,pub vfx:i32,pub source:&'static str,pub unlock:&'static str,pub color:u32}
 /// 编号写进存档，只能追加；vfx 是原版 SpEffectVfxParam 的行（都是挂在身上的常驻光效），与 scene-builder/AuraAssets.cs 一致
 pub const AURAS:[Aura;9]=[
-    Aura{id:1,name:"余烬之焰",vfx:1605000,source:"火焰赐我力量",unlock:"默认拥有",color:0xE8602C},
+    Aura{id:1,name:"余烬之焰",vfx:1605000,source:"火焰赐我力量",unlock:"无需解锁，手动启用",color:0xE8602C},
     Aura{id:2,name:"赐福微光",vfx:1643000,source:"赐福之恩",unlock:"完成 5 局旅程",color:0x9CD86A},
     Aura{id:3,name:"疾风之息",vfx:5846,source:"风之结晶露滴",unlock:"抵达第二幕",color:0x8CE0D0},
     Aura{id:4,name:"刺客暗影",vfx:1651000,source:"刺客的手法",unlock:"抵达第三幕",color:0x8C7CB8},

@@ -1,29 +1,41 @@
 //! 职业传承：局外养成，不加数值。每个职业单独累计熟练度经验，升级后解锁新的开局护符，
-//! 可以用来替换默认的祖灵角；开局时把选用的护符写进 Run，所以更换从下一局开始生效。
+//! 可以用来替换这个职业默认的开局护符；开局时把选用的护符写进 Run，所以更换从下一局开始生效。
 use serde::{Deserialize,Serialize};
 use crate::{Class,Phase,Run,RuleResult,journal::{Outcome,Record}};
 
 pub const MAX_LEVEL:u8=10;
-/// 默认的开局护符：祖灵角
+/// 召唤师默认的开局护符：祖灵角（击倒敌人回复专注，给召唤用）
 pub const DEFAULT_TALISMAN:u32=6110;
+/// 每个职业默认的开局护符：按打法挑的原版基础护符，强度与祖灵角同档
+pub fn default_talisman(class:Class)->u32 {
+    match class {
+        Class::Vagabond=>1210,   // 守誓骑士：大山羊护符（强韧度）
+        Class::Hero=>2180,       // 狂战士：钩爪护符（跳跃攻击）
+        Class::Samurai=>5030,    // 影刃：掠夺浮雕坠饰（击倒敌人回复生命）
+        Class::Astrologer=>1010, // 星辉术士：蓝琥珀链坠（专注上限）
+        Class::Prophet=>5020,    // 祷誓者：恩惠露滴护符（缓慢回复生命）
+        Class::Confessor=>DEFAULT_TALISMAN, // 召唤师：祖灵角
+    }
+}
 /// 新开局护符的解锁等级（与 talismans() 的第 2～5 项对应）
 pub const UNLOCKS:[u8;4]=[1,3,6,10];
-/// 每个职业可选的开局护符（护符编号），第一项是默认的祖灵角，其余按 UNLOCKS 的等级解锁。
+/// 每个职业可选的开局护符（护符编号），第一项是这个职业默认的护符（default_talisman），其余按 UNLOCKS 的等级解锁。
 /// 都是原版的基础护符，按职业的打法挑选，强度与祖灵角同档
 pub fn talismans(class:Class)->[u32;5] {
+    // 按强度从弱到强排：越强的越晚解锁（Lv1、3、6、10）
     let unlocks=match class {
-        Class::Vagabond=>[4000,2200,4100,1150],   // 守誓骑士：龙徽盾护符、曲剑护符、大盾护符、绿龟护符
-        Class::Hero=>[2130,2070,2190,2040],       // 狂战士：斧护符、大槌护符、咆哮链坠、红羽七刃剑
-        Class::Samurai=>[2090,2150,5050,2080],    // 影刃：短剑护符、硬箭护符、染红凶刀、带翼剑徽章
-        Class::Astrologer=>[3000,6020,2110,5060], // 星辉术士：魔法师球护符、卡利亚徽章、蓝色舞娘、染蓝凶刀
-        Class::Prophet=>[3040,3060,6020,4090],    // 祷誓者：信徒的立誓布、古王护符、卡利亚徽章、献斗盾护符
-        Class::Confessor=>[1150,6010,3040,4000],  // 召唤师：绿龟护符、隐身面纱、信徒的立誓布、龙徽盾护符
+        Class::Vagabond=>[2200,4100,4000,1150],   // 守誓骑士：曲剑护符、大盾护符、龙徽盾护符、绿龟护符
+        Class::Hero=>[2070,2190,2130,2040],       // 狂战士：大槌护符、咆哮链坠、斧护符、红羽七刃剑
+        Class::Samurai=>[2150,5050,2090,2080],    // 影刃：硬箭护符、染红凶刀、短剑护符、带翼剑徽章
+        Class::Astrologer=>[5060,3000,6020,2110], // 星辉术士：染蓝凶刀、魔法师球护符、卡利亚徽章、蓝色舞娘
+        Class::Prophet=>[6020,3060,3040,4090],    // 祷誓者：卡利亚徽章、古王护符、信徒的立誓布、献斗盾护符
+        Class::Confessor=>[6010,3040,4000,1150],  // 召唤师：隐身面纱、信徒的立誓布、龙徽盾护符、绿龟护符
     };
-    [DEFAULT_TALISMAN,unlocks[0],unlocks[1],unlocks[2],unlocks[3]]
+    [default_talisman(class),unlocks[0],unlocks[1],unlocks[2],unlocks[3]]
 }
-/// 第 index 个开局护符的解锁等级（祖灵角为 0）
+/// 第 index 个开局护符的解锁等级（默认护符为 0）
 pub fn unlock_level(index:usize)->u8 {if index==0 {0}else{UNLOCKS[index-1]}}
-/// 一个职业的传承：熟练度经验与选用的开局护符（0 表示默认的祖灵角）
+/// 一个职业的传承：熟练度经验与选用的开局护符（0 表示这个职业默认的护符）
 #[derive(Clone,Debug,Default,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(default)]
 pub struct ClassLegacy {pub xp:u32,pub talisman:u32}
@@ -40,19 +52,29 @@ impl ClassLegacy {
     pub fn unlocked(&self,class:Class,talisman:u32)->bool {
         talismans(class).iter().position(|id|*id==talisman).is_some_and(|i|self.level()>=unlock_level(i))
     }
-    /// 开局实际使用的护符：选用的护符已解锁时用它，否则用祖灵角
-    pub fn chosen(&self,class:Class)->u32 {if self.talisman!=0&&self.unlocked(class,self.talisman) {self.talisman}else{DEFAULT_TALISMAN}}
+    /// 开局实际使用的护符：选用的护符已解锁时用它，否则用这个职业默认的护符
+    pub fn chosen(&self,class:Class)->u32 {if self.talisman!=0&&self.unlocked(class,self.talisman) {self.talisman}else{default_talisman(class)}}
     pub fn choose(&mut self,class:Class,talisman:u32)->Result<(),&'static str> {
         if !talismans(class).contains(&talisman) {return Err("这个职业不能选用这枚护符");}
         if !self.unlocked(class,talisman) {return Err("熟练度不足，尚未解锁");}
-        self.talisman=if talisman==DEFAULT_TALISMAN {0}else{talisman};Ok(())
+        self.talisman=if talisman==default_talisman(class) {0}else{talisman};Ok(())
     }
 }
 /// 一个角色存档下全部职业的传承
 #[derive(Clone,Debug,Default,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(default)]
-pub struct Legacy {pub classes:Vec<(Class,ClassLegacy)>}
+pub struct Legacy {pub classes:Vec<(Class,ClassLegacy)>,pub training:crate::weapon_training::Training}
 impl Legacy {
+    pub fn training_balance(&self)->u32 {self.classes.iter().fold(0u32,|n,(_,c)|n.saturating_add(c.xp)).saturating_sub(self.training.spent())}
+    pub fn upgrade_training(&mut self,kind:u8)->Result<(),&'static str> {
+        if !crate::weapon_training::known(kind){return Err("无效的武器类型");}
+        let cost=self.training.cost_for(kind).ok_or("此类武器偏好已满级")?;
+        if self.training_balance()<cost{return Err("传承点不足");}
+        if let Some(p)=self.training.levels.iter_mut().find(|p|p.kind==kind){p.level+=1;}
+        else {self.training.levels.push(crate::weapon_training::Preference{kind,level:1});}
+        if !self.training.enabled.contains(&kind){self.training.enabled.push(kind);}
+        Ok(())
+    }
     pub fn get(&self,class:Class)->ClassLegacy {self.classes.iter().find(|(c,_)|*c==class).map(|(_,l)|l.clone()).unwrap_or_default()}
     pub fn get_mut(&mut self,class:Class)->&mut ClassLegacy {
         if let Some(i)=self.classes.iter().position(|(c,_)|*c==class) {return &mut self.classes[i].1;}
@@ -64,7 +86,9 @@ impl Legacy {
         let Ok(value)=serde_json::from_str::<serde_json::Value>(text) else{return Self::default();};
         let classes=value.get("classes").and_then(|v|v.as_array()).map_or_else(Vec::new,|entries|entries.iter()
             .filter_map(|entry|serde_json::from_value::<(Class,ClassLegacy)>(entry.clone()).ok()).collect());
-        Self{classes}
+        let mut training=value.get("training").and_then(|v|serde_json::from_value::<crate::weapon_training::Training>(v.clone()).ok()).filter(|t|t.valid()).unwrap_or_default();
+        training.migrate();
+        Self{classes,training}
     }
     /// 记一局结算：给这一局的职业加经验，返回变化（调试旅程不计）
     pub fn award(&mut self,record:&Record)->Option<Gain> {
@@ -127,18 +151,21 @@ mod tests {
     fn talismans_unlock_by_level_per_class() {
         for class in Class::PLAYABLE {
             let list=talismans(class);
-            assert_eq!(list[0],DEFAULT_TALISMAN);
+            assert_eq!(list[0],default_talisman(class));
             assert!(list.iter().enumerate().all(|(i,id)|!list[..i].contains(id)),"{class:?} has duplicates");
             assert!(list.iter().all(|id|crate::rewards::lookup(0x20000000|id).is_some()),"{class:?} lists a talisman outside the catalog");
         }
+        let defaults:Vec<_>=Class::PLAYABLE.iter().map(|c|default_talisman(*c)).collect();
+        assert!(defaults.iter().enumerate().all(|(i,id)|!defaults[..i].contains(id)),"every class starts with a different talisman");
         let mut l=ClassLegacy::default();
-        assert_eq!(l.chosen(Class::Samurai),DEFAULT_TALISMAN);
-        assert_eq!(l.choose(Class::Samurai,2090),Err("熟练度不足，尚未解锁"));
-        l.xp=100;l.choose(Class::Samurai,2090).unwrap();
-        assert_eq!((l.chosen(Class::Samurai),l.chosen(Class::Hero)),(2090,DEFAULT_TALISMAN),"another class does not inherit the choice");
+        assert_eq!(l.chosen(Class::Samurai),5030);
         assert_eq!(l.choose(Class::Samurai,2150),Err("熟练度不足，尚未解锁"));
+        l.xp=100;l.choose(Class::Samurai,2150).unwrap();
+        assert_eq!((l.chosen(Class::Samurai),l.chosen(Class::Hero)),(2150,2180),"another class does not inherit the choice");
+        assert_eq!(l.choose(Class::Samurai,2090),Err("熟练度不足，尚未解锁"),"the dagger talisman now comes at Lv 6");
         assert_eq!(l.choose(Class::Samurai,4000),Err("这个职业不能选用这枚护符"));
-        l.choose(Class::Samurai,DEFAULT_TALISMAN).unwrap();assert_eq!(l.talisman,0);
+        assert_eq!(l.choose(Class::Samurai,DEFAULT_TALISMAN),Err("这个职业不能选用这枚护符"),"the horn belongs to the summoner");
+        l.choose(Class::Samurai,5030).unwrap();assert_eq!(l.talisman,0);
     }
     #[test]
     fn classes_level_independently_and_debug_runs_earn_nothing() {
@@ -146,7 +173,7 @@ mod tests {
         let record=Record{class:Class::Samurai,act:2,result:Outcome::Dead,fights:vec![fight(1,"怪物",true),fight(1,"精英",true),fight(1,"Boss",true),fight(2,"怪物",false)],..Default::default()};
         assert_eq!(earned(&record),8+20+50+40);
         let gain=legacy.award(&record).unwrap();
-        assert_eq!((gain.xp,gain.before,gain.after,gain.unlocked()),(118,0,1,vec![2090]));
+        assert_eq!((gain.xp,gain.before,gain.after,gain.unlocked()),(118,0,1,vec![2150]));
         assert_eq!((legacy.get(Class::Samurai).level(),legacy.get(Class::Hero).level()),(1,0));
         assert_eq!(legacy.award(&Record{debug:true,..record.clone()}),None);
         assert_eq!(Legacy::decode(&legacy.encode()),legacy);
@@ -154,7 +181,7 @@ mod tests {
         let law=(0..27).fold(crate::law::Law::default(),|l,i|l.toggle(i));
         let won=Record{result:Outcome::Won,act:3,law,fights:vec![],battles:10,..Default::default()};
         assert_eq!(earned(&won),(80+120+150)*5/2);
-        assert_eq!(Gain{class:Class::Hero,xp:0,before:2,after:6}.unlocked(),vec![2070,2190]);
+        assert_eq!(Gain{class:Class::Hero,xp:0,before:2,after:6}.unlocked(),vec![2190,2130]);
     }
     #[test]
     fn start_talisman_is_set_once_at_the_start_and_leaves_the_reward_pool() {

@@ -975,6 +975,15 @@
   margin: 0 0 6px;
 }
 
+.history-actions { display: flex; gap: 10px; margin: 10px 0 16px; }
+.history-actions button { padding: 6px 14px; border: 1px solid rgba(216,168,72,.45); border-radius: 5px; color: var(--c-text); }
+.history-actions button:hover { background: var(--c-hover); }
+.history-actions button:disabled { opacity: .45; cursor: wait; }
+.history-entry { border-top: 1px solid rgba(255,255,255,.12); padding: 12px 0; }
+.history-entry summary { cursor: pointer; color: var(--c-text); font-weight: 600; }
+.history-entry summary span { display: block; font-size: 12px; font-weight: normal; color: var(--c-text-dim); margin: 4px 0; }
+.history-entry pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 12px 0 0; color: var(--c-text); }
+
 /* ================= 设置弹窗 =================
    几何与配色来自官方真实 CSS：
      .hyp-setting-dialog { radius 12px; 1px solid Divider-Secondary; overflow hidden }

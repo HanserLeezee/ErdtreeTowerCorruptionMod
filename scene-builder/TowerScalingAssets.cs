@@ -5,9 +5,8 @@ using SoulsFormats;
 static class TowerScalingAssets {
     public const int GrowthFirst=9640000,GrowthSteps=11;
     public const float GrowthHp=0.03f,GrowthAttack=0.015f;
-    // Boss 房的 Boss（BossAssets 的 Boss 版参数行，不含精英版）在档位之外再挂一个加成：生命与攻击倍率
+    // 旧 Boss 专属加成，迁移时移除引用及参数行。
     public const int BossBonus=9640050;
-    public const float BossHp=1.25f,BossAttack=1.10f;
     // 本体区域强度 7000–7280；DLC 的区域强度 20007000–20007150（敌人）与 20007200–20007350（人形 NPC），之后追加的 DLC Boss 带着它们
     // 爬塔的档位效果（TierFirst 起）也算区域强度，重跑时会被替换
     public static bool AreaScaling(int id)=>id>=7000&&id<=7280||id>=20007000&&id<=20007350||id>=TierFirst&&id<TierFirst+300;
@@ -40,12 +39,6 @@ static class TowerScalingAssets {
         var free=slots.FirstOrDefault(s=>I(row,s)==-1)??throw new Exception($"No free SpEffect slot on NpcParam {row.ID}");
         row[free].Value=Convert.ChangeType(TierEffect(tier),row[free].Value.GetType());
     }
-    static PARAM.Row Bonus(PARAM effects) {
-        var row=Growth(effects,1);row.ID=BossBonus;row.Name="Tower boss room bonus";
-        row["maxHpRate"].Value=Convert.ChangeType(BossHp,row["maxHpRate"].Value.GetType());
-        foreach(var key in Attacks)row[key].Value=BossAttack;
-        return row;
-    }
     static PARAM.Row Growth(PARAM effects,int step) {
         var neutral=effects.Rows.Single(r=>r.ID==90400);
         var row=new PARAM.Row(effects.Rows.Single(r=>r.ID==7030)){ID=GrowthFirst+step,Name=$"Tower layer growth {step}"};
@@ -76,10 +69,7 @@ static class TowerScalingAssets {
             if(tier<1||tier>21)throw new Exception($"Invalid tier {tier} for act {t.Act} {t.Role}");
             var old=Slots(row).Select(s=>I(row,s)).Where(AreaScaling).ToList();
             Apply(row,tier);
-            if(t.Room&&!Slots(row).Any(s=>I(row,s)==BossBonus)) {
-                var free=Slots(row).FirstOrDefault(s=>I(row,s)==-1)??throw new Exception($"No free SpEffect slot for the boss bonus on NpcParam {row.ID}");
-                row[free].Value=Convert.ChangeType(BossBonus,row[free].Value.GetType());
-            }
+            foreach(var slot in Slots(row).Where(s=>I(row,s)==BossBonus))row[slot].Value=Convert.ChangeType(-1,row[slot].Value.GetType());
             int hp=I(row,"hp");int oldId=old.FirstOrDefault(-1);int newId=TierEffect(tier);
             float Hp(int id)=>(area.TryGetValue(id,out var e)||previous.TryGetValue(id,out e))?Convert.ToSingle(e["maxHpRate"].Value):1f;
             float Atk(int id)=>id==oldId&&previous.TryGetValue(id,out var p)?Convert.ToSingle(p["physicsAttackPowerRate"].Value):area.TryGetValue(id,out var e)?Convert.ToSingle(e["physicsAttackPowerRate"].Value):1f;
@@ -93,10 +83,10 @@ static class TowerScalingAssets {
             for(int step=1;step<=GrowthSteps;step++)effects.Rows.Add(Growth(effects,step));
             effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));
         }
-        // Boss 加成：自己的效果行，数值变了就替换
+        // 不再叠加 Boss 房专属生命和攻击倍率。
         effects.Rows.RemoveAll(r=>r.ID==BossBonus);
         if(effects.Rows.Any(r=>r.ID>GrowthFirst+GrowthSteps&&r.ID<GrowthFirst+100&&r.ID!=BossBonus))throw new Exception("Boss bonus range already in use");
-        effects.Rows.Add(Bonus(effects));effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));
+        effects.Rows.Sort((a,b)=>a.ID.CompareTo(b.ID));
         npcFile.Bytes=npcs.Write();effectFile.Bytes=effects.Write();
         var others=reg.Files.Where(f=>f!=npcFile&&f!=effectFile).ToDictionary(f=>f.Name,f=>f.Bytes.ToArray());
         Directory.CreateDirectory(output);var path=Path.Combine(output,"regulation.bin");
@@ -114,14 +104,13 @@ static class TowerScalingAssets {
             if(ids.Contains(row.ID)) {
                 var slots=Slots(row);var t=targets.First(x=>x.Id==row.ID);
                 if(slots.Select(s=>I(row,s)).Count(AreaScaling)!=1||!slots.Any(s=>I(row,s)==TierEffect(Tier(tiers,t))))throw new Exception($"Scaling not applied: {row.ID}");
-                foreach(var s in slots)if(!AreaScaling(I(row,s))&&!AreaScaling(I(old,s))&&I(row,s)!=I(old,s)&&!(t.Room&&I(old,s)==-1&&I(row,s)==BossBonus))throw new Exception($"Non-scaling effect changed: {row.ID} {s}");
-                if(slots.Count(s=>I(row,s)==BossBonus)!=(t.Room?1:0))throw new Exception($"Boss bonus must be on boss-room rows only: {row.ID}");
+                foreach(var s in slots)if(!AreaScaling(I(row,s))&&!AreaScaling(I(old,s))&&I(row,s)!=I(old,s)&&!(I(old,s)==BossBonus&&I(row,s)==-1))throw new Exception($"Non-scaling effect changed: {row.ID} {s}");
+                if(slots.Any(s=>I(row,s)==BossBonus))throw new Exception($"Retired Boss bonus still attached: {row.ID}");
             }
         }
         var effectsCheck=PARAM.Read(check.Files.Single(f=>f.Name==effectFile.Name).Bytes);effectsCheck.ApplyParamdef(effects.AppliedParamdef);
         if(effectsCheck.Rows.Count!=effects.Rows.Count||Enumerable.Range(1,GrowthSteps).Any(s=>!effectsCheck.Rows.Any(r=>r.ID==GrowthFirst+s)))throw new Exception("Growth effects missing");
-        var bonus=effectsCheck.Rows.Single(r=>r.ID==BossBonus);
-        if(Convert.ToSingle(bonus["maxHpRate"].Value)!=BossHp||Attacks.Any(a=>Convert.ToSingle(bonus[a].Value)!=BossAttack))throw new Exception("Boss bonus effect mismatch");
+        if(effectsCheck.Rows.Any(r=>r.ID==BossBonus)||after.Rows.Any(r=>Slots(r).Any(s=>I(r,s)==BossBonus)))throw new Exception("Retired Boss bonus remains in regulation");
         File.WriteAllLines(Path.Combine(output,"tower-scaling-report.tsv"),report);
         string Hash(string p)=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p)));
         File.WriteAllText(Path.Combine(output,"tower-scaling-build.json"),System.Text.Json.JsonSerializer.Serialize(new{targets=targets.Count,growthEffects=GrowthSteps,growthHpPerStep=GrowthHp,growthAttackPerStep=GrowthAttack,sourceRegulationSha256=Hash(Path.Combine(input,"regulation.bin")),regulationSha256=Hash(path)},new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));

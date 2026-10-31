@@ -14,5 +14,8 @@
   <ItemGroup>
     <ProjectReference Include="../Tower.Update/Tower.Update.csproj" />
     <Compile Include="../Tower.Launcher/LaunchResult.cs" Link="LaunchResult.cs" />
+    <Compile Include="../Tower.Launcher/ReleaseHistory.cs" Link="ReleaseHistory.cs" />
+    <Compile Include="../Tower.Launcher/ModLogs.cs" Link="ModLogs.cs" />
+    <Compile Include="../Tower.Launcher/DlcLaunchCheck.cs" Link="DlcLaunchCheck.cs" />
   </ItemGroup>
 </Project>

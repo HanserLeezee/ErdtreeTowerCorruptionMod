@@ -1,42 +1,320 @@
 {
+  "style": "body-particles",
+  "gameVerified": false,
   "effects": [
     {
       "id": 9870001,
-      "vfx": 1605000
+      "vfx": 1605000,
+      "visuals": [
+        1605000,
+        5846,
+        1790000
+      ],
+      "clonedVfx": [
+        9871010,
+        9871011,
+        9871012
+      ],
+      "layers": [
+        {
+          "id": 9871010,
+          "enabled": true,
+          "sfx": 524402,
+          "dummy": 200
+        },
+        {
+          "id": 9871011,
+          "enabled": false,
+          "sfx": 9872000,
+          "dummy": -1
+        },
+        {
+          "id": 9871012,
+          "enabled": true,
+          "sfx": 525413,
+          "dummy": 220
+        }
+      ]
     },
     {
       "id": 9870002,
-      "vfx": 1643000
+      "vfx": 1643000,
+      "visuals": [
+        1643000,
+        5846,
+        1414000
+      ],
+      "clonedVfx": [
+        9871020,
+        9871021,
+        9871022
+      ],
+      "layers": [
+        {
+          "id": 9871020,
+          "enabled": true,
+          "sfx": 4610,
+          "dummy": 220
+        },
+        {
+          "id": 9871021,
+          "enabled": false,
+          "sfx": 9872000,
+          "dummy": -1
+        },
+        {
+          "id": 9871022,
+          "enabled": true,
+          "sfx": 523502,
+          "dummy": 211
+        }
+      ]
     },
     {
       "id": 9870003,
-      "vfx": 5846
+      "vfx": 5846,
+      "visuals": [
+        5846,
+        5846,
+        1414000
+      ],
+      "clonedVfx": [
+        9871030,
+        9871031,
+        9871032
+      ],
+      "layers": [
+        {
+          "id": 9871030,
+          "enabled": true,
+          "sfx": 331211,
+          "dummy": 220
+        },
+        {
+          "id": 9871031,
+          "enabled": false,
+          "sfx": 9872001,
+          "dummy": -1
+        },
+        {
+          "id": 9871032,
+          "enabled": true,
+          "sfx": 523502,
+          "dummy": 211
+        }
+      ]
     },
     {
       "id": 9870004,
-      "vfx": 1651000
+      "vfx": 1651000,
+      "visuals": [
+        1651000,
+        5846,
+        1414000
+      ],
+      "clonedVfx": [
+        9871040,
+        9871041,
+        9871042
+      ],
+      "layers": [
+        {
+          "id": 9871040,
+          "enabled": true,
+          "sfx": 523542,
+          "dummy": 212
+        },
+        {
+          "id": 9871041,
+          "enabled": false,
+          "sfx": 9872001,
+          "dummy": -1
+        },
+        {
+          "id": 9871042,
+          "enabled": true,
+          "sfx": 523502,
+          "dummy": 211
+        }
+      ]
     },
     {
       "id": 9870005,
-      "vfx": 321600
+      "vfx": 321600,
+      "visuals": [
+        321600,
+        5846,
+        21490001
+      ],
+      "clonedVfx": [
+        9871050,
+        9871051,
+        9871052
+      ],
+      "layers": [
+        {
+          "id": 9871050,
+          "enabled": true,
+          "sfx": 4500,
+          "dummy": 905
+        },
+        {
+          "id": 9871051,
+          "enabled": false,
+          "sfx": 9872000,
+          "dummy": -1
+        },
+        {
+          "id": 9871052,
+          "enabled": true,
+          "sfx": 543005,
+          "dummy": 905
+        }
+      ]
     },
     {
       "id": 9870006,
-      "vfx": 1648000
+      "vfx": 1648000,
+      "visuals": [
+        1648000,
+        5846,
+        1414000
+      ],
+      "clonedVfx": [
+        9871060,
+        9871061,
+        9871062
+      ],
+      "layers": [
+        {
+          "id": 9871060,
+          "enabled": true,
+          "sfx": 4740,
+          "dummy": 905
+        },
+        {
+          "id": 9871061,
+          "enabled": false,
+          "sfx": 9872000,
+          "dummy": -1
+        },
+        {
+          "id": 9871062,
+          "enabled": true,
+          "sfx": 523502,
+          "dummy": 211
+        }
+      ]
     },
     {
       "id": 9870007,
-      "vfx": 1627000
+      "vfx": 1627000,
+      "visuals": [
+        1627000,
+        5846,
+        1790000
+      ],
+      "clonedVfx": [
+        9871070,
+        9871071,
+        9871072
+      ],
+      "layers": [
+        {
+          "id": 9871070,
+          "enabled": true,
+          "sfx": 4800,
+          "dummy": 905
+        },
+        {
+          "id": 9871071,
+          "enabled": false,
+          "sfx": 9872001,
+          "dummy": -1
+        },
+        {
+          "id": 9871072,
+          "enabled": true,
+          "sfx": 525413,
+          "dummy": 220
+        }
+      ]
     },
     {
       "id": 9870008,
-      "vfx": 1660000
+      "vfx": 1660000,
+      "visuals": [
+        1660000,
+        5846,
+        1414000
+      ],
+      "clonedVfx": [
+        9871080,
+        9871081,
+        9871082
+      ],
+      "layers": [
+        {
+          "id": 9871080,
+          "enabled": true,
+          "sfx": 4520,
+          "dummy": 905
+        },
+        {
+          "id": 9871081,
+          "enabled": false,
+          "sfx": 9872000,
+          "dummy": -1
+        },
+        {
+          "id": 9871082,
+          "enabled": true,
+          "sfx": 523502,
+          "dummy": 211
+        }
+      ]
     },
     {
       "id": 9870009,
-      "vfx": 1790300
+      "vfx": 1790300,
+      "visuals": [
+        1790300,
+        5846,
+        1414000
+      ],
+      "clonedVfx": [
+        9871090,
+        9871091,
+        9871092
+      ],
+      "layers": [
+        {
+          "id": 9871090,
+          "enabled": true,
+          "sfx": 4830,
+          "dummy": 905
+        },
+        {
+          "id": 9871091,
+          "enabled": false,
+          "sfx": 9872000,
+          "dummy": -1
+        },
+        {
+          "id": 9871092,
+          "enabled": true,
+          "sfx": 523502,
+          "dummy": 211
+        }
+      ]
     }
   ],
-  "sourceRegulationSha256": "88897CFBD10BDB0D574F0B70F683CD776C4A1631C32E31501D23C29AFDAD9015",
-  "regulationSha256": "9437D27FFFB34EEC67FD5BF7F170A0057893BD93CE3BCC58DCFD6505EF60E73A"
+  "sourceRegulationSha256": "D1B1387020E0F6491A4457491EC6B3D968DDB1FAF03189948929EAF2E8E303C7",
+  "regulationSha256": "97162FAA709FAB9EF96548E8476839339AD720D197BDAFF4A1EC09CA619D30A8",
+  "sfx": {
+    "file": "sfx/sfxbnd_commoneffects.ffxbnd.dcx",
+    "sha256": "C1694790F32554D8D9E2C07CE71046C6015A38F41E5F38699293F2AA2F80D70F",
+    "preservedEntries": 14997,
+    "addedEntries": 4
+  }
 }

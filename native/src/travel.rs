@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-pub const PREPARATION: Duration = Duration::from_secs(5);
+pub const PREPARATION: Duration = Duration::from_secs(3);
 const TIMEOUT: Duration = Duration::from_secs(60);
 const SETTLE: Duration = Duration::from_millis(500);
 
@@ -24,6 +24,7 @@ pub struct Travel {
     pub resources_restored: bool,
     stable_since: Option<Duration>,
     ready_since: Option<Duration>,
+    circle_entered: Option<Duration>,
 }
 
 impl Travel {
@@ -33,10 +34,19 @@ impl Travel {
             resources_restored: false,
             stable_since: None,
             ready_since: None,
+            circle_entered: None,
         }
     }
     pub fn is_preparing(&self) -> bool {
         self.ready_since.is_some()
+    }
+    pub fn poll_circle(&mut self,elapsed:Duration,arrived:bool,grounded:bool,crossed:bool)->Progress {
+        if !arrived||!crossed {
+            self.circle_entered=None;self.stable_since=None;self.ready_since=None;
+            return if arrived {Progress::Fog}else{self.poll(elapsed,false,false)};
+        }
+        let entered=*self.circle_entered.get_or_insert(elapsed);
+        self.poll(elapsed.saturating_sub(entered),true,grounded)
     }
     pub fn poll_fog(&mut self,elapsed:Duration,arrived:bool,grounded:bool,crossed:bool)->Progress {
         if !arrived {return self.poll(elapsed,false,false);}
@@ -77,6 +87,18 @@ impl Travel {
 mod tests {
     use super::*;
     #[test]
+    fn circle_wait_is_unlimited_and_countdown_starts_after_entry_and_landing() {
+        let mut travel=Travel::new(0);
+        assert_eq!(travel.poll_circle(ms(120000),true,true,false),Progress::Fog);
+        assert_eq!(travel.poll_circle(ms(120100),true,false,true),Progress::Loading);
+        assert_eq!(travel.poll_circle(ms(120200),true,true,true),Progress::Loading);
+        assert_eq!(travel.poll_circle(ms(120700),true,true,true),Progress::Countdown(3));
+        assert_eq!(travel.poll_circle(ms(123699),true,true,true),Progress::Countdown(1));
+        assert_eq!(travel.poll_circle(ms(123700),true,true,true),Progress::Spawn);
+        assert_eq!(travel.poll_circle(ms(123701),true,true,false),Progress::Fog);
+        assert!(!travel.is_preparing());
+    }
+    #[test]
     fn fog_wait_does_not_timeout_or_start_preparation() {
         let mut travel=Travel::new(0);
         assert_eq!(travel.poll_fog(ms(2000),true,true,false),Progress::Fog);
@@ -94,9 +116,9 @@ mod tests {
         let mut travel = Travel::new(0);
         assert_eq!(travel.poll(ms(10000), false, false), Progress::Loading);
         assert_eq!(travel.poll(ms(12000), true, true), Progress::Loading);
-        assert_eq!(travel.poll(ms(12500), true, true), Progress::Countdown(5));
-        assert_eq!(travel.poll(ms(17499), true, true), Progress::Countdown(1));
-        assert_eq!(travel.poll(ms(17500), true, true), Progress::Spawn);
+        assert_eq!(travel.poll(ms(12500), true, true), Progress::Countdown(3));
+        assert_eq!(travel.poll(ms(15499), true, true), Progress::Countdown(1));
+        assert_eq!(travel.poll(ms(15500), true, true), Progress::Spawn);
     }
     #[test]
     fn combat_restores_half_maximum_fp_with_cap_and_integer_rounding() {
@@ -122,7 +144,7 @@ mod tests {
         travel.poll(ms(500), true, true);
         assert_eq!(travel.poll(ms(3000), false, false), Progress::Loading);
         travel.poll(ms(6000), true, true);
-        assert_eq!(travel.poll(ms(6500), true, true), Progress::Countdown(5));
+        assert_eq!(travel.poll(ms(6500), true, true), Progress::Countdown(3));
         assert_eq!(travel.poll(ms(60000), true, true), Progress::Failed);
     }
 }

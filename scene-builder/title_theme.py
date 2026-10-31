@@ -1,7 +1,7 @@
 """Title/loading skin. Rebuilds selected GFx scripts, preserving native timelines.
 
 Without --art the skin is the original vector drawing below. With --art <dir> (title.png, loading1.png … loading3.png, painted
-illustrations) the pictures are embedded as JPEG bitmaps placed on the native timelines (scene-builder/gfx_bitmap.py) and the script
+illustrations) the pictures use external GFx image references and native DDS/TPF textures; the script
 only adds translucent panels and text on top; each loading screen shows one of the act pictures at random.
 --rebase: --original holds menus already patched by this script (scene-assets/menu); the previous theme code is replaced."""
 import argparse
@@ -16,6 +16,7 @@ import tempfile
 from PIL import Image, ImageDraw, ImageFont
 from native_name_glow import verify_tags
 import gfx_bitmap
+import title_textures
 import re
 
 LOADING_ART = ['loading1', 'loading2', 'loading3']
@@ -202,7 +203,10 @@ def art_methods(config, mode):
           var art:flash.display.DisplayObject=getChildByName(towerThemeArtNames[i]);
           if(art==null)continue;
           art.visible=(i==towerThemePick);
-          if(art.visible){if(getChildIndex(art)!=0)setChildIndex(art,0);bottom=1;}
+          if(art.visible){
+            var artLayer:int='''+('0' if mode=='title' else 'Math.min(1,numChildren-1)')+''';
+            if(getChildIndex(art)!=artLayer)setChildIndex(art,artLayer);bottom=artLayer+1;
+          }
         }
         if(towerTheme==null){
           towerTheme=new flash.display.Sprite();towerTheme.mouseEnabled=false;towerTheme.mouseChildren=false;
@@ -272,6 +276,19 @@ def build(args):
         if r.returncode:raise RuntimeError('FFDec failed; see build.log')
     for stem,relative,mode in TARGETS:
         src=args.original/(stem+'.gfx');dst=args.output/'menu'/src.name
+        if args.art and any(code==21 or code==1009 and b'MENU_TowerTheme_' in body for code,body in gfx_bitmap.parse(src.read_bytes())[1]):
+            raise ValueError('Rebuild painted themes from original menus; use title_textures.py to migrate an existing JPEG theme')
+        if args.art and mode!='logo':
+            files=['title'] if mode=='title' else LOADING_ART
+            names=['TowerThemeArt'] if mode=='title' else ['TowerThemeArt'+str(i) for i in range(len(files))]
+            pictures=[(name,gfx_bitmap.jpeg(art_file(args.art,f))) for name,f in zip(names,files)]
+            timeline,offset=ART_TIMELINE[mode]
+            before=src.read_bytes();embedded=gfx_bitmap.embed(before,pictures,timeline,offset)
+            gfx_bitmap.verify(before,embedded,[p for _,p in pictures],timeline)
+            external=title_textures.externalize(embedded,files)
+            dst.write_bytes(title_textures.title_underlay(external) if mode=='title' else title_textures.loading_underlay(external))
+            manifest.append(dict(file='menu/'+src.name,sha256=hashlib.sha256(dst.read_bytes()).hexdigest(),artwork=len(files),nativeTimeline=True))
+            continue
         with tempfile.TemporaryDirectory(prefix='tower-theme-') as tmp:
             tmp=Path(tmp);run('-export','script',tmp/'before',src)
             before=tmp/'before/scripts'/relative;source=before.read_text(encoding='utf-8-sig')
@@ -297,9 +314,11 @@ def build(args):
             pictures=[(n,gfx_bitmap.jpeg(art_file(args.art,f))) for n,f in zip(names,files)]
             timeline,offset=ART_TIMELINE[mode]
             scripted=dst.read_bytes();final=gfx_bitmap.embed(scripted,pictures,timeline,offset)
-            gfx_bitmap.verify(scripted,final,[p for _,p in pictures],timeline);dst.write_bytes(final);art_count=len(pictures)
+            gfx_bitmap.verify(scripted,final,[p for _,p in pictures],timeline)
+            dst.write_bytes(title_textures.externalize(final,files));art_count=len(pictures)
         manifest.append(dict(file='menu/'+src.name,sha256=hashlib.sha256(dst.read_bytes()).hexdigest(),tagsVerified=count,artwork=art_count,rebasedFromPatched=args.rebase))
     if args.art:
+        title_textures.write_dds(args.art,args.output/'theme-textures')
         render_art_preview(config,'title',art_file(args.art,'title'),args.output/'title-design-preview.png')
         for f in LOADING_ART: render_art_preview(config,'loading',art_file(args.art,f),args.output/(f+'-design-preview.png'))
     else:

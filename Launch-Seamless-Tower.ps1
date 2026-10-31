@@ -195,7 +195,7 @@ try {
         else { [Environment]::SetEnvironmentVariable($key,$environment[$key]) }
     }
     Write-Host "ME3: Seamless + tower. Separate save: $saveExtension."
-    & $launcher launch --exe (Join-Path $GameDir 'eldenring.exe') --profile $configPath --auto-detect --online false
+    & $launcher launch --exe (Join-Path $GameDir 'eldenring.exe') --profile $configPath --auto-detect --online false --skip-steam-init true
     if ($LASTEXITCODE -ne 0) {throw "ME3 loader exit: $LASTEXITCODE"}
 } finally {
     foreach ($key in $previous.Keys) {

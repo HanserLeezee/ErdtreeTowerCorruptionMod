@@ -28,8 +28,12 @@ pub mod embers;
 pub mod scaling;
 pub mod law;
 pub mod debug;
+pub mod merchant;
 pub mod journal;
+pub mod score;
 pub mod legacy;
+pub mod weapon_training;
+pub mod transmog;
 pub mod titles;
 pub mod auras;
 pub mod themes;
@@ -232,6 +236,10 @@ pub struct Run {
     /// 职业传承选用的开局护符（0：旧存档，随身的祖灵角不计入）
     #[serde(default,skip_serializing_if="no_start_talisman")]
     pub start_talisman: u32,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub weapon_preference: Option<weapon_training::Preference>,
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub weapon_preferences: Vec<weapon_training::Preference>,
     /// 新旅程：战斗奖励里会出现余烬
     #[serde(default)]
     pub ember_rewards: bool,
@@ -249,6 +257,8 @@ pub struct Run {
     /// 用过调试菜单的旅程：不计入律法纪录，誓约进度不再校验
     #[serde(default,skip_serializing_if="std::ops::Not::not")]
     pub debug: bool,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub boss_test: Option<debug::BossTest>,
     /// 2：问号房的每个事件按权重单独抽取，加入骰子赌徒、盲盒商人与词条重铸台三个房间事件（0、1 为旧分配）
     /// 3：九个问号房事件权重相同（2 为试炼 4、其余 2）
     #[serde(default)]
@@ -332,6 +342,8 @@ pub struct Run {
     shop_purchased: u8,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub shop_stock: Option<ShopStock>,
+    #[serde(default)]
+    pub bells: merchant::Bells,
     checkpoint: Option<CombatCheckpoint>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -847,6 +859,9 @@ pub(crate) fn space_rest_nodes(mut nodes:Vec<Node>)->Vec<Node> {
 }
 
 impl Run {
+    pub fn preferences(&self)->&[weapon_training::Preference] {
+        if self.weapon_preferences.is_empty(){self.weapon_preference.as_ref().map_or(&[],std::slice::from_ref)}else{&self.weapon_preferences}
+    }
     pub fn floors(&self)->usize {self.nodes.last().map_or(0,|n|n.layer+1)}
     pub fn new(seed: u64, class: Class) -> Self {
         Self {
@@ -862,12 +877,15 @@ impl Run {
             scaling_rules: 1,
             law: law::Law::default(),
             start_talisman: 0,
+            weapon_preference: None,
+            weapon_preferences: Vec::new(),
             ember_rewards: true,
             ember_rules: 1,
             stone_rewards: true,
             embers: vec![],
             ember_stacks: Default::default(),
             debug: false,
+            boss_test: None,
             event_rules: 3,
             wander: false,
             descents_before: 0,
@@ -910,6 +928,7 @@ impl Run {
             elite_buffs: vec![],
             shop_purchased: 0,
             shop_stock: None,
+            bells: Default::default(),
             checkpoint: None,
         }
     }
@@ -1268,6 +1287,8 @@ impl Run {
         }
         self.checkpoint = None;
         if matches!(kind,NodeKind::Elite|NodeKind::Boss) {self.ember_stacks.gain(&self.embers,embers::Gain::Slain);}
+        // 最后一幕的 Boss：直接登顶，不再三选一
+        if kind==NodeKind::Boss&&self.act>=3 {self.finish(id);return Ok(());}
         self.phase = Phase::Reward {
             id,
             offers: self.offers(id),
@@ -1487,6 +1508,7 @@ impl Run {
 
     pub fn leave_shop(&mut self) -> RuleResult<()> {
         let id = self.active_node(NodeKind::Shop)?;
+        if self.bells.challenge.is_some(){return Err("请先击败铃珠猎人".into());}
         self.finish(id);
         Ok(())
     }
@@ -1559,6 +1581,7 @@ impl Run {
 
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
+        if self.boss_test.is_some_and(|t|!self.debug||!(1..=3).contains(&t.act)||t.encounter>=4096){return fail();}
         if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>1||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>1||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
@@ -1573,6 +1596,8 @@ impl Run {
             || self.flask_bonus>4 || self.memory_bonus>6
             || !self.law.valid()
             || !self.valid_start_talisman()
+            || self.weapon_preference.is_some_and(|p|!p.valid())
+            || !weapon_training::valid_preferences(&self.weapon_preferences)
             || self.event_rules>3
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
@@ -1671,7 +1696,8 @@ impl Run {
             || (self.hp == 0 && self.phase != Phase::Dead)
             || (self.shop_purchased != 0
                 && !matches!(self.phase, Phase::Node { id } if self.nodes[id].kind == NodeKind::Shop))
-            || self.shop_stock.as_ref().is_some_and(|stock|stock.items.len()>64
+            || !self.bells.valid()
+            || self.shop_stock.as_ref().is_some_and(|stock|stock.items.len()>merchant::MAX_STOCK
                 || !matches!(self.phase, Phase::Node { id } if id==stock.node&&self.nodes[id].kind == NodeKind::Shop))
         {
             return fail();

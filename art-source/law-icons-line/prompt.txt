@@ -1,0 +1,23 @@
+prompt:
+A clean UI icon sheet on a truly transparent background. Landscape 3:2 image, EXACT regular grid of 6 columns by 3 rows, EIGHTEEN equal cells, one icon centered in each cell with generous empty transparent padding, no grid lines, no frames, no boxes, no backdrop, no text, no letters, no numbers.
+Style for every icon: minimal flat monoline pictogram, pure white strokes only (#FFFFFF), uniform medium stroke weight, rounded line caps, no fill except tiny solid accents, no color, no gradients, no shadows, no glow, no texture — like a modern tactical mobile game UI icon set. All icons share identical stroke weight, size and visual balance.
+Row-major order, left to right, top to bottom:
+1 two crossed swords
+2 a small dot with three branching lines spreading outward like a network
+3 a horned knight helmet seen from the front
+4 a page document with an upward arrow on it
+5 a heavy solid kite shield outline with a thick border
+6 three overlapping circles forming a trefoil
+7 a water drop inside a ring
+8 a balance scale
+9 a cracked shield
+10 a wolf head in profile, howling
+11 a single water drop
+12 a broken ring split by a diagonal crack
+13 a stack of coins
+14 a price tag with a string hole
+15 a small potion flask with a minus sign beside it
+16 a stopwatch
+17 an open eye
+18 two horned helmets side by side
+Transparent canvas everywhere except the white strokes.

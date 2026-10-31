@@ -210,7 +210,7 @@ fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enem
     for (id,_) in BOSSES.iter().filter(|(id,e)|!e.retired&&!(party&&(e.solo||relocated(e).is_some()||PARTY_UNSYNCED.contains(&e.name)))&&encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
     // 第三幕「双王共命」：每个双王组合是第三幕 Boss 战的一个选项，与每个单只 Boss 机会相同；组合里的 Boss 不再单独出现（机制见 dual_bosses.rs）
     let mut options:Vec<Vec<usize>>=Vec::new();
-    let pairs:Vec<[usize;2]>=if dual(kind,act) {DUAL_PAIRS.iter().filter_map(|pair|{
+    let pairs:Vec<[usize;2]>=if party&&dual(kind,act) {DUAL_PAIRS.iter().filter_map(|pair|{
         let ids=pair.map(|name|encounters.iter().copied().find(|id|BOSSES.iter().any(|(g,e)|g==id&&e.name==name)));
         Some([ids[0]?,ids[1]?])
     }).collect()}else{Vec::new()};
@@ -222,9 +222,8 @@ fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enem
         let mut enemy=*e;enemy.act=act;enemy.kind=kind;if kind==NodeKind::Elite {enemy.npc+=1;enemy.bar=0;}enemy
     }).collect()
 }
-/// 联机地图里的预置实体还没同步的 Boss：联机时不抽。蕾娜菈改用第二阶段（c2031）后，联机地图的实体仍是一阶段模型 c2030，
-/// 读到二阶段的参数会站着不动（没有 AI）；在 Windows 上运行 party-boss-model-sync 并更新 scene-assets 的地图后从这里删掉
-const PARTY_UNSYNCED:[&str;1]=["“满月女王”蕾娜菈"];
+/// Windows party-boss-model-sync 已验证模型与 AI；当前无待同步的联机 Boss。
+const PARTY_UNSYNCED:[&str;0]=[];
 /// 第三幕双王共命的组合（Boss 名）：卡利亚双骑
 pub const DUAL_PAIRS:[[&str;2];1]=[["“圣树骑士”罗蕾塔","“双月骑士”蕾拉娜"]];
 /// 这一幕的 Boss 战可能是双王
@@ -253,10 +252,26 @@ pub fn debug_encounters()->Vec<Vec<Enemy>> {
     for &(id,spec) in BOSSES.iter() {
         match groups.iter_mut().find(|(g,_)|*g==id) {Some((_,parts))=>parts.push(spec),None=>groups.push((id,vec![spec]))}
     }
-    groups.into_iter().map(|(_,parts)|parts).collect()
+    let mut result:Vec<Vec<Enemy>>=groups.into_iter().map(|(_,parts)|parts).collect();
+    for pair in DUAL_PAIRS {
+        let parts:Option<Vec<_>>=pair.into_iter().map(|name|BOSSES.iter().find(|(_,e)|e.name==name&&encounter_act(e)==3).map(|(_,e)|{let mut spec=*e;spec.act=3;spec.kind=NodeKind::Boss;spec})).collect();
+        if let Some(parts)=parts {if !result.contains(&parts){result.push(parts);}}
+    }
+    result
+}
+pub fn party_only_group(group:&[Enemy])->bool {
+    group.len()==2&&DUAL_PAIRS.iter().any(|pair|pair.iter().all(|name|group.iter().any(|e|e.name==*name)))
+}
+pub fn debug_group_name(group:&[Enemy])->String {
+    let mut names=Vec::new();for e in group {if !names.contains(&e.name){names.push(e.name);}}
+    format!("{}{}",if party_only_group(group){"卡利亚双骑·双Boss·双王共命·联机独享｜"}else{""},names.join("＋"))
 }
 pub fn node_roster(run:&erdtree_tower::Run,id:usize)->Vec<Enemy> {
     let node=&run.nodes[id];
+    if run.debug&&node.kind==NodeKind::Boss&&let Some(test)=run.boss_test.filter(|t|t.act==run.act) {
+        let group=debug_encounters().get(usize::from(test.encounter)).cloned().unwrap_or_default();
+        if party()||!party_only_group(&group){return group;}
+    }
     let ordinal=run.visited.iter().take_while(|&&visited|visited!=id)
         .filter(|&&visited|run.nodes[visited].kind==node.kind).count();
     // [HansFix] 堕落首领与本幕首领不同：用另一个种子抽
@@ -269,6 +284,19 @@ pub fn node_roster(run:&erdtree_tower::Run,id:usize)->Vec<Enemy> {
         return roster(node.kind,erdtree_tower::mix(run.seed^0xfa11_0de5^u64::from(run.act)),fallen_ordinal,11,run.act);
     }
     roster(node.kind,seed,ordinal,node.layer*11/(run.floors()-1),run.act)
+}
+pub fn boss_test_roster(encounter:u16,party:bool,dlc:bool)->Result<Vec<Enemy>,String> {
+    let group=debug_encounters().get(usize::from(encounter)).cloned().ok_or("Boss 测试编号不存在")?;
+    boss_test_allowed(&group,party,dlc)?;Ok(group)
+}
+pub fn boss_test_allowed(group:&[Enemy],party:bool,dlc:bool)->Result<(),String> {
+    if group.is_empty(){return Err("Boss 组合为空".into());}
+    if !party&&party_only_group(group){return Err("该双 Boss 组合仅限联机".into());}
+    if group.iter().any(|e|e.dlc&&!dlc){return Err("需要启用 DLC 敌人资源".into());}
+    if party&&(group.iter().any(|e|e.solo||relocated(e).is_some())||map_entities(&group).is_err()) {
+        return Err("该组合缺少联机预置槽位，仅限单人测试".into());
+    }
+    Ok(())
 }
 pub fn placement(index: usize, count: usize) -> [f32; 3] {
     if count == 1 { return [0.0, 0.05, 0.0]; }
@@ -311,6 +339,45 @@ fn mix(mut value:u64)->u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn debug_catalog_includes_dynamic_knight_pair_with_party_slots() {
+        use super::*;
+        for pair in DUAL_PAIRS {
+            let groups=debug_encounters();
+            let index=groups.iter().position(|g|g.len()==2&&g.iter().map(|e|e.name).eq(pair)).expect("dynamic boss pair must be listed");
+            let group=boss_test_roster(index as u16,true,true).unwrap();
+            assert!(group.iter().all(|e|e.act==3&&e.kind==NodeKind::Boss));
+            let ids=map_entities(&group).unwrap();assert_eq!(ids.len(),2);assert_ne!(ids[0],ids[1]);
+            let mut run=erdtree_tower::Run::new(91,erdtree_tower::Class::Samurai);
+            assert!(boss_test_roster(index as u16,false,true).is_err());
+            let node=run.debug_boss_test(index as u16,3).unwrap();assert_eq!(node_roster(&run,node).len(),1,"old party test saves cannot spawn the pair in solo");
+            for name in pair {assert!((0..200).any(|ordinal|boss_roster(NodeKind::Boss,91,ordinal,3,false).iter().any(|e|e.name==name)),"solo keeps {name}");}
+            assert!((0..200).any(|ordinal|party_only_group(&boss_roster(NodeKind::Boss,91,ordinal,3,true))),"party keeps the pair");
+        }
+    }
+    #[test]
+    fn boss_test_catalog_preserves_every_group_and_checks_party_slots() {
+        use super::*;
+        let groups=debug_encounters();
+        let originals=BOSSES.iter().map(|(id,_)|*id).collect::<std::collections::HashSet<_>>().len();
+        assert_eq!(groups[..originals].iter().map(Vec::len).sum::<usize>(),BOSSES.len());
+        for (index,id) in BOSSES.iter().map(|(id,_)|*id).collect::<Vec<_>>().into_iter().fold(Vec::new(),|mut ids,id|{if !ids.contains(&id){ids.push(id);}ids}).into_iter().enumerate(){
+            assert_eq!(groups[index],BOSSES.iter().filter(|(group,_)|*group==id).map(|(_,e)|*e).collect::<Vec<_>>(),"existing debug IDs must not move");
+        }
+        assert!(!groups.is_empty()&&groups.len()<4096);
+        for (index,group) in groups.iter().enumerate(){
+            if party_only_group(group){assert!(boss_test_roster(index as u16,false,true).is_err());continue;}
+            assert_eq!(boss_test_roster(index as u16,false,true).unwrap(),*group);
+            let mut run=erdtree_tower::Run::new(91,erdtree_tower::Class::Samurai);
+            let node=run.debug_boss_test(index as u16,group[0].act).unwrap();
+            assert_eq!(node_roster(&run,node),*group);
+            if group.iter().any(|e|e.dlc){assert!(boss_test_roster(index as u16,false,false).is_err());}
+            if let Ok(party)=boss_test_roster(index as u16,true,true){assert!(map_entities(&party).is_ok());assert!(party.iter().all(|e|!e.solo));}
+            else {println!("BOSS_TEST_SOLO_ONLY #{index}: {:?}",group.iter().map(|e|e.name).collect::<Vec<_>>());}
+        }
+        assert!(boss_test_roster(u16::MAX,false,true).is_err());
+        println!("BOSS_TEST_CATALOG groups={} parts={} party={}",groups.len(),BOSSES.len(),(0..groups.len()).filter(|&i|boss_test_roster(i as u16,true,true).is_ok()).count());
+    }
     #[test]
     fn every_enemy_gets_a_tower_bar_name_and_bosses_keep_theirs() {
         let names=include_str!("../../scene-builder/AffixTextFix.cs");assert!(names.contains(&format!("PoolNameFirst={}",super::POOL_NAME_FIRST)));
@@ -464,28 +531,32 @@ mod tests {
     }
     #[test]
     fn appended_bosses_have_party_slots_and_reach_boss_rosters() {
-        // 第一批追加的 13 个 Boss（序号 140–152）；之后序号 153 起的 DLC Boss 另见 late_dlc_bosses_are_solo_boss_fights_only
-        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended&&e.npc<950000000+LATE_BOSS_FIRST*2).collect();
-        assert_eq!(trial.len(),13);
+        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended).collect();
+        assert_eq!(trial.len(),18);
         assert!(trial.iter().all(|(_,e)|!e.solo&&!e.retired&&e.bar>0&&recommended_level(e.name).is_some()));
         let mut seen=std::collections::HashSet::new();
         for act in 1..=3 {for seed in 0..400 {for kind in [NodeKind::Elite,NodeKind::Boss] {
             assert!(roster_in(kind,seed,seed as usize%24,0,act,false).iter().all(|e|!e.retired));
             let group=roster_in(kind,seed,seed as usize%24,0,act,true);map_entities(&group).unwrap();
-            for e in group {if e.appended {assert_eq!(kind,NodeKind::Boss);assert!(!PARTY_UNSYNCED.contains(&e.name),"unsynced bosses stay out of party fights");seen.insert(e.npc);}}
+            for e in group {if e.appended&&boss_npc(e.npc) {assert_eq!(kind,NodeKind::Boss);assert!(!PARTY_UNSYNCED.contains(&e.name),"unsynced bosses stay out of party fights");seen.insert(e.npc);}}
         }}}
-        // 联机地图同步之前，蕾娜菈不进联机的 Boss 战（单人照常）
-        assert_eq!(seen.len(),13-PARTY_UNSYNCED.len());
-        assert!((0..2000).any(|seed|roster_in(NodeKind::Boss,seed,0,0,1,false).iter().any(|e|e.name=="“满月女王”蕾娜菈")));
-        // 第一批追加的 Boss 排在预览名单里原有名字之后，再之后是追加的普通怪（9）与序号 153 起的 Boss（5），原有预览编号不变
-        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-27..names.len()-14],&trial.iter().map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
+        let eligible:std::collections::HashSet<_>=trial.iter().filter(|(id,e)|boss_eligible(NodeKind::Boss,e)&&encounter_allowed(NodeKind::Boss,*id)).map(|(_,e)|e.npc).collect();
+        assert_eq!(seen,eligible);
+        // 原有 13 个追加 Boss 的名称编号保留；后加的 5 个仍位于列表末尾。
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-27..names.len()-14],&trial.iter().filter(|(_,e)|e.npc<950000000+LATE_BOSS_FIRST*2).map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
+    }
+    #[test]
+    fn synced_rennala_reaches_party_roster_with_second_phase_ai() {
+        let queen=(0..2000).find_map(|seed|roster_in(NodeKind::Boss,seed,0,0,1,true).into_iter().find(|e|e.name=="“满月女王”蕾娜菈")).expect("synced Rennala must be available in multiplayer");
+        assert_eq!((queen.model,queen.think),(2031,20310000));
+        assert!(map_entities(&[queen]).is_ok());
     }
     #[test]
     fn map_entity_manifest_for_scene_crosscheck() {
         for (spec,ids) in MAP_ENTITIES.iter() {for (slot,id) in ids.iter().enumerate() {
             println!("PARTY_SLOT={}|{}|{}|{}|{}|{}",spec.act,spec.npc,spec.model,spec.think,slot,id);
         }}
-        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),805);
+        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),810);
     }
     #[test]
     fn first_act_elites_always_use_curated_combatants_not_boss_labels() {
@@ -569,25 +640,31 @@ mod tests {
             let group=roster_in(NodeKind::Boss,seed,ordinal,11,act,party);
             // 第三幕可能是双王组合：两只不同的 Boss，各有自己的血条
             if group.len()==2 {
+                assert!(party,"dynamic dual bosses are multiplayer-only");
                 assert_eq!(act,3);assert_ne!(group[0].npc,group[1].npc);
                 assert!(DUAL_PAIRS.iter().any(|p|p.contains(&group[0].name)&&p.contains(&group[1].name)));
                 if party {map_entities(&group).unwrap();}
             } else {
                 assert_eq!(group.len(),1,"act={act}, seed={seed}: {group:?}");
-                assert!(DUAL_PAIRS.iter().all(|p|!p.contains(&group[0].name)||act!=3),"pair members only appear together");
+                assert!(!party||DUAL_PAIRS.iter().all(|p|!p.contains(&group[0].name)||act!=3),"party pair members only appear together");
             }
             assert!(group.iter().all(|e|e.bar>0));
         }}}}
     }
     #[test]
-    fn late_dlc_bosses_are_solo_boss_fights_only() {
+    fn late_dlc_bosses_have_party_slots_and_stay_boss_fights_only() {
         let late:Vec<_>=BOSSES.iter().filter(|(_,e)|e.npc>=950000000+LATE_BOSS_FIRST*2).map(|(_,e)|(e.act,e.name)).collect();
         assert_eq!(late,vec![(2,"融泥骑士"),(2,"黄金河马"),(3,"“狂龙”贝勒"),(3,"约定之王拉塔恩"),(3,"“穿刺者”梅瑟莫")]);
         for (act,name) in late {
             assert!((0..4000).any(|seed|roster_in(NodeKind::Boss,seed,0,11,act,false).iter().any(|e|e.name==name)),"{name} is drawn as a boss");
+            assert!((0..4000).any(|seed|roster_in(NodeKind::Boss,seed,0,11,act,true).iter().any(|e|e.name==name)),"{name} is drawn in multiplayer");
+            let enemy=BOSSES.iter().find(|(_,e)|e.name==name).unwrap().1;
+            assert!(!enemy.solo);
+            let ids=map_entities(&[enemy]).unwrap();assert_eq!(ids.len(),1);
+            assert!(super::super::map_guards::entity(ids[0]).is_ok());
             for seed in 0..1500 {
                 for kind in [NodeKind::Elite,NodeKind::Monster] {assert!(roster_in(kind,seed,seed as usize%24,11,act,false).iter().all(|e|e.name!=name),"{name} never appears as an elite");}
-                assert!(roster_in(NodeKind::Boss,seed,0,11,act,true).iter().all(|e|e.name!=name),"no party map entities yet");
+                map_entities(&roster_in(NodeKind::Boss,seed,0,11,act,true)).unwrap();
             }
         }
     }
@@ -596,6 +673,7 @@ mod tests {
         for party in [false,true] {
             let mut seen=std::collections::HashMap::new();
             for seed in 0..4000 {let group=roster_in(NodeKind::Boss,seed,0,11,3,party);*seen.entry(group.iter().map(|e|e.name).collect::<Vec<_>>()).or_insert(0)+=1;}
+            if !party {assert!(seen.keys().all(|names|names.len()==1));continue;}
             let pair=seen.iter().find(|(names,_)|names.len()==2).map(|(_,n)|*n).expect("the pair is reachable");
             let options=seen.len() as i32;
             assert!((pair as i32-4000/options).abs()<4000/options/2,"pair drawn {pair} times among {options} options");
@@ -750,7 +828,7 @@ mod tests {
         let first_dlc=POOL_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
         assert!(POOL_NAMES[first_dlc..first_dlc+dlc.len()].iter().all(|n|dlc.iter().any(|e|e.name==*n)));
         let first_preview=PREVIEW_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
-        assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len()-22);
+        assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len()-27);
         // 联机实体只包含地图里摆放过的敌人
         assert_eq!(MAP_ENTITIES.iter().filter(|(spec,_)|spec.dlc).map(|(_,ids)|ids.len()).sum::<usize>(),80);
         for act in 1..=3 {for seed in 0..200 {for kind in [NodeKind::Monster,NodeKind::Elite] {

@@ -4191,8 +4191,6 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
-===== eldenring 0.14.0 | MIT OR Apache-2.0 | git+https://github.com/KamiyamaShiki0704/fromsoftware-rs?rev=7d4fdd66eda1a35284c170feb4b07b058c005f8f#7d4fdd66eda1a35284c170feb4b07b058c005f8f =====
-
 ===== encoding_rs 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause | registry+https://github.com/rust-lang/crates.io-index =====
 --- LICENSE-APACHE ---
 
@@ -5119,12 +5117,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-===== fromsoftware-shared 0.14.0 | MIT OR Apache-2.0 | git+https://github.com/KamiyamaShiki0704/fromsoftware-rs?rev=7d4fdd66eda1a35284c170feb4b07b058c005f8f#7d4fdd66eda1a35284c170feb4b07b058c005f8f =====
-
-===== fromsoftware-shared-macros 0.14.0 | MIT OR Apache-2.0 | git+https://github.com/KamiyamaShiki0704/fromsoftware-rs?rev=7d4fdd66eda1a35284c170feb4b07b058c005f8f#7d4fdd66eda1a35284c170feb4b07b058c005f8f =====
-
-===== fromsoftware-shared-stl 0.14.0 | MIT OR Apache-2.0 | git+https://github.com/KamiyamaShiki0704/fromsoftware-rs?rev=7d4fdd66eda1a35284c170feb4b07b058c005f8f#7d4fdd66eda1a35284c170feb4b07b058c005f8f =====
-
 ===== fxhash 0.2.1 | Apache-2.0/MIT | registry+https://github.com/rust-lang/crates.io-index =====
 
 ===== glam 0.34.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index =====
@@ -5589,7 +5581,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 
-===== hudhook 0.9.3 |  | git+https://github.com/veeenu/hudhook?rev=72e1cc062c35df847b703e5507b82eb21d80d82c#72e1cc062c35df847b703e5507b82eb21d80d82c =====
+===== hudhook 0.9.3 |  |  =====
 --- LICENSE ---
 MIT License
 

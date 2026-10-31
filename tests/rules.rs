@@ -301,13 +301,18 @@ fn event_cost_is_visible_and_does_not_kill_player() {
 }
 
 #[test]
-fn boss_victory_finishes_after_reward() {
+fn final_boss_victory_finishes_without_a_reward_pick() {
     let mut r = Run::new(1, Class::Vagabond);
     r.act=3;
     r.phase = Phase::Combat { id: r.nodes.len()-1 };
     r.win_combat().unwrap();
-    r.claim_reward(0).unwrap();
     assert_eq!(r.phase, Phase::Won);
+    assert!(r.claim_reward(0).is_err());
+    // 前两幕的 Boss 仍然三选一
+    let mut early = Run::new(1, Class::Vagabond);
+    early.phase = Phase::Combat { id: early.nodes.len()-1 };
+    early.win_combat().unwrap();
+    assert!(matches!(early.phase, Phase::Reward { .. }));
 }
 
 #[test]
@@ -348,7 +353,7 @@ fn complete_runs_remain_valid_at_every_checkpoint() {
                 NodeKind::Monster | NodeKind::Elite | NodeKind::Boss => {
                     r.win_combat().unwrap();
                     r = Run::decode(&r.encode().unwrap()).unwrap();
-                    r.claim_reward(0).unwrap();
+                    if matches!(r.phase, Phase::Reward { .. }) {r.claim_reward(0).unwrap();}
                 }
                 NodeKind::Camp => {
                     if r.weapon_level < 25 {

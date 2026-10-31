@@ -30,10 +30,16 @@ window.HOYO_CONFIG = {
 
   /* 右侧栏：网址用系统浏览器打开；action 交给宿主 */
   social: [
+    { icon: 'social-community', label: 'QQ 交流群', panel:
+      '<p>黄金树爬塔玩家交流群</p>' +
+      '<p style="user-select:text;font-size:20px;color:#fff">1 群：1127474860</p>' +
+      '<p style="user-select:text;font-size:20px;color:#fff">2 群：996356584</p>' +
+      '<p>选中群号后按 Ctrl+C 复制，在 QQ 中搜索群号加入。</p>' },
     { icon: 'social-home', label: '项目主页', href: 'https://github.com/tamikip/erdtree-tower' },
     { icon: 'social-guide', label: '安装教程', action: 'openGuide' },
-    { icon: 'social-07', label: '问题反馈', href: 'https://github.com/tamikip/erdtree-tower/issues' },
-    { icon: 'social-folder', label: '打开日志目录', action: 'openLogs' },
+    { icon: 'social-feedback', label: '问题反馈', href: 'https://github.com/tamikip/erdtree-tower/issues' },
+    { icon: 'social-history', label: '更新日志与历史', action: 'releaseHistory' },
+    { icon: 'social-folder', label: 'Mod 日志目录', action: 'openModLogs' },
   ],
 
   windowControls: ['settings', 'minimize', 'close'],
@@ -326,7 +332,9 @@ window.HOYO_CONFIG = {
               { type: 'static', label: '启动器版本', key: 'launcherVersion', value: '—' },
               { type: 'static', label: '更新状态', key: 'updateStatus', value: '尚未检查' },
               { type: 'buttons', label: '更新',
-                items: [{ text: '检查更新', action: 'checkUpdate', primary: true }, { text: '校验并修复文件', action: 'verify' }, { text: '打开日志', action: 'openLogs' }] },
+                items: [{ text: '检查更新', action: 'checkUpdate', primary: true }, { text: '校验并修复文件', action: 'verify' }, { text: '更新日志与历史', action: 'releaseHistory' }] },
+              { type: 'buttons', label: '日志',
+                items: [{ text: 'Mod 日志目录', action: 'openModLogs' }, { text: '启动器日志目录', action: 'openLogs' }] },
             ],
           },
         ],

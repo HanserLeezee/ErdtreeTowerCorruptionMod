@@ -62,6 +62,20 @@ pub fn watchdog() {
 }
 #[derive(Default)]
 pub struct Changes {last:String,at:Option<Instant>}
+#[derive(Default)]
+pub struct LoadTrace {started:Option<Instant>,last_stage:String,last_sample:Option<Instant>,triggered:bool}
+impl LoadTrace {
+    pub fn observe(&mut self,now:Instant,trigger:bool,stage:&str,detail:&str)->Option<String> {
+        if trigger&&!self.triggered {self.started=Some(now);self.last_stage.clear();self.last_sample=None;}
+        self.triggered=trigger;
+        let start=self.started?;let elapsed=now.saturating_duration_since(start).as_millis();
+        let terminal=matches!(stage,"combat_ready"|"room_ready")||elapsed>=180_000;
+        if !terminal&&stage==self.last_stage&&self.last_sample.is_some_and(|t|now.saturating_duration_since(t)<Duration::from_secs(5)){return None;}
+        self.last_stage=stage.into();self.last_sample=Some(now);
+        if terminal{self.started=None;}
+        Some(format!("LOAD_TRACE elapsed_ms={elapsed} stage={stage} end={terminal} {detail}"))
+    }
+}
 impl Changes {
     pub fn due(&mut self,key:String,now:Instant)->bool {
         if key==self.last&&self.at.is_some_and(|t|now.duration_since(t)<Duration::from_secs(30)){return false;}
@@ -71,6 +85,19 @@ impl Changes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn load_trace_separates_map_readiness_and_battle_and_limits_repeated_logs() {
+        let now=Instant::now();let mut trace=LoadTrace::default();
+        assert!(trace.observe(now,false,"room_ready","").is_none());
+        assert!(trace.observe(now,true,"warp","").unwrap().contains("elapsed_ms=0"));
+        assert!(trace.observe(now+Duration::from_secs(1),true,"warp","").is_none());
+        assert!(trace.observe(now+Duration::from_secs(5),false,"waiting_center","").unwrap().contains("end=false"));
+        assert!(trace.observe(now+Duration::from_secs(10),false,"waiting_center","").is_some());
+        assert!(trace.observe(now+Duration::from_secs(30),false,"combat_ready","").unwrap().contains("elapsed_ms=30000"));
+        assert!(trace.observe(now+Duration::from_secs(31),false,"combat_ready","").is_none());
+        assert!(trace.observe(now+Duration::from_secs(32),true,"warp","").unwrap().contains("elapsed_ms=0"));
+        assert!(trace.observe(now+Duration::from_secs(212),false,"waiting_center","").unwrap().contains("end=true"));
+    }
     #[test]
     fn state_changes_log_immediately_and_steady_state_has_heartbeat() {
         let now=Instant::now();let mut state=Changes::default();

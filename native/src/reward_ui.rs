@@ -91,6 +91,10 @@ pub fn affix_names()->&'static [String] {
 }
 /// 护符赐福的护符图标
 pub fn talisman_icon(id:u32)->Option<u32> {DETAILS.get(&(0x20000000|id)).map(|detail|detail.icon)}
+pub fn weapon_type_icon(kind:u8)->Option<u32> {
+    erdtree_tower::rewards::CATALOG.iter().filter(|i|i.kind==erdtree_tower::rewards::ItemKind::Weapon&&i.id/1_000_000==u32::from(kind))
+        .find_map(|i|DETAILS.get(&i.id).map(|d|d.icon))
+}
 /// 调试菜单：按名称或说明搜索可以直接发放的奖励物品（含词条装备）
 pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
     let query=query.trim();if query.is_empty() {return vec![];}
@@ -124,8 +128,11 @@ pub fn ember_icon(ember:erdtree_tower::embers::Ember)->Option<u32> {
 /// 特殊奖励的卡片图标（scene-builder/extra_reward_icons.py 生成的 990100 起 5 张）：武器强化、圣杯扩容、记忆扩容、卢恩、强化石；
 /// 文件缺失时照旧显示两个字
 const EXTRA_ICONS:u32=990100;
+const TORCH_ICON:u32=990200;
 fn card_icon(run:&Run,reward:&Reward)->Option<u32> {
     if let Reward::Ember(ember)=reward {return ember_icon(*ember);}
+    // [HansFix] 火把卡的图标（scene-assets/reward-icons/990200.rgba，随补丁附带）
+    if matches!(reward,Reward::Torch(_)) {return Some(TORCH_ICON);}
     let extra=match reward {Reward::UpgradeWeapon=>Some(0),Reward::FlaskCapacity=>Some(1),Reward::MemorySlot=>Some(2),Reward::Gold(_)=>Some(3),Reward::UpgradeStone=>Some(4),_=>None};
     if let Some(index)=extra {return Some(EXTRA_ICONS+index);}
     let id=match reward {Reward::StarStream=>Some(0x40000000|4200),_=>item_id(run,reward)};

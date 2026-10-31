@@ -76,11 +76,12 @@ def copy_tree(src, relative):
         if item.is_file():
             if item.suffix.lower() in ('.pdb', '.log', '.bak'):
                 continue
-            if relative == 'scene-assets' and (item.name.endswith('-build.json') or item.name.endswith('-audit.tsv') or item.suffix.lower() == '.png'):
+            if relative == 'scene-assets' and (item.name == 'generation.txt' or item.name.endswith('-build.json') or item.name.endswith('-audit.tsv') or item.suffix.lower() == '.png'):
                 continue
             copy_file(item, Path(relative) / item.relative_to(src))
 
 copy_file(built_native, native[0])
+copy_file(built_native.with_name('tower_transmog.dll'), 'tower_transmog.dll')
 for name in ['LICENSE', 'ADDITIONAL-TERMS.md']:
     copy_file(source / name, name)
 (stage / 'preview.me3').write_text(profile, encoding='utf-8')
@@ -118,7 +119,7 @@ for mode in ['Solo', 'Seamless']:
 files = sorted(p for p in stage.rglob('*') if p.is_file())
 for file in files:
     name = file.relative_to(stage).as_posix()
-    if (file.suffix in ['.log', '.sl2', '.co2', '.ertowercoop', '.ertowerparty', '.party-award'] or
+    if (file.suffix in ['.log', '.sl2', '.co2', '.ertowercoop', '.ertowerparty', '.party-award', '.appearance'] or
             file.suffix.lower() in ['.pdb', '.bak'] or
             file.name in ['host.json', 'guest.json', 'GamePath.txt', 'tower-options.ini', 'tower-debug.enable', 'ersc_settings.ini'] or
             (name.startswith('tower-') and file.suffix in ['.json', '.jsonl', '.class', '.fp', '.history']) or

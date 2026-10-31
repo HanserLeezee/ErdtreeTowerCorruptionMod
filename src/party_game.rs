@@ -34,6 +34,8 @@ impl Config {
 }
 #[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct Report {
+    #[serde(default)] pub merchant_bound:bool,
+    #[serde(default)] pub testing:bool,
     #[serde(default)] pub law:crate::law::Law,
     #[serde(default)] pub flask_uses:u64,
     #[serde(default)] pub drawing:Option<crate::map_drawing::Request>,
@@ -66,15 +68,17 @@ pub struct Report {
 }
 impl Report {
     pub fn new(run:&Run,epoch:u64,arrived:bool,bound:bool,alive:bool)->Self {
-        Self{law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
+        Self{merchant_bound:false,testing:false,law:run.law,flask_uses:0,drawing:None,trial:run.regional_event.trial,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:true,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:run.regional_event.chariot,stormveil:run.regional_event.stormveil,storm_choice:None,storm_finish:false,embers:run.embers.clone(),strikes:vec![],epoch,seed:run.seed,act:run.act,visited:run.visited.clone(),map_ready:run.phase==Phase::Map&&!run.contract_pending(),arrived,bound,alive}
     }
     pub fn unavailable(epoch:u64)->Self {
-        Self{law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
+        Self{merchant_bound:false,testing:false,law:Default::default(),flask_uses:0,drawing:None,trial:false,trial_choice:None,has_stonesword_key:false,chariot_ready:false,rest_end:false,portal:false,title:0,present:false,at_hub:false,event_request:None,event_bound:None,event_applied:None,selected:None,chariot:false,stormveil:None,storm_choice:None,storm_finish:false,embers:vec![],strikes:vec![],epoch,seed:0,act:1,visited:vec![],map_ready:false,arrived:false,bound:false,alive:false}
     }
     pub fn at_hub(epoch:u64)->Self {Self{present:true,at_hub:true,alive:true,..Self::unavailable(epoch)}}
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Order {
+    Merchant{epoch:u64,phase:u8},
+    BossTest{epoch:u64,seed:u64,test:crate::debug::BossTest},
     Law{epoch:u64,seed:u64,law:crate::law::Law},
     MapDrawing(crate::map_drawing::Canvas),
     ForceEnd,
@@ -98,6 +102,19 @@ pub enum Order {
 pub enum Stage {Map,Travel,Combat,Fighting,Service,Reward,Stopped}
 pub struct Gate {trial:Option<crate::regional_events::Trial>,pub epoch:u64,pub stage:Stage,peers:Vec<(u64,Option<Report>)>,events:Option<crate::party_events::Queue>,stormveil:Option<crate::stormveil::Decision>}
 impl Gate {
+    pub fn merchant_present(&self)->bool {self.stage==Stage::Service&&self.all(|r|r.arrived&&!r.map_ready)}
+    pub fn merchant_ready(&self)->bool {self.merchant_present()&&self.all(|r|!r.alive||r.merchant_bound)&&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive))}
+    pub fn boss_test(&mut self,run:&Run,test:crate::debug::BossTest)->RuleResult<Order> {
+        if self.events_unsettled()||!matches!(self.stage,Stage::Map|Stage::Reward|Stage::Service)
+            ||run.phase!=Phase::Map||!self.all(|r|r.testing&&r.alive&&r.map_ready&&r.law==run.law&&r.seed==run.seed&&r.act==run.act&&r.visited==run.visited) {
+            return Err("Boss 测试需全员开启调试、存活，并完成领奖与誓约选择后回到路线图".into());
+        }
+        let mut next=run.clone();next.debug_boss_test(test.encounter,test.act)?;
+        self.epoch=self.epoch.checked_add(1).ok_or("队伍序号耗尽")?;self.stage=Stage::Travel;
+        self.events=None;self.stormveil=None;self.trial=None;
+        for p in &mut self.peers {p.1=None;}
+        Ok(Order::BossTest{epoch:self.epoch,seed:run.seed,test})
+    }
     pub fn law_order(&self,run:&Run)->RuleResult<Option<Order>> {
         if !self.all(|r|r.seed==run.seed&&r.act==run.act&&r.visited==run.visited){return Ok(None);}
         if self.all(|r|r.law==run.law){return Ok(None);}
@@ -251,6 +268,30 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn merchant_waits_for_all_surviving_peers_and_rejects_departures() {
+        let run=Run::new(42,crate::Class::Samurai);let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Service;
+        let mut r=Report::new(&run,0,true,false,true);r.map_ready=false;r.merchant_bound=true;
+        gate.report(1,r.clone()).unwrap();assert!(!gate.merchant_ready());
+        let mut other=r.clone();other.merchant_bound=false;gate.report(2,other.clone()).unwrap();assert!(!gate.merchant_ready());
+        other.alive=false;gate.report(2,other.clone()).unwrap();assert!(gate.merchant_ready());
+        other.map_ready=true;gate.report(2,other).unwrap();assert!(!gate.merchant_present());
+        r.alive=false;r.map_ready=false;gate.report(1,r.clone()).unwrap();gate.report(2,r).unwrap();assert!(!gate.merchant_ready());
+    }
+    #[test]
+    fn boss_test_requires_all_peers_to_opt_in_and_be_ready() {
+        let run=Run::new(42,crate::Class::Samurai);let test=crate::debug::BossTest{encounter:3,act:2};
+        let mut gate=Gate::new(vec![1,2]);
+        let mut ready=Report::new(&run,0,false,false,true);ready.testing=true;
+        gate.report(1,ready.clone()).unwrap();
+        assert!(gate.boss_test(&run,test).is_err());assert_eq!(gate.epoch,0);
+        let mut other=ready.clone();other.testing=false;gate.report(2,other).unwrap();
+        assert!(gate.boss_test(&run,test).is_err());assert_eq!(gate.epoch,0);
+        gate.report(2,ready).unwrap();
+        assert!(matches!(gate.boss_test(&run,test).unwrap(),Order::BossTest{epoch:1,seed:42,test:t} if t==test));
+        assert_eq!(gate.stage,Stage::Travel);
+        assert!(gate.boss_test(&run,test).is_err());assert_eq!(gate.epoch,1);
+    }
     #[test]
     fn titles_are_collected_from_every_present_member() {
         let run=Run::new(42,crate::Class::Samurai);

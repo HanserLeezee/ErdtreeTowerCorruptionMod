@@ -151,12 +151,20 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             heading(ui, s, "余烬", Some(run.embers.len()).filter(|n| *n > 0));
             if run.embers.is_empty() {empty(ui, s, "还没有余烬：普通战与精英战的奖励里可能出现");}
             for ember in &run.embers {
-                let mut lines=vec![(ember.effect().replace('\n', "，"), BOON)];
+                let mut lines=Vec::new();
+                let mut name=ember.name().to_owned();
                 if ember.stacking() {
                     let level=run.ember_stacks.level(*ember);
-                    lines.push((format!("当前 {level} 层：{}", ember.stack_bonus(level).unwrap_or_default()), WHITE));
+                    name=format!("{name} · {level} 层");
+                    lines.push((format!("当前加成：{}", ember.stack_bonus(level).unwrap_or_default()), WHITE));
+                    if *ember==erdtree_tower::embers::Ember::SoulEater {
+                        let step=erdtree_tower::embers::SOUL_POINTS;
+                        let points=run.ember_stacks.souls%step;
+                        lines.push((format!("下一层：{points}/{step} 魂点（还差 {} 点）",step-points),GOLD));
+                    }
                 }
-                entry(ui, s, Badge::Icon(crate::reward_ui::ember_icon(*ember).and_then(&mut *icon)), ember.name(), crate::reward_ui::rarity_color(usize::from(ember.quality())), &lines);
+                lines.push((ember.effect().replace('\n', "，"), BOON));
+                entry(ui, s, Badge::Icon(crate::reward_ui::ember_icon(*ember).and_then(&mut *icon)), &name, crate::reward_ui::rarity_color(usize::from(ember.quality())), &lines);
             }
             if !run.elite_buffs.is_empty() {
                 heading(ui, s, "护符赐福", Some(run.elite_buffs.len()));
@@ -179,7 +187,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
                     let min = [start[0] + (i % per_row) as f32 * (side + gap), y + (i / per_row) as f32 * (side + gap)];let max = [min[0] + side, min[1] + side];
                     let draw = ui.get_window_draw_list();
                     draw.add_rect(min, max, ImColor32::from_rgba(0, 0, 0, 150)).filled(true).rounding(3.0 * s).build();
-                    crate::law_art::draw(&draw, node.art, [min[0] + 2.0 * s, min[1] + 2.0 * s], [max[0] - 2.0 * s, max[1] - 2.0 * s], 255);
+                    crate::law_art::draw_line(&draw, node.art, [min[0] + 5.0 * s, min[1] + 5.0 * s], [max[0] - 5.0 * s, max[1] - 5.0 * s], 240);
                     draw.add_rect(min, max, ImColor32::from_rgba(171, 143, 87, 110)).rounding(3.0 * s).build();drop(draw);
                     if ui.is_mouse_hovering_rect(min, max) {ui.set_window_font_scale(s);ui.tooltip_text(format!("{}\n{}", node.name, node.effect));}
                 }

@@ -256,6 +256,15 @@
   /* ---------------- 右侧社交栏（官方 .hyp-game-social-media）----------------
      官方几何：容器 x=1228，每项 44x44，pitch 56，图标 36x36。
   ------------------------------------------------ */
+  var SOCIAL_ICONS = {
+    'social-community': '<path d="M14 14h4l4 3V7a2 2 0 0 0-2-2h-4"/><path d="M4 3h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7l-5 4V5a2 2 0 0 1 2-2Z"/><path d="M6 7h4M6 11h2"/>',
+    'social-home': '<path d="m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"/>',
+    'social-guide': '<path d="M12 5v16M12 5C9 3 6 3 3 4v15c3-1 6-1 9 2 3-3 6-3 9-2V4c-3-1-6-1-9 1Z"/>',
+    'social-feedback': '<path d="M5 3h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H8l-5 3V5a2 2 0 0 1 2-2Z"/><path d="M12 7v5M12 15h.01"/>',
+    'social-history': '<path d="M3 4v5h5M3 9a9 9 0 1 1 0 6"/><path d="M12 7v5l3 2"/>',
+    'social-folder': '<path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 3h18"/>',
+  };
+
   function renderSocial() {
     var host = document.getElementById('social');
     host.innerHTML = '';
@@ -265,7 +274,9 @@
       b.setAttribute('data-tip-place', 'left');
       b.setAttribute('aria-label', item.label || '');
       b.innerHTML =
-        '<img src="assets/icons/' + esc(item.icon) + '.png" alt="">' +
+        (SOCIAL_ICONS[item.icon]
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + SOCIAL_ICONS[item.icon] + '</svg>'
+          : '<img src="assets/icons/' + esc(item.icon) + '.png" alt="">') +
         (item.badge ? '<i class="badge"></i>' : '');
       b.addEventListener('click', function () {
         if (item.popup === 'account') { openAccountPopup(b); return; }
@@ -777,6 +788,26 @@
     });
     m.querySelector('.modal-close').addEventListener('click', closeModal);
     document.getElementById('app').appendChild(mask);
+  }
+
+  function showReleaseHistory(data) {
+    var previous = document.getElementById('releaseHistory');
+    if (!data.loading && !previous) return;
+    var items = data.items || [];
+    var html = '<section id="releaseHistory"><p role="status">' + esc(data.status || '') + '</p>' +
+      '<div class="history-actions"><button id="historyRefresh"' + (data.loading ? ' disabled' : '') + '>刷新</button>' +
+      '<button id="historyWebsite">完整发布页</button></div>';
+    if (!items.length) html += '<p>暂无可显示的更新记录。</p>';
+    items.forEach(function (item, index) {
+      var published = item.date ? new Date(item.date) : null;
+      var date = published && !isNaN(published.getTime()) ? published.toLocaleDateString('zh-CN') : '';
+      html += '<details class="history-entry"' + (index === 0 ? ' open' : '') + '><summary>' + esc(item.title || item.tag) +
+        '<span>' + esc(date) + ' · ' + esc(item.tag) + '</span></summary>' +
+        '<pre>' + esc(item.notes || '此版本未提供更新说明。') + '</pre></details>';
+    });
+    openModal('更新日志与历史', html + '</section>');
+    document.getElementById('historyRefresh').addEventListener('click', function () { bridge.settings.action('releaseHistory'); });
+    document.getElementById('historyWebsite').addEventListener('click', function () { bridge.openExternal('https://github.com/tamikip/erdtree-tower/releases'); });
   }
 
   /* 立绘点击：只认人物身上不透明的像素（图片四周的透明区域不算），点了弹出对应职业介绍 */
@@ -1795,6 +1826,11 @@
     bridge.onMessage(function (msg) {
       if (!msg || typeof msg !== 'object') return;
       var p = msg.payload || {};
+
+      if (msg.type === 'app' && msg.action === 'releaseHistory') {
+        showReleaseHistory(p);
+        return;
+      }
 
       if (msg.type === 'app' && msg.action === 'hostTakeover') {
         if (p.download != null) simulate = !p.download;

@@ -1,7 +1,7 @@
 // 主题幕的“场景”部分（src/themes.rs）：开幕标题卡、路线图配色、竞技场的时间。不改敌人与数值。
 // 插画按需加载：scene-assets/theme-art/<art>.rgba（800 × 450），只保留当前主题这一张。
 use std::sync::Mutex;
-use std::time::{Duration,Instant};
+use std::time::Instant;
 use hudhook::{RenderContext,imgui::{ImColor32,TextureId,Ui}};
 use erdtree_tower::{Phase,Run,themes::Theme};
 
@@ -81,20 +81,6 @@ pub fn draw_card(ui:&Ui) {
 /// 路线图配色：纸色（乘到纸张贴图上）、墨色、强调色
 pub fn palette(run:&Run)->(ImColor32,ImColor32,ImColor32) {let t=theme(run);(rgb(t.paper,1.0),rgb(t.ink,1.0),rgb(t.accent,1.0))}
 pub fn ink_rgba(run:&Run)->[f32;4] {let c=theme(run).ink;[((c>>16)&255) as f32/255.0,((c>>8)&255) as f32/255.0,(c&255) as f32/255.0,1.0]}
-
-/// 竞技场的时间：每场战斗传送时按主题请求一次钟点（游戏会过渡到这个时间）
-static TIME:Mutex<Option<((u64,u8,usize),Instant)>>=Mutex::new(None);
-pub fn arena_time(run:&Run) {
-    use fromsoftware_shared::FromStatic;
-    let key=(run.seed,run.act,run.visited.len());
-    let Ok(mut last)=TIME.lock() else{return};
-    if last.is_some_and(|(k,at)|k==key||at.elapsed()<Duration::from_secs(2)) {return;}
-    let Ok(time)=(unsafe {eldenring::cs::WorldAreaTime::instance_mut()}) else{return};
-    let hour=u32::from(theme(run).hour);
-    time.request_time(hour,0,0);
-    *last=Some((key,Instant::now()));
-    crate::log(format!("Arena time for theme {}: {hour}:00",theme(run).name));
-}
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,5 @@
 // 职业传承（局外养成，不加数值）：每个角色存档一份 .legacy 文件，记录各职业的熟练度经验与选用的开局护符。
-// 整局结束时按结算记录加经验；开局时把当前职业选用的护符代替祖灵角发给玩家。
+// 整局结束时按结算记录加经验；开局时把当前职业选用的开局护符发给玩家。
 use std::sync::Mutex;
 use erdtree_tower::{journal::Record,legacy::{Gain,Legacy}};
 /// 当前角色存档（运行时识别角色后设置），旅程档案的“传承”页据此读写
@@ -21,5 +21,5 @@ pub fn award(owner:(u32,i32),record:&Record)->Option<Gain> {
         Err(error)=>{super::log(error);None},
     }
 }
-/// 开局：当前职业选用的开局护符（未选或未解锁时为祖灵角）
+/// 开局：当前职业选用的开局护符（未选或未解锁时为这个职业的默认护符）
 pub fn talisman(owner:(u32,i32),class:erdtree_tower::Class)->u32 {load(owner).get(class).chosen(class)}

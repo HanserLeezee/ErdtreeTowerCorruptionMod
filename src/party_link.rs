@@ -2,7 +2,7 @@ use crate::party_rewards::Request;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, io::{self, Read, Write}, net::{SocketAddr, TcpListener, TcpStream}, time::{Duration, Instant}};
 
-pub const VERSION: u32 = 22;
+pub const VERSION: u32 = 39;
 /// [HansFix] Same optional-patch offset as the Steam handshake.
 pub fn wire_version()->u32 {VERSION+crate::party_handshake::extension()}
 const MAX_FRAME: usize = 256 * 1024;

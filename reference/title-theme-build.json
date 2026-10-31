@@ -4,31 +4,46 @@
   "files": [
     {
       "file": "menu/05_000_title.gfx",
-      "sha256": "77e7db25475d01f0cce491f40efe945638de92b54f812580b6506f0555418cae",
-      "tagsVerified": 54,
+      "sha256": "870acf4a4916e8ec4bea0bf5e55db1fb8927765be8f75c1d6a2e38369b2b2d83",
       "artwork": 1,
-      "rebasedFromPatched": true
+      "nativeTimeline": true
     },
     {
       "file": "menu/05_001_title_logo.gfx",
-      "sha256": "57b81d422dc47f0d1117b01815683ec25645887c41d4c068ca7894994901f847",
+      "sha256": "52bd0cf8a8f42f0372d5509b7621492481a98d102a3237be341e5faa4c1dd7c9",
       "tagsVerified": 233,
       "artwork": 0,
-      "rebasedFromPatched": true
+      "rebasedFromPatched": false
     },
     {
       "file": "menu/02_903_nowloading2.gfx",
-      "sha256": "d79e7eac8267e9f61adde4ef7a44c2d7bb74c1c1f9b391d26b99346e061378da",
-      "tagsVerified": 327,
+      "sha256": "a0442a1bcf324e697abfc69f1b2242c0622f3398b862eb207518b30351ee6289",
       "artwork": 3,
-      "rebasedFromPatched": true
+      "nativeTimeline": true
     },
     {
       "file": "menu/02_904_nowloading3.gfx",
-      "sha256": "c85d194e734072054107c368511e00f41e3a6823efbcfe8b5c1d8300d5381fdd",
-      "tagsVerified": 200,
+      "sha256": "e9a716873f98733abc7250dd20f9538bca7829ef00493cc9cdb3817b4e03a82b",
       "artwork": 3,
-      "rebasedFromPatched": true
+      "nativeTimeline": true
+    },
+    {
+      "file": "menu/hi/01_common.sblytbnd.dcx",
+      "sha256": "bbfb533f0d74263a540b4de588ae3b2faa2938a76aa66fc11b8f45f3d09bc0d6"
+    },
+    {
+      "file": "menu/hi/01_common.tpf.dcx",
+      "sha256": "88e243391d500fea62d9114524b051cc9bcaeb079f60a6483de243396321ba07"
+    },
+    {
+      "file": "menu/low/01_common.sblytbnd.dcx",
+      "sha256": "eb48e376a51b79f9b3022fab1b1a5cfb97a63d8efb6bdc9f4bbf16ed7a9c181e"
+    },
+    {
+      "file": "menu/low/01_common.tpf.dcx",
+      "sha256": "287ac06cd0cee19fbd95e85baba572b4aae19b11a78871dfe7cc49190ae61f25"
     }
-  ]
+  ],
+  "textureBackend": "native-external-image-tpf-layout",
+  "loadingBackground": "720-frame-native-cycle-below-gauge-with-baked-tips"
 }

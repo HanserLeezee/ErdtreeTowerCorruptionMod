@@ -241,7 +241,7 @@ impl Hub {
         }
         super::run_screen::hub_ready();
         if self.start && party_ready {
-            // 开局护符：职业传承选用的护符，默认祖灵角；发放失败时保持待开局，下一帧重试
+            // 开局护符：职业传承选用的护符，未选时用这个职业的默认护符；发放失败时保持待开局，下一帧重试
             let talisman=super::legacy::talisman(self.owner,super::class_from_archetype(self.chosen).unwrap_or(Class::Vagabond));
             super::items::give(&[((0x20000000|talisman) as i32,1,-1)])?;
             super::log(format!("TOWER_LEGACY start talisman={talisman}"));
@@ -256,6 +256,7 @@ impl Hub {
             run.set_law(std::mem::take(&mut self.law))?;
             if !run.law.is_empty() {super::log(format!("TOWER_LAW start code={} score={}",run.law.code(),run.law.score()));}
             run.set_start_talisman(talisman)?;
+            run.weapon_preferences=super::legacy::load(self.owner).training.preferences();
             return Ok(Some(run));
         }
         if self.room.is_none() {

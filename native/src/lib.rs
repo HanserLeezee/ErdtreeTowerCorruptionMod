@@ -29,6 +29,7 @@ mod stats;
 mod enemies;
 mod chariot;
 mod map_guards;
+mod merchant;
 mod boss_bars;
 mod flasks;
 mod physick;
@@ -57,6 +58,11 @@ mod debug_menu;
 mod run_log;
 mod build_panel;
 mod archive_ui;
+mod cosmetic_unlocks;
+mod transmog;
+mod transmog_ui;
+mod archive_style;
+mod weapon_ui;
 mod class_ui;
 mod legacy;
 mod law_ui;
@@ -100,6 +106,7 @@ mod scenery;
 mod spirit_tune;
 mod dual_bosses;
 mod affix_stack;
+mod sfx;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -264,27 +271,51 @@ impl ImguiRenderLoop for TowerPreview {
         log("DX12 renderer initialized");
         // 正文与标题字体都只加载界面字表里的字（缺字表时退回原来的范围），字体贴图不会因为多一套字体而翻倍
         let ranges=|fallback:FontGlyphRanges|fancy_text::ui_glyph_ranges().map_or(fallback,FontGlyphRanges::from_slice);
+        // Rasterize near the displayed size, keeping existing logical font sizes and layout.
+        let [width,height]=ctx.io().display_size;
+        let density=(width/1600.0).min(height/900.0).clamp(1.0,2.0);
+        let mut font_density=1.0;
         // 正文：思源宋体常规体；字体文件缺失时退回系统黑体
         if let Ok(font) = std::fs::read(fancy_text::body_font_path()).or_else(|error|{log(format!("Body font missing, falling back to SimHei: {error}"));std::fs::read("C:/Windows/Fonts/simhei.ttf")}) {
             ctx.fonts().add_font(&[FontSource::TtfData {
                 data: &font,
-                size_pixels: 20.0,
+                size_pixels: 20.0*density,
                 config: Some(FontConfig {
                     glyph_ranges: ranges(FontGlyphRanges::chinese_full()),
+                    rasterizer_multiply: 1.15,
                     ..Default::default()
                 }),
             }]);
+            ctx.io_mut().font_global_scale=1.0/density;
+            font_density=density;
         }
         // 标题字体：思源宋体子集，按 32 像素加载，供带动态特效的标题文字使用
         match std::fs::read(fancy_text::title_font_path()) {
             Ok(font)=>{
                 fancy_text::set_title_font(fancy_text::TitleFont(ctx.fonts().add_font(&[FontSource::TtfData {
                     data: &font,
-                    size_pixels: 32.0,
+                    size_pixels: 32.0*font_density,
                     config: Some(FontConfig {glyph_ranges: ranges(FontGlyphRanges::chinese_simplified_common()),..Default::default()}),
                 }])));
             },
             Err(error)=>log(format!("Title font missing: {error}")),
+        }
+        // 结算页黑体：思源黑体粗体的子集（约一千字），正文按 26 像素加载；大号数字与评级字母另按 220 像素只加载这几个字
+        match std::fs::read(fancy_text::button_font_path()) {
+            Ok(font)=>{
+                fancy_text::set_button_font(fancy_text::TitleFont(ctx.fonts().add_font(&[FontSource::TtfData {
+                    data: &font,
+                    size_pixels: fancy_text::SANS_PIXELS,
+                    // 字体里只有子集里的字，按全范围加载也只栅格化这些字
+                    config: Some(FontConfig {glyph_ranges: FontGlyphRanges::chinese_full(),..Default::default()}),
+                }])));
+                fancy_text::set_display_font(fancy_text::TitleFont(ctx.fonts().add_font(&[FontSource::TtfData {
+                    data: &font,
+                    size_pixels: 220.0,
+                    config: Some(FontConfig {glyph_ranges: FontGlyphRanges::from_slice(&fancy_text::DISPLAY_CHARS),..Default::default()}),
+                }])));
+            },
+            Err(error)=>log(format!("Summary font missing: {error}")),
         }
     }
 
@@ -324,7 +355,6 @@ impl ImguiRenderLoop for TowerPreview {
         let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
         if ui.is_key_pressed_no_repeat(options::key(Hotkey::Debug)) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
-        spirit_tune::draw(ui);
         if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
             let draw=ui.get_foreground_draw_list();
             let line=|text:&str,y:f32,color:hudhook::imgui::ImColor32| {
@@ -483,6 +513,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
         if let Err(error)=unsafe {smith::install()} {log(format!("Smith reinforcement unavailable: {error}"));}
         if let Err(error)=unsafe {spirits::install()} {log(format!("Spirit use trace unavailable: {error}"));}
         if let Err(error)=unsafe {star_stream::install()} {log(format!("Star stream unavailable: {error}"));}
+        if let Err(error)=unsafe {embers::install_critical_trace()} {log(format!("Critical stack detection unavailable: {error}"));}
         if let Err(error) = wait_for_system_init(&program, Duration::from_secs(60)) {
             log(format!("Game system initialization failed: {error}"));
             return;
@@ -501,6 +532,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
         std::mem::forget(recurring);
         log("Character capture task registered");
         if let Err(error)=unsafe {seamless_revival::install()} {log(format!("PARTY_REVIVE unavailable: {error}"));}
+        transmog::initialize(diagnostics::module_path(address));
     });
     1
 }
