@@ -5,7 +5,7 @@ usage: python3 -I torch_patch.py <tools_dir> <paramdef dir> <spells.tsv> <input 
 For every spell i in scene-assets/hansfix-torch-spells.tsv:
   SwordArtsParam 9600+i     = copy of 10 ("no skill": the skill button does nothing); textId 9600+i (name injected at runtime)
   EquipParamGem 990000+i    = copy of 60300 with the spell's icon, skill 9600+i, mountable on torches only
-  SpEffectParam 9600300+i   = 0.5 s marker that only plays the spell's cast SFX/SE on the player
+  SpEffectParam 9600300+i   = 1 s marker that only plays the spell's release SFX on the player (no sound: the spell has its own)
   SpEffectVfxParam 9600300+i
 Torch slots: EquipParamWeapon 24800000 + k*100 (k < SLOTS) = copies of the Torch (24000000). The DLL turns a slot into
 one particular torch (base torch, scaling, affixes) at runtime, so every torch the player owns is its own row.
@@ -28,9 +28,12 @@ for index, magic, name, icon, ref, kind, sfx in spells:
     i, icon, sfx = int(index), int(icon), int(sfx)
     add('SwordArtsParam', 'SwordArtsParam', ART_FIRST + i, 10, {'textId': ART_FIRST + i}, f'Tower torch spell {magic}')
     add('EquipParamGem', 'EquipParamGem', GEM_FIRST + i, 60300, {'iconId': icon, 'swordArtsParamId': ART_FIRST + i, 'defaultWepAttr': 0}, f'Tower torch ash {magic}')
-    add('SpEffectParam', 'SpEffect', FLASH_FIRST + i, 9600081, {'effectEndurance': 0.5, 'vfxId': FLASH_FIRST + i}, f'Tower torch cast flash {magic}')
-    add('SpEffectVfxParam', 'SpEffectVfx', FLASH_FIRST + i, 1660000, {'midstSfxId': -1, 'midstSeId': -1, 'midstDmyId': -1,
-        'initSfxId': sfx, 'initSeId': sfx, 'initDmyId': CAST_DMY, 'finishSfxId': -1, 'finishSeId': -1}, f'Tower torch cast flash {magic}')
+    # r22: the spell itself is emitted by the game (with its own sound), so the flash only adds the release visual:
+    # played as the "midst" effect of a 1 s marker so it always stops with the marker (an init effect that loops,
+    # e.g. Poison Mist's charge cloud, never stopped), and no extra sound (two sounds overlapped)
+    add('SpEffectParam', 'SpEffect', FLASH_FIRST + i, 9600081, {'effectEndurance': 1.0, 'vfxId': FLASH_FIRST + i}, f'Tower torch cast flash {magic}')
+    add('SpEffectVfxParam', 'SpEffectVfx', FLASH_FIRST + i, 1660000, {'midstSfxId': sfx, 'midstSeId': -1, 'midstDmyId': CAST_DMY,
+        'initSfxId': -1, 'initSeId': -1, 'initDmyId': -1, 'finishSfxId': -1, 'finishSeId': -1}, f'Tower torch cast flash {magic}')
 for k in range(SLOTS):
     add('EquipParamWeapon', 'EquipParamWeapon', SLOT_FIRST + k * 100, TORCH, {}, f'Tower torch slot {k}')
 

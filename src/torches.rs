@@ -106,6 +106,13 @@ impl crate::Run {
         self.torches.push(torch.clone());
         Ok(torch)
     }
+    /// 调试：指定法术的火把
+    pub fn new_torch_with_spell(&mut self,quality:u8,spell:u8)->crate::RuleResult<Torch> {
+        let mut torch=self.new_torch(quality,0xde_b0^u64::from(spell))?;
+        torch.spell=spell%SPELLS.len() as u8;
+        if let Some(t)=self.torches.iter_mut().find(|t|t.slot==torch.slot) {t.spell=torch.spell;}
+        Ok(torch)
+    }
     pub fn torch(&self,weapon:u32)->Option<&Torch> {let slot=slot_of(weapon)?;self.torches.iter().find(|t|t.slot==slot)}
 }
 

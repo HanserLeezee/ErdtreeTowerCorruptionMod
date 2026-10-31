@@ -1849,7 +1849,7 @@ fn tick_locked() {
         // 以免排队到离开房间后才一起生效（例如在商店里点了“切换到第 1 幕”，出门时整张地图被重置）
         while let Some(command)=super::debug_menu::take() {
             use super::debug_menu::Command;
-            let message=if matches!(command,Command::Heal|Command::Runes(_)|Command::Item(_)|Command::Cheats(..)|Command::TorchGive) {
+            let message=if matches!(command,Command::Heal|Command::Runes(_)|Command::Item(_)|Command::Cheats(..)|Command::TorchGive|Command::TorchAll|Command::TorchFast(_)) {
                 match debug_command(&mut state,world,command) {Ok(message)=>message,Err(error)=>format!("调试失败：{error}")}
             } else {"调试取消：在服务房间里不能改旅程，请离开房间后再操作".to_owned()};
             super::log(format!("DEBUG_MENU {message}"));report(&mut state,message);
@@ -2006,15 +2006,15 @@ fn tick_locked() {
             let _=super::native_talk::set_flag(45007990,false);
             if let Phase::Combat{id}=next.phase {
                 give_elite_tear(world,&next,id);
-                // [HansFix] 堕落关卡卢恩保底：这一场拿到的不少于以往堕落关卡的最高值
+                // [HansFix] 堕落关卡的卢恩随堕落值上升：这一场拿到的再加 堕落值×10%
                 if super::hansfix::wander() {
                     if let (Some(start),Some(player))=(state.fight_runes.take(),world.main_player.as_mut()) {
                         let data=unsafe {player.player_game_data.as_mut()};
                         let earned=data.rune_count.saturating_sub(start);
-                        let top_up=next.fallen_rune_floor(id,earned);
-                        if top_up>0 {
-                            data.rune_count=data.rune_count.saturating_add(top_up).min(999_999_999);
-                            super::log(format!("HANSFIX_RUNES fallen level earned={earned} topped_up={top_up}"));
+                        let bonus=next.fallen_rune_bonus(id,earned);
+                        if bonus>0 {
+                            data.rune_count=data.rune_count.saturating_add(bonus).min(999_999_999);
+                            super::log(format!("HANSFIX_RUNES fallen level earned={earned} bonus={bonus}"));
                         }
                     }
                 }
@@ -2075,6 +2075,12 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
             data.rune_count=data.rune_count.saturating_add(amount).min(999_999_999);next.gold=data.rune_count;state.view.runes=data.rune_count;
             format!("卢恩 +{amount}")
         },
+        Command::TorchAll=>{
+            let mut given=0;
+            for spell in 0..erdtree_tower::torches::SPELLS.len() as u8 {let torch=next.new_torch_with_spell(3,spell)?;super::torch_proto::give(&torch,&next.torches)?;given+=1;}
+            record(&next);state.view.run=Some(next.clone());format!("已获得 {given} 把火把（每个战技一把）")
+        },
+        Command::TorchFast(on)=>{super::torch_proto::set_fast(on);format!("火把举起{}秒释放",if on{" 1 "}else{" 10 "})},
         Command::TorchGive=>{let torch=next.new_torch((next.torch_rolls%4) as u8,0xde_b0)?;super::torch_proto::give(&torch,&next.torches)?;record(&next);state.view.run=Some(next.clone());format!("已获得火把（火把位 {}，法术 {}）",torch.slot,erdtree_tower::torches::SPELLS[usize::from(torch.spell)].name)},
         Command::Item(id)=>{
             super::items::give_reward(data,id)?;

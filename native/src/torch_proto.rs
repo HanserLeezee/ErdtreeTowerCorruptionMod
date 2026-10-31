@@ -10,6 +10,10 @@ use erdtree_tower::torches::{self, Torch};
 use fromsoftware_shared::{FromStatic, Superclass};
 
 const HOLD: Duration = Duration::from_secs(10);
+/// 调试：举起 1 秒就释放
+static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub fn fast() -> bool { FAST.load(std::sync::atomic::Ordering::Relaxed) }
+pub fn set_fast(on: bool) { FAST.store(on, std::sync::atomic::Ordering::Relaxed); }
 // DLC2 的空文本表：武器名/武器说明，战灰名/战灰说明，战技名/战技说明
 const WEAPON_NAME: u32 = 410; const WEAPON_CAPTION: u32 = 412;
 const GEM_NAME: u32 = 422; const GEM_CAPTION: u32 = 424;
@@ -114,7 +118,7 @@ pub fn sync(chr: &mut ChrIns, data: &PlayerGameData, run: Option<&erdtree_tower:
     // 一次举起只释放一次：放下后再举起才重新计时（否则一直举着会每 10 秒叠一次特效和音效）
     if state.fired { return; }
     let since = *state.held_since.get_or_insert_with(Instant::now);
-    if since.elapsed() < HOLD { return; }
+    if since.elapsed() < if fast() { Duration::from_secs(1) } else { HOLD } { return; }
     state.fired = true;
     cast(chr, spell);
 }

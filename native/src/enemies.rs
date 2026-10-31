@@ -261,6 +261,13 @@ pub fn node_roster(run:&erdtree_tower::Run,id:usize)->Vec<Enemy> {
         .filter(|&&visited|run.nodes[visited].kind==node.kind).count();
     // [HansFix] 堕落首领与本幕首领不同：用另一个种子抽
     let seed=if Some(id)==run.fallen_id() {erdtree_tower::mix(run.seed^0xfa11_e7b0)} else {run.seed};
+    // [HansFix r22] 堕落关卡（向下进入的战斗关卡）像进了“里世界”：是红篝火之后的延续，按本幕最高层的配置刷怪
+    // （不随地图层数往回降级），用单独的种子与“第几个堕落战斗关卡”作序号，依次取池子里还没出过的组合，不与之前的堕落关卡重复
+    if matches!(node.kind,NodeKind::Monster|NodeKind::Elite)&&run.descent_level(id).is_some() {
+        let fallen_ordinal=run.visited.iter().take_while(|&&visited|visited!=id)
+            .filter(|&&visited|run.nodes[visited].kind==node.kind&&run.descent_level(visited).is_some()).count();
+        return roster(node.kind,erdtree_tower::mix(run.seed^0xfa11_0de5^u64::from(run.act)),fallen_ordinal,11,run.act);
+    }
     roster(node.kind,seed,ordinal,node.layer*11/(run.floors()-1),run.act)
 }
 pub fn placement(index: usize, count: usize) -> [f32; 3] {

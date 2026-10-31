@@ -1314,13 +1314,12 @@ impl Run {
     }
 
     /// [HansFix] 红色战斗关卡（向下进入的普通或精英战斗）：第几次向下
-    /// [HansFix] 堕落关卡（红色战斗关卡或堕落首领）结算卢恩：这一场拿到 earned，不足以往堕落关卡的最高值时返回要补的差额，并更新最高值
-    pub fn fallen_rune_floor(&mut self,id:usize,earned:u32)->u32 {
-        if self.red_combat(id).is_none()&&Some(id)!=self.fallen_id() {return 0;}
-        let Some(fallen)=self.fallen.as_mut() else{return 0};
-        let top_up=fallen.best_runes.saturating_sub(earned);
-        fallen.best_runes=fallen.best_runes.max(earned);
-        top_up
+    /// [HansFix r22] 堕落关卡（红色战斗关卡或堕落首领）的卢恩随难度上升：这一场拿到 earned，额外再给 earned × 堕落值 × 10%
+    /// （堕落值 10 时翻倍）。原来“不低于以往堕落关卡”的保底已撤销。
+    pub fn fallen_rune_bonus(&self,id:usize,earned:u32)->u32 {
+        let level=if Some(id)==self.fallen_id() {Some(self.descents())} else {self.red_combat(id)};
+        let Some(level)=level else{return 0};
+        (u64::from(earned)*u64::from(level.min(descent::MAX_LEVEL))/10).min(u64::from(u32::MAX)) as u32
     }
     fn red_combat(&self,id:usize)->Option<u32> {
         self.nodes.get(id).filter(|n|matches!(n.kind,NodeKind::Monster|NodeKind::Elite))?;self.descent_level(id)
