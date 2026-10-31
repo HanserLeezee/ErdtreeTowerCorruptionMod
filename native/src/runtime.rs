@@ -289,6 +289,8 @@ struct Runtime {
     hansfix_descent: super::hansfix::Descent,
     storm_revive_wait: Option<Instant>,
     fallen_spend: super::hansfix::FallenSpend,
+    /// [HansFix] 这场战斗开始时的卢恩（堕落关卡卢恩保底用）
+    fight_runes: Option<u32>,
     law_fight: super::law::Fight,
     ember_fight: super::embers::Fight,
     bout: super::debug_menu::Bout,
@@ -358,6 +360,7 @@ fn fresh_runtime()->Runtime {
         hansfix_descent: Default::default(),
         storm_revive_wait: None,
         fallen_spend: Default::default(),
+        fight_runes: None,
         law_fight: Default::default(),
         ember_fight: Default::default(),
         bout: Default::default(),
@@ -1956,7 +1959,7 @@ fn tick_locked() {
         Outcome::PlayerDied => pending.next_run.observe_hp(0),
         _ => Ok(()),
     };
-    let next = pending.next_run.clone();
+    let mut next = pending.next_run.clone();
     if matches!(outcome,Outcome::Victory|Outcome::PlayerDied) {
         if let Some(path)=SESSION_PATH.lock().ok().and_then(|p|p.clone()).map(|p|p.with_extension("history")) {
             super::run_log::append(&path,&super::run_log::entry(&next,fought,outcome==Outcome::Victory,&names));
@@ -1972,6 +1975,18 @@ fn tick_locked() {
             let _=super::native_talk::set_flag(45007990,false);
             if let Phase::Combat{id}=next.phase {
                 give_elite_tear(world,&next,id);
+                // [HansFix] 堕落关卡卢恩保底：这一场拿到的不少于以往堕落关卡的最高值
+                if super::hansfix::wander() {
+                    if let (Some(start),Some(player))=(state.fight_runes.take(),world.main_player.as_mut()) {
+                        let data=unsafe {player.player_game_data.as_mut()};
+                        let earned=data.rune_count.saturating_sub(start);
+                        let top_up=next.fallen_rune_floor(id,earned);
+                        if top_up>0 {
+                            data.rune_count=data.rune_count.saturating_add(top_up).min(999_999_999);
+                            super::log(format!("HANSFIX_RUNES fallen level earned={earned} topped_up={top_up}"));
+                        }
+                    }
+                }
                 let bonus=erdtree_tower::boss_affixes::bonus_runes(&next,id);
                 if let Some(player)=world.main_player.as_mut().filter(|_|bonus>0) {
                     let data=unsafe {player.player_game_data.as_mut()};
@@ -2806,6 +2821,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
     let vitals = &mut player.chr_ins.modules.data;
     vitals.fp = super::travel::combat_fp(run.class, vitals.fp, vitals.max_fp);
     let description = roster.iter().map(|e| e.name).collect::<Vec<_>>().join("、");
+    state.fight_runes=Some(unsafe {player.player_game_data.as_ref()}.rune_count);
     state.pending = Some(Pending {
         entity_base:None,networked:state.party.is_some(),
         spirits:Default::default(),

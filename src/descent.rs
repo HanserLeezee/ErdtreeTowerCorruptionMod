@@ -186,8 +186,12 @@ pub struct Fallen {
     /// 从红篝火选中、开启堕落挑战的那个关卡：它保持地图上原来的类型（选的是商店就进商店）
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub entry:Option<usize>,
+    /// 至今单场堕落关卡（红色关卡与堕落首领）拿到的最多卢恩：之后的堕落关卡不少于这个数，不足的结算时补齐
+    #[serde(default,skip_serializing_if="is_zero32")]
+    pub best_runes:u32,
 }
 fn is_zero(n:&u8)->bool {*n==0}
+fn is_zero32(n:&u32)->bool {*n==0}
 /// 堕落模式的地图：首领下面一排全是篝火（其中一个是红篝火），起点那排下面多一个堕落首领（最后一个节点，层数记为首领层）。
 /// 开启堕落挑战后，除起点、篝火与首领外的关卡类型重新洗牌。
 pub fn fallen_graph(mut nodes:Vec<crate::Node>,seed:u64,active:bool,keep:Option<usize>)->Vec<crate::Node> {
@@ -325,5 +329,20 @@ mod fallen_armor_cap_tests {
             let (a,b)=(armor(0),armor(1));
             assert!(a<=2&&b<=1&&a+b<=3,"seed {seed}: {a}+{b} armor");
         }
+    }
+}
+
+#[cfg(test)]
+mod rune_floor_tests {
+    #[test]
+    fn fallen_level_runes_never_drop_below_an_earlier_fallen_level() {
+        let mut run=crate::Run::new(3,crate::Class::Hero);
+        run.fallen=Some(Default::default());
+        let boss=run.fallen_id().unwrap();
+        assert_eq!(run.fallen_rune_floor(boss,8000),0);
+        assert_eq!(run.fallen_rune_floor(boss,5000),3000,"tops up to the best so far");
+        assert_eq!(run.fallen_rune_floor(boss,12000),0);
+        assert_eq!(run.fallen.as_ref().unwrap().best_runes,12000);
+        assert_eq!(run.fallen_rune_floor(0,100),0,"ordinary levels are not affected");
     }
 }

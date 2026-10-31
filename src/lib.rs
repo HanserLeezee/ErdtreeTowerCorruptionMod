@@ -1295,6 +1295,14 @@ impl Run {
     }
 
     /// [HansFix] 红色战斗关卡（向下进入的普通或精英战斗）：第几次向下
+    /// [HansFix] 堕落关卡（红色战斗关卡或堕落首领）结算卢恩：这一场拿到 earned，不足以往堕落关卡的最高值时返回要补的差额，并更新最高值
+    pub fn fallen_rune_floor(&mut self,id:usize,earned:u32)->u32 {
+        if self.red_combat(id).is_none()&&Some(id)!=self.fallen_id() {return 0;}
+        let Some(fallen)=self.fallen.as_mut() else{return 0};
+        let top_up=fallen.best_runes.saturating_sub(earned);
+        fallen.best_runes=fallen.best_runes.max(earned);
+        top_up
+    }
     fn red_combat(&self,id:usize)->Option<u32> {
         self.nodes.get(id).filter(|n|matches!(n.kind,NodeKind::Monster|NodeKind::Elite))?;self.descent_level(id)
     }
