@@ -100,7 +100,7 @@ try {
         $profile = $launchProfile
         Write-Host "额外 DLL 插件：$($plugins.Count) 个"
     }
-    & $loader launch --exe $exePath --profile $profile --auto-detect --online false
+    & $loader launch --exe $exePath --profile $profile --auto-detect --online false --skip-steam-init true
     if ($LASTEXITCODE -ne 0) { throw "加载器退出码：$LASTEXITCODE" }
 } finally {
     $env:ERDTREE_TOWER_PREVIEW = $previousMarker

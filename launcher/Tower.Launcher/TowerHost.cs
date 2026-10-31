@@ -666,6 +666,16 @@ namespace Tower.Launcher
             launching = true;
             try
             {
+                var options = TowerOptions.Read(OptionsFile);
+                options.TryGetValue("dlc", out var dlcMode);
+                var dlcWarning = DlcLaunchCheck.Warning(gameDir, settings.Mode == HostSettings.Seamless, dlcMode);
+                if (dlcWarning != null)
+                {
+                    var choice = MessageBox.Show(form, dlcWarning, "DLC 内容启动警告", MessageBoxButtons.OKCancel,
+                        MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                    Log.Write("DLC 启动警告：" + (choice == DialogResult.OK ? "用户确认继续" : "用户取消启动"));
+                    if (choice != DialogResult.OK) return;
+                }
                 var errorFile = paths.LaunchErrorFile;
                 if (File.Exists(errorFile)) File.Delete(errorFile);
                 var mode = settings.Mode;
