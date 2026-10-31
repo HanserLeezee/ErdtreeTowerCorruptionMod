@@ -8,7 +8,6 @@ Adds
   EquipParamGem 990000     = copy of 60300 (Ash of War: Golden Vow) with the incantation's icon (goods 6600),
                              skill 9600, mountable on torches only, no default affinity
   SpEffectParam 9600300    = 0.5 s marker effect that only plays the cast visuals/sound on the player
-  Bullet 10669000          = Golden Vow's area (10660000) widened to a 30 m radius
   SpEffectVfxParam 9600300 = start FX = the incantation's fire SFX (Magic 6600 fireSfxId 525631), start SE the same id
 Every other row and file is verified unchanged.
 """
@@ -27,11 +26,9 @@ ROWS = [
     ('SpEffectVfxParam', 'SpEffectVfx', 9600300, 1660000, {'midstSfxId': -1, 'midstSeId': -1, 'midstDmyId': -1,
                                                            'initSfxId': CAST_SFX, 'initSeId': CAST_SFX, 'initDmyId': CAST_DMY,
                                                            'finishSfxId': -1, 'finishSeId': -1}),
-    # 黄金誓言的范围判定放大到整个竞技场（半径 30 米），由 DLL 在玩家身上发射，队友（联机时）一并获得效果
-    ('Bullet', 'BulletParam', 10669000, 10660000, {'hitRadius': 30.0}),
 ]
 NAMES = {9600: 'Tower torch spell: Golden Vow', 990000: 'Tower torch ash: Golden Vow',
-         9600300: 'Tower torch cast flash: Golden Vow', 10669000: 'Tower torch: Golden Vow (arena-wide)'}
+         9600300: 'Tower torch cast flash: Golden Vow'}
 
 reg = Regulation(SRC)
 files_before = {e['name']: reg.bnd.data(e) for e in reg.bnd.entries}

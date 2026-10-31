@@ -82,10 +82,10 @@ pub fn sync(chr: &mut ChrIns, data: &PlayerGameData) {
     let present = unsafe { SoloParamRepository::instance() }.ok().is_some_and(|p| p.get::<SpEffectParam>(GOLDEN_VOW as u32).is_some());
     if present {
         chr.apply_speffect(CAST_FLASH, false);
-        // 竞技场范围：从玩家身上发射放大后的黄金誓言范围判定（半径 30 米），范围内的玩家（含自己、联机队友）获得效果；
-        // 发射失败（例如参数缺失）就退回只给自己
+        // 从玩家身上发射原版黄金誓言的范围判定（范围与原版相同），范围内的玩家（含自己、联机队友）获得效果；
+        // 发射失败就退回只给自己。（30 米范围只用于“灼烧的 / 黑焰的”火把举起时的光环效果）
         match spawn_area(chr, AREA_BULLET) {
-            Ok(()) => super::log("HANSFIX_TORCH cast golden vow (arena-wide) after 10s raised"),
+            Ok(()) => super::log("HANSFIX_TORCH cast golden vow (native area) after 10s raised"),
             Err(e) => {
                 chr.apply_speffect(GOLDEN_VOW, false);
                 super::log(format!("HANSFIX_TORCH area bullet failed ({e}); applied to self only"));
@@ -94,8 +94,8 @@ pub fn sync(chr: &mut ChrIns, data: &PlayerGameData) {
     }
 }
 
-/// 黄金誓言的范围判定（Bullet 10660000）放大到半径 30 米的版本
-const AREA_BULLET: i32 = 10669000;
+/// 原版黄金誓言的范围判定
+const AREA_BULLET: i32 = 10660000;
 #[repr(C, align(16))]
 struct SpawnData([u8; 0x110]);
 type Spawn = unsafe extern "C" fn(*mut std::ffi::c_void, *mut i32, *const SpawnData, *mut i32);
