@@ -21,7 +21,7 @@ static class BalanceAssets {
     }
     public static void Patch(string input,string output) {
         var reg=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(input,"regulation.bin"));
-        var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name)=="NpcParam");
+        var file=reg.Files.Single(f=>Path.GetFileNameWithoutExtension(f.Name.Replace('\\','/'))=="NpcParam");
         var def=PARAMDEF.XmlDeserialize("work/SoulsRandomizers/diste/Defs/NpcParam.xml");
         var npcs=PARAM.Read(file.Bytes);npcs.ApplyParamdef(def);
         var before=PARAM.Read(file.Bytes);before.ApplyParamdef(def);

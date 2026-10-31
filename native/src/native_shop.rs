@@ -38,10 +38,10 @@ fn refresh_special_prices(stock:&mut [Stock],run:&Run) {
         assert_eq!(final_price(&run,5000),5000,"first layer keeps the listed price");
         let per_act=run.nodes.iter().map(|n|n.layer+1).max().unwrap();
         run.act=3;run.reached_layer=per_act;assert_eq!(run.shop_position_percent(),erdtree_tower::SHOP_PRICE_END);
-        assert_eq!((final_price(&run,5000),final_price(&run,20),final_price(&run,2500)),(10000,40,5000));
-        run.law=run.law.toggle(19).toggle(20).toggle(21);assert_eq!(final_price(&run,5000),11500,"奸商 I：+15% 后再翻倍");
+        assert_eq!((final_price(&run,5000),final_price(&run,20),final_price(&run,2500)),(7500,30,3750));
+        run.law=run.law.toggle(19).toggle(20).toggle(21);assert_eq!(final_price(&run,5000),8650,"奸商 I：+15% 后再乘 1.5（5750 × 1.5 = 8625，取整到 50）");
         run.law=Default::default();
-        run.act=2;run.reached_layer=1;let mid=final_price(&run,3000);assert!(mid>3000&&mid<6000,"{mid}");
+        run.act=2;run.reached_layer=1;let mid=final_price(&run,3000);assert!(mid>3000&&mid<4500,"{mid}");
         let mut last=0;
         for act in 1..=3u8 {for layer in 1..=per_act {run.act=act;run.reached_layer=layer;let p=run.shop_position_percent();assert!(p>=last);last=p;}}
     }
@@ -62,12 +62,12 @@ fn refresh_special_prices(stock:&mut [Stock],run:&Run) {
         assert!(seen>300,"summoners always see a spirit ash: {seen}");
     }
     #[test]
-    fn spirit_stock_never_exceeds_the_spirit_peak_plus_one() {
+    fn spirit_stock_never_exceeds_the_current_ash_level() {
         use erdtree_tower::rewards::spirit_base;
         for seed in 0..300 {for peak in [0u8,1,4,9,10] {
             let mut run=Run::new(seed,erdtree_tower::Class::Samurai);run.spirit_peak=Some(peak);
             let cap=erdtree_tower::rewards::spirit_cap(&run);
-            assert_eq!(cap,(u32::from(peak)+1).min(10));
+            assert_eq!(cap,u32::from(peak),"new runs: the current ash level, no +1");
             for item in stock_capped(&run,cap).iter().filter(|s|s.kind==3) {
                 let id=0x40000000|item.id as u32;let base=spirit_base(id);
                 if base!=id||erdtree_tower::rewards::lookup(id).is_some_and(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit) {assert!(id-base<=cap,"{id} over +{cap}");}
@@ -347,7 +347,7 @@ fn extras(group:&str)->Vec<Stock> {
 }
 #[cfg(test)]
 fn stock(run:&Run)->Vec<Stock> {stock_capped(run,erdtree_tower::rewards::spirit_cap(run))}
-/// spirit_cap：骨灰最高等级（进店时按本局记录与背包里骨灰的最高等级 +1；旧存档按武器的等价强化等级 +1）
+/// spirit_cap：骨灰最高等级（进店时按当前骨灰等级：本局骨灰记录、背包里的骨灰与武器等价强化中最高的；更早的存档按旧规则 +1）
 fn stock_capped(run:&Run,spirit_cap:u32)->Vec<Stock> {
     use erdtree_tower::{Class,rewards::{CATALOG,ItemKind}};
     let visit=run.visited.iter().filter(|&&i|run.nodes[i].kind==NodeKind::Shop).count();
@@ -445,7 +445,10 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
         let tools=super::loot::casting_tools(data);
         let mut live=run.clone();
         match live.spirit_peak {
-            Some(peak)=>live.spirit_peak=Some(peak.max(super::spirit_tune::inventory_peak(data))),
+            Some(peak)=>{
+                live.spirit_peak=Some(peak.max(super::spirit_tune::inventory_peak(data)));
+                live.weapon_peak=Some(live.weapon_peak.unwrap_or(0).max(super::smith::inventory_peak(data,params).clamp(0,50) as u8));
+            },
             None=>live.weapon_peak=Some(super::smith::inventory_peak(data,params).clamp(0,50) as u8),
         }
         let mut stock = stock_capped(run,erdtree_tower::rewards::spirit_cap(&live));

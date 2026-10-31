@@ -45,20 +45,27 @@ pub fn spirit_base(id:u32)->u32 {
     let base=id-(id&0x0fffffff)%1000;
     if id-base<=10&&CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit){base}else{id}
 }
-/// 刷出的骨灰最高等级：持有过的骨灰最高等级 +1，最多 +10（营地调灵把骨灰升上去，之后刷出的骨灰跟着变高）。
+/// 刷出的骨灰最高等级：规则 1 为当前骨灰等级（持有过的骨灰最高等级与武器等价强化中较高的）；规则 0 为持有过的骨灰最高等级 +1，最多 +10。
 /// 旧存档没有骨灰记录时沿用旧规则：武器的等价强化等级（换算成 +0～+10）+1，也没有武器记录时不限
 pub fn spirit_cap(run:&Run)->u32 {
     match run.spirit_peak {
+        // 骨灰规则 1（新旅程）：上限就是当前骨灰等级，取持有过的骨灰最高等级与武器等价强化等级中较大的，不再 +1
+        Some(_) if run.spirit_rules>=1=>u32::from(spirit_level_now(run)),
         Some(peak)=>(u32::from(peak)+1).min(10),
         None=>run.weapon_peak.map_or(10,|peak|(u32::from(crate::contracts::reinforcement_level(peak,10))+1).min(10)),
     }
+}
+/// 当前骨灰等级：持有过的骨灰最高等级（只升不降）与武器的等价强化等级（换算成 +0～+10）中较大的
+pub fn spirit_level_now(run:&Run)->u8 {
+    let weapon=run.weapon_peak.map_or(0,|peak|crate::contracts::reinforcement_level(peak,10));
+    run.spirit_peak.unwrap_or(0).max(weapon).min(10)
 }
 /// 骨灰等级（+0～+10）；不是骨灰时为 None
 pub fn spirit_level(id:u32)->Option<u8> {
     let base=spirit_base(id);
     (CATALOG.iter().any(|i|i.id==base&&i.kind==ItemKind::Spirit)).then(||(id-base) as u8)
 }
-/// 调灵：把一个骨灰升到 max(自身, 持有过的最高等级) + 1（最多 +10），低级骨灰一次追上来；已经 +10 时为 None
+/// 调灵：把一个骨灰升到 max(自身, 当前骨灰等级) + 1（最多 +10），低级骨灰一次追上来；已经 +10 时为 None
 pub fn spirit_tune_target(id:u32,peak:u8)->Option<u32> {
     let level=spirit_level(id)?;
     (level<10).then(||spirit_base(id)+u32::from(level.max(peak.min(10))+1).min(10))
@@ -244,14 +251,18 @@ mod tests {
     use super::*;
     #[test]
     fn spirit_rewards_stay_within_the_spirit_peak_plus_one() {
-        let run=|spirit:Option<u8>,weapon:Option<u8>|{let mut r=crate::Run::new(1,crate::Class::Confessor);r.spirit_peak=spirit;r.weapon_peak=weapon;r};
-        assert_eq!(spirit_cap(&run(None,None)),10);
-        assert_eq!([0u8,4,5,24,45,50].map(|p|spirit_cap(&run(None,Some(p)))),[1,1,2,5,10,10],"saves without a spirit record keep the weapon rule");
-        assert_eq!([0u8,1,5,9,10].map(|p|spirit_cap(&run(Some(p),Some(50)))),[1,2,6,10,10],"the spirit record replaces the weapon rule");
-        assert_eq!(crate::Run::new(7,crate::Class::Hero).spirit_peak,Some(0));
+        let run=|spirit:Option<u8>,weapon:Option<u8>,rules:u8|{let mut r=crate::Run::new(1,crate::Class::Confessor);r.spirit_peak=spirit;r.weapon_peak=weapon;r.spirit_rules=rules;r};
+        assert_eq!(spirit_cap(&run(None,None,0)),10);
+        assert_eq!([0u8,4,5,24,45,50].map(|p|spirit_cap(&run(None,Some(p),0))),[1,1,2,5,10,10],"saves without a spirit record keep the weapon rule");
+        assert_eq!([0u8,1,5,9,10].map(|p|spirit_cap(&run(Some(p),Some(50),0))),[1,2,6,10,10],"rule 0: the spirit record plus one");
+        // 规则 1：上限就是当前骨灰等级 = max(持有过的骨灰最高等级, 武器等价强化等级)，不再 +1
+        assert_eq!([0u8,1,5,9,10].map(|p|spirit_cap(&run(Some(p),None,1))),[0,1,5,9,10]);
+        assert_eq!([0u8,3,7].map(|p|spirit_cap(&run(Some(p),Some(25),1))),[5,5,7],"the higher of the ash record and the weapon level");
+        assert_eq!(spirit_cap(&run(Some(2),Some(50),1)),10);
+        let fresh=crate::Run::new(7,crate::Class::Hero);assert_eq!((fresh.spirit_peak,fresh.spirit_rules),(Some(0),1));
         let mut seen=[false;11];
         for seed in 0..3000 {for peak in [Some(0u8),Some(3),Some(9),None] {
-            let mut run=crate::Run::new(seed,crate::Class::Confessor);run.spirit_peak=peak;
+            let mut run=crate::Run::new(seed,crate::Class::Confessor);run.spirit_peak=peak;run.spirit_rules=0;
             let cap=spirit_cap(&run);
             for node in 0..run.nodes.len().min(12) {for reward in offers(&run,node) {
                 if let Reward::Item(id)=reward {if lookup(id).is_some_and(|i|i.kind==ItemKind::Spirit) {

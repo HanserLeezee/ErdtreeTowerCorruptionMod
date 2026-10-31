@@ -119,7 +119,7 @@
 2|elite|5251|3200|角人祭司|dlc
 3|elite|5061|5500|大型指虫吸盘怪|dlc
 3|elite|5380|5500|幽影米兰达花|dlc|retired
-2|weak|4420|1100|巨型螯虾|party
+2|elite|4420|3200|巨型螯虾|party
 2|weak|4090|1100|巨型老鼠|party
 2|weak|3330|1100|大型银色泪滴|party
 2|weak|4160|1100|大型野狗|party

@@ -18,15 +18,15 @@ pub const WANDER_PROTOCOL_OFFSET:u32=1000;
 static WANDER:AtomicBool=AtomicBool::new(false);
 static MERCHANT:AtomicBool=AtomicBool::new(false);
 static STALE:std::sync::OnceLock<String>=std::sync::OnceLock::new();
-/// Size of scene-assets/regulation.bin of the official release this DLL was built against (v101).
+/// Size of scene-assets/regulation.bin of the official release this DLL was built against (v102 = 1.4.0).
 /// A different size means the launcher updated the mod after this patch was applied: the patched
 /// DLL would no longer match the game data, so every HansFix feature stays off and a warning is shown.
-pub const BASE_RELEASE:&str="v101";
+pub const BASE_RELEASE:&str="v102";
 /// tower-install.json 里启动器记录的模组版本号；不一致说明启动器已经装了别的版本
-pub const BASE_INSTALL_VERSION:u64=101;
-pub const BASE_REGULATION_LEN:u64=3451488;
-/// 堕落模式补丁带的 regulation.bin（v101 + 堕落誓约效果 + 向下强化与扭曲词条效果）
-pub const HANSFIX_REGULATION_LEN:u64=3426848;
+pub const BASE_INSTALL_VERSION:u64=102;
+pub const BASE_REGULATION_LEN:u64=3480608;
+/// 堕落模式补丁带的 regulation.bin（v102 + 堕落誓约效果 + 向下强化与扭曲词条效果）
+pub const HANSFIX_REGULATION_LEN:u64=3427328;
 static MAP_KEY:std::sync::OnceLock<&'static str>=std::sync::OnceLock::new();
 
 pub fn wander()->bool {WANDER.load(Ordering::Relaxed)}
@@ -283,10 +283,10 @@ mod tests {
         std::fs::write(dir.join("scene-assets/regulation.bin"),[0u8;16]).unwrap();
         assert_eq!(super::stale_in(&dir).as_deref(),Some("regulation_len=16"));
         std::fs::remove_file(dir.join("scene-assets/regulation.bin")).unwrap();
-        std::fs::write(dir.join("tower-install.json"),r#"{"version":101,"displayVersion":"1.3.0","files":[{"version":3}]}"#).unwrap();
+        std::fs::write(dir.join("tower-install.json"),r#"{"version":102,"displayVersion":"1.4.0","files":[{"version":3}]}"#).unwrap();
         assert_eq!(super::stale_in(&dir),None);
-        std::fs::write(dir.join("tower-install.json"),r#"{"version": 102,"files":[]}"#).unwrap();
-        assert_eq!(super::stale_in(&dir).as_deref(),Some("install_version=102"));
+        std::fs::write(dir.join("tower-install.json"),r#"{"version": 103,"files":[]}"#).unwrap();
+        assert_eq!(super::stale_in(&dir).as_deref(),Some("install_version=103"));
         let _=std::fs::remove_dir_all(&dir);
         assert_eq!((super::extension(false,true),super::extension(true,true)),(2000,3000));
         assert_eq!(super::map_key_from("key.map = m\nkey.build=C"),Some("M"));

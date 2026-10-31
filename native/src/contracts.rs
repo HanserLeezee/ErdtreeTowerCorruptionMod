@@ -239,7 +239,7 @@ mod tests {
         let mut run=Run::new(42,erdtree_tower::Class::Samurai);
         run.fallen_oaths=vec![FallenOath{kind:Kind::Radiant,level:2,minus:[0,3],plus:5,element:1}];
         let ids=desired(Some(&run));
-        assert_eq!(ids,vec![FIRST+104,effect(0,2,false),effect(3,2,false),effect(5,2,true)]);
+        assert_eq!(ids,vec![FIRST+104,effect(0,2,false,1),effect(3,2,false,1),effect(5,2,true,1)]);
         assert!(!ids.contains(&(FIRST+101)),"no fixed drawback");
         assert!(ids.iter().all(|id|all_effects().contains(id)),"every applied row is managed (and validated)");
         assert_eq!(curse_rows().len(),54);

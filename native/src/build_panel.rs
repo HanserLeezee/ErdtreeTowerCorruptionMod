@@ -151,7 +151,12 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
             heading(ui, s, "余烬", Some(run.embers.len()).filter(|n| *n > 0));
             if run.embers.is_empty() {empty(ui, s, "还没有余烬：普通战与精英战的奖励里可能出现");}
             for ember in &run.embers {
-                entry(ui, s, Badge::Icon(crate::reward_ui::ember_icon(*ember).and_then(&mut *icon)), ember.name(), crate::reward_ui::rarity_color(usize::from(ember.quality())), &[(ember.effect().replace('\n', "，"), BOON)]);
+                let mut lines=vec![(ember.effect().replace('\n', "，"), BOON)];
+                if ember.stacking() {
+                    let level=run.ember_stacks.level(*ember);
+                    lines.push((format!("当前 {level} 层：{}", ember.stack_bonus(level).unwrap_or_default()), WHITE));
+                }
+                entry(ui, s, Badge::Icon(crate::reward_ui::ember_icon(*ember).and_then(&mut *icon)), ember.name(), crate::reward_ui::rarity_color(usize::from(ember.quality())), &lines);
             }
             if !run.elite_buffs.is_empty() {
                 heading(ui, s, "护符赐福", Some(run.elite_buffs.len()));

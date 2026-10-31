@@ -10,7 +10,7 @@ static CLEAR:AtomicUsize=AtomicUsize::new(0);
 static REGISTER:AtomicUsize=AtomicUsize::new(0);
 static BOUND:AtomicUsize=AtomicUsize::new(0);
 pub fn set_active(active:bool){ACTIVE.store(active,Ordering::Release);if !active {BOUND.store(0,Ordering::Release);}}
-/// 双生的灵唤铃（余烬，单人）：第一只召唤物在场时重新开放召唤点，再召唤一次。
+/// 双生的灵唤铃（余烬，单人与联机）：第一只召唤物在场时重新开放召唤点，再召唤一次。房主走 Pending 的召唤点、成员走 party_spirits，都经过 Spirits::poll。
 /// 原版只记一个“当前召唤”，场上有召唤物时不让用骨灰，所以在“使用前检查”的阶段把“有存活召唤物”暂时清掉（ARMED）。
 /// 召第二只时原版会不会把第一只收回去还没有实测：TWIN_MODE 0 只放开使用；1 另外在请求召唤前清空当前召唤的记录（调试菜单切换）
 static TWIN:AtomicBool=AtomicBool::new(false);

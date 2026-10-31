@@ -2,7 +2,7 @@
 
 usage: python3 -I descent_patch.py <tools_dir> <paramdef SpEffect.xml> <input regulation.bin> <output regulation.bin> <build.json>
 
-- 9641001..9641060 / 9641101..160 / 9641201..260: act 1/2/3, descent k -> maxHpRate 1+slope*k (slope 1.4/1.25/1.15; was 2*1.1^(k-1)), *AttackPowerRate 1+0.05k (cloned from growth row 9640001)
+- 9691001..9691060 / 9691101..160 / 9691201..260 (r21: moved from 9641xxx, which the official 1.4.0 uses for area scaling): act 1/2/3, descent k -> maxHpRate 1+slope*k (slope 1.4/1.25/1.15; was 2*1.1^(k-1)), *AttackPowerRate 1+0.05k (cloned from growth row 9640001)
 - 9851000+kind*10+tier: affix effect 9850000+kind*10+tier with its value doubled
 - 9852000+kind*10+tier: the same effect negated
 - 9853000+kind*10+tier: the same effect x-2 (fallen boss / fallen shop bonus gear)
@@ -13,7 +13,7 @@ sys.path.insert(0, sys.argv[1])
 from erreg import Regulation, Param, load_def, get, put
 
 DEF, SRC, OUT, BUILD = sys.argv[2:6]
-AFFIX, DOUBLE, NEGATE, NEGATE2, ENEMY, GROWTH1 = 9850000, 9851000, 9852000, 9853000, 9641000, 9640001
+AFFIX, DOUBLE, NEGATE, NEGATE2, ENEMY, GROWTH1 = 9850000, 9851000, 9852000, 9853000, 9691000, 9640001
 ATK = [f'{e}AttackPowerRate' for e in ('physics', 'magic', 'fire', 'thunder', 'dark')]
 HIT = [f'{e}AttackRate' for e in ('physics', 'magic', 'fire', 'thunder', 'dark')]
 # kind -> (fields, value in percent (or points for kind 3), reduce?)

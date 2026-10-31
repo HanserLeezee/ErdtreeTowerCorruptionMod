@@ -19,7 +19,7 @@ pub fn hp_slope(act:u8)->f64 {HP_SLOPE[usize::from(act.clamp(1,3)-1)]}
 /// 攻击伤害线性增长：第 k 次向下 ×(1 + 0.05k)，20 次时翻倍
 pub const ATTACK_PER_DESCENT:f64=0.05;
 /// 敌人强化效果：ENEMY_EFFECT_FIRST + (幕-1)×100 + k（k = 第几次向下，超过 MAX_LEVEL 按 MAX_LEVEL）
-pub const ENEMY_EFFECT_FIRST:u32=9641000;
+pub const ENEMY_EFFECT_FIRST:u32=9691000;
 pub const MAX_LEVEL:u32=60;
 pub const AFFIX_FIRST:u32=9850000;
 pub const DOUBLE_FIRST:u32=9851000;

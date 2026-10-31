@@ -74,6 +74,8 @@ pub fn bar_text(spec:&Enemy)->Option<i32> {
     POOL_NAMES.iter().position(|n|*n==spec.name).map(|i|POOL_NAME_FIRST+i as i32)
 }
 pub fn bar_rank(spec:&Enemy)->u8 {if spec.bar>0 {0}else if boss_npc(spec.npc)||spec.kind==NodeKind::Boss {1}else if spec.kind==NodeKind::Elite {2}else{3}}
+/// 只在精英战出现、不进普通房“强怪”位置的精英：猎犬骑士、咒剑士（DLC）
+const NOT_IN_ORDINARY_ROOMS:[i32;2]=[4290,5040];
 pub fn roster(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8) -> Vec<Enemy> {roster_in(kind,seed,ordinal,layer,act,party())}
 #[cfg(test)]
 pub(super) fn party_roster_for_test(kind:NodeKind,seed:u64,ordinal:usize,layer:usize,act:u8)->Vec<Enemy>{roster_in(kind,seed,ordinal,layer,act,true)}
@@ -96,7 +98,7 @@ fn roster_in(kind: NodeKind, seed: u64, ordinal: usize, layer: usize,act:u8,part
         let models=[3010,3800,4351,4352,4353,4354,4355,4290,3020,4340,2270,4490];
         select(POOLS.iter().copied().filter(|e|e.act==1&&e.kind==NodeKind::Elite&&(models.contains(&e.model)||e.dlc)).collect(),seed,ordinal*strong+i,party)
     } else if kind==NodeKind::Monster {
-        select(POOLS.iter().copied().filter(|e|e.act==act&&e.kind==NodeKind::Elite&&e.model!=4290).collect(),seed,ordinal*strong+i,party)
+        select(POOLS.iter().copied().filter(|e|e.act==act&&e.kind==NodeKind::Elite&&!NOT_IN_ORDINARY_ROOMS.contains(&e.model)).collect(),seed,ordinal*strong+i,party)
     } else {choose_in(NodeKind::Elite, seed, ordinal * strong + i,act,party)})
         .chain((0..weak).map(|i| choose_in(NodeKind::Monster, seed, ordinal * weak + i,act,party))).collect()
 }
@@ -205,7 +207,7 @@ fn boss_eligible(kind:NodeKind,enemy:&Enemy)->bool {
 /// 试验中的 Boss 不会被抽到；仅单人的 Boss 联机时抽不到
 fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enemy> {
     let mut encounters=Vec::new();
-    for (id,_) in BOSSES.iter().filter(|(id,e)|!e.retired&&!(party&&(e.solo||relocated(e).is_some()))&&encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
+    for (id,_) in BOSSES.iter().filter(|(id,e)|!e.retired&&!(party&&(e.solo||relocated(e).is_some()||PARTY_UNSYNCED.contains(&e.name)))&&encounter_act(e)==act&&boss_eligible(kind,e)&&encounter_allowed(kind,*id)) {if !encounters.contains(id){encounters.push(*id);}}
     // 第三幕「双王共命」：每个双王组合是第三幕 Boss 战的一个选项，与每个单只 Boss 机会相同；组合里的 Boss 不再单独出现（机制见 dual_bosses.rs）
     let mut options:Vec<Vec<usize>>=Vec::new();
     let pairs:Vec<[usize;2]>=if dual(kind,act) {DUAL_PAIRS.iter().filter_map(|pair|{
@@ -220,6 +222,9 @@ fn boss_roster(kind:NodeKind,seed:u64,ordinal:usize,act:u8,party:bool)->Vec<Enem
         let mut enemy=*e;enemy.act=act;enemy.kind=kind;if kind==NodeKind::Elite {enemy.npc+=1;enemy.bar=0;}enemy
     }).collect()
 }
+/// 联机地图里的预置实体还没同步的 Boss：联机时不抽。蕾娜菈改用第二阶段（c2031）后，联机地图的实体仍是一阶段模型 c2030，
+/// 读到二阶段的参数会站着不动（没有 AI）；在 Windows 上运行 party-boss-model-sync 并更新 scene-assets 的地图后从这里删掉
+const PARTY_UNSYNCED:[&str;1]=["“满月女王”蕾娜菈"];
 /// 第三幕双王共命的组合（Boss 名）：卡利亚双骑
 pub const DUAL_PAIRS:[[&str;2];1]=[["“圣树骑士”罗蕾塔","“双月骑士”蕾拉娜"]];
 /// 这一幕的 Boss 战可能是双王
@@ -336,11 +341,13 @@ mod tests {
         for act in 1..=3 {for layer in 0..12 {for ordinal in 0..40 {
             for seed in [0,42,999] {
                 let group=super::roster(NodeKind::Monster,seed,ordinal,layer,act);
-                assert!(group.iter().all(|enemy|enemy.model!=4290));
+                assert!(group.iter().all(|enemy|!super::NOT_IN_ORDINARY_ROOMS.contains(&enemy.model)));
                 assert_eq!(group.len(),match layer/3 {0=>2,1|2=>3,_=>4});
             }
         }}}
         assert!((0..40).any(|n|super::roster(NodeKind::Elite,42,n,0,1).iter().any(|e|e.model==4290)));
+        // 咒剑士仍在第一幕的精英战里（DLC 敌人开启时）
+        assert!((0..400).any(|n|super::roster_in(NodeKind::Elite,42,n,0,1,false).iter().any(|e|e.model==5040)));
     }
     #[test]
     fn preview_groups_duplicates_and_preserves_spawn_names() {
@@ -428,12 +435,14 @@ mod tests {
         for act in 2..=3 {for seed in 0..600 {for kind in [NodeKind::Monster,NodeKind::Elite] {for party in [false,true] {
             assert!(roster_in(kind,seed,seed as usize%24,seed as usize%12,act,party).iter().all(|e|!slow.contains(&e.model)));
         }}}}
-        for act in 2..=3 {assert!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster&&selectable(e,true)).count()>=8,"four early fights still draw eight distinct weak enemies");}
+        for act in 2..=3 {assert!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster&&selectable(e,true)).count()>=7,"early fights still draw a varied set of weak enemies");}
+        // 第二幕的巨型螯虾改为精英：普通战里不再作为小怪出现，精英战与后几层的强怪可以抽到
+        assert!(POOLS.iter().any(|e|e.act==2&&e.model==4420&&e.kind==NodeKind::Elite));
     }
     #[test]
     fn appended_weak_enemies_join_solo_and_party_rosters() {
         let solo:Vec<_>=POOLS.iter().filter(|e|e.appended).collect();
-        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|e.kind==NodeKind::Monster&&e.act>=2&&(!e.retired||e.model==3661)&&!e.dlc&&!e.solo));
+        assert_eq!(solo.len(),9);assert!(solo.iter().all(|e|(e.kind==NodeKind::Monster||e.model==4420)&&e.act>=2&&(!e.retired||e.model==3661)&&!e.dlc&&!e.solo));
         let mut seen=std::collections::HashSet::new();
         for act in 2..=3 {for seed in 0..800 {
             let group=roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,true);
@@ -448,18 +457,21 @@ mod tests {
     }
     #[test]
     fn appended_bosses_have_party_slots_and_reach_boss_rosters() {
-        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended).collect();
+        // 第一批追加的 13 个 Boss（序号 140–152）；之后序号 153 起的 DLC Boss 另见 late_dlc_bosses_are_solo_boss_fights_only
+        let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended&&e.npc<950000000+LATE_BOSS_FIRST*2).collect();
         assert_eq!(trial.len(),13);
         assert!(trial.iter().all(|(_,e)|!e.solo&&!e.retired&&e.bar>0&&recommended_level(e.name).is_some()));
         let mut seen=std::collections::HashSet::new();
         for act in 1..=3 {for seed in 0..400 {for kind in [NodeKind::Elite,NodeKind::Boss] {
             assert!(roster_in(kind,seed,seed as usize%24,0,act,false).iter().all(|e|!e.retired));
             let group=roster_in(kind,seed,seed as usize%24,0,act,true);map_entities(&group).unwrap();
-            for e in group {if e.appended {assert_eq!(kind,NodeKind::Boss);seen.insert(e.npc);}}
+            for e in group {if e.appended {assert_eq!(kind,NodeKind::Boss);assert!(!PARTY_UNSYNCED.contains(&e.name),"unsynced bosses stay out of party fights");seen.insert(e.npc);}}
         }}}
-        assert_eq!(seen.len(),13);
-        // 仅单人的 Boss 排在预览名单里原有名字之后（再之后是仅单人的怪物），原有预览编号不变
-        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-22..names.len()-9],&trial.iter().map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
+        // 联机地图同步之前，蕾娜菈不进联机的 Boss 战（单人照常）
+        assert_eq!(seen.len(),13-PARTY_UNSYNCED.len());
+        assert!((0..2000).any(|seed|roster_in(NodeKind::Boss,seed,0,0,1,false).iter().any(|e|e.name=="“满月女王”蕾娜菈")));
+        // 第一批追加的 Boss 排在预览名单里原有名字之后，再之后是追加的普通怪（9）与序号 153 起的 Boss（5），原有预览编号不变
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-27..names.len()-14],&trial.iter().map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
     }
     #[test]
     fn map_entity_manifest_for_scene_crosscheck() {
@@ -497,12 +509,14 @@ mod tests {
     }
     #[test]
     fn expanded_pools_deal_distinct_early_groups_and_shuffle_across_runs() {
-        for (act,weak,elite) in [(1,18,21),(2,26,19),(3,22,18)] {
+        for (act,weak,elite) in [(1,18,21),(2,25,20),(3,22,18)] {
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster).count(),weak);
             assert_eq!(POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Elite).count(),elite);
             for seed in 0..100 {
                 let groups:Vec<_>=(0..4).flat_map(|n|roster(NodeKind::Monster,seed,n,0,act)).collect();
-                assert_eq!(groups.iter().map(|e|e.model).collect::<std::collections::HashSet<_>>().len(),8);
+                // 前四场普通战的 8 只小怪互不相同；第二幕只剩 7 种可抽的小怪（巨型螯虾改为精英），会有一种重复一次
+                let available=POOLS.iter().filter(|e|e.act==act&&e.kind==NodeKind::Monster&&selectable(e,false)).count();
+                assert_eq!(groups.iter().map(|e|e.model).collect::<std::collections::HashSet<_>>().len(),available.min(8));
                 assert!(groups.iter().all(|e|!e.retired));
             }
             let sequences:std::collections::HashSet<_>=(0..100).map(|seed|(0..6).map(|n|choose(NodeKind::Monster,seed*100,n,act).model).collect::<Vec<_>>()).collect();

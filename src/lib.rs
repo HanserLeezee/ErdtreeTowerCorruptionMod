@@ -200,7 +200,7 @@ struct CombatCheckpoint {
 }
 
 /// 商店价格在第三幕最后一层的百分比（见 Run::shop_position_percent）
-pub const SHOP_PRICE_END:u32=200;
+pub const SHOP_PRICE_END:u32=150;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
@@ -235,6 +235,9 @@ pub struct Run {
     pub ember_rewards: bool,
     #[serde(default,skip_serializing_if="Vec::is_empty")]
     pub embers: Vec<embers::Ember>,
+    /// 叠层余烬的层数（整局保留）：击倒、致命一击由运行时记录，精英与 Boss 胜利在 win_combat 里记录
+    #[serde(default,skip_serializing_if="embers::Stacks::is_empty")]
+    pub ember_stacks: embers::Stacks,
     /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；旧存档为 0，等概率
     #[serde(default)]
     pub ember_rules: u8,
@@ -290,6 +293,9 @@ pub struct Run {
     /// 决定奖励与商店里骨灰的最高等级（+1）；旧存档没有这一项时沿用武器换算
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub spirit_peak: Option<u8>,
+    /// 骨灰规则：1 起刷出的骨灰最高为当前骨灰等级（不再 +1，并计入武器等价强化等级）；更早的存档为 0
+    #[serde(default)]
+    pub spirit_rules: u8,
     pub class: Class,
     pub nodes: Vec<Node>,
     pub phase: Phase,
@@ -858,6 +864,7 @@ impl Run {
             ember_rules: 1,
             stone_rewards: true,
             embers: vec![],
+            ember_stacks: Default::default(),
             debug: false,
             event_rules: 3,
             wander: false,
@@ -877,6 +884,7 @@ impl Run {
             casting_tools: None,
             weapon_peak: None,
             spirit_peak: Some(0),
+            spirit_rules: 1,
             class,
             nodes: camp_graph(seed),
             phase: Phase::Map,
@@ -1232,6 +1240,7 @@ impl Run {
             return Err("战斗状态无效".into());
         }
         self.checkpoint = None;
+        if matches!(kind,NodeKind::Elite|NodeKind::Boss) {self.ember_stacks.gain(&self.embers,embers::Gain::Slain);}
         self.phase = Phase::Reward {
             id,
             offers: self.offers(id),
@@ -1284,6 +1293,8 @@ impl Run {
                 let boss=matches!(self.phase,Phase::Reward{id:node,..} if self.nodes[node].kind==NodeKind::Boss)&&elite::LEGENDARY.contains(&affixes::base(id));
                 if (!item.kind.allowed(self.class)&&!boss)||(self.claimed_items.contains(&id)&&!(boss&&item.kind==rewards::ItemKind::Weapon)) {return Err("该奖励不可领取".into());}
                 if !self.claimed_items.contains(&id){self.claimed_items.push(id);}
+                // 拿到骨灰就记下它的等级：召唤后骨灰会用掉，不能等下一场胜利再看背包
+                if let (Some(level),Some(peak))=(rewards::spirit_level(id),self.spirit_peak) {self.spirit_peak=Some(peak.max(level));}
             },
         }
         Ok(())
@@ -1543,6 +1554,7 @@ impl Run {
             || self.weapon_level > 25
             || self.weapon_peak.is_some_and(|peak|peak>50)
             || self.spirit_peak.is_some_and(|peak|peak>10)
+            || self.spirit_rules>1
             || self.shop_purchased > 7
             || self.blessings.len() > 8
             || self.delivered_talismans.len() > 24

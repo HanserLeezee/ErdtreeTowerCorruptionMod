@@ -2,7 +2,7 @@ use erdtree_tower::law::{Law,NODES};
 
 #[test]
 fn resistance_paths_are_independent_and_preserve_old_codes() {
-    assert_eq!(NODES.len(),32);
+    assert_eq!(NODES.len(),34);
     let elements=Law::default().toggle(27).toggle(28);
     let status=Law::default().toggle(29).toggle(30);
     assert_eq!(elements.selected(),vec![27,28]);
@@ -10,7 +10,7 @@ fn resistance_paths_are_independent_and_preserve_old_codes() {
     assert_eq!(elements.toggle(27),Law::default());
     assert_eq!(status.toggle(29),Law::default());
     assert_eq!(Law::default().toggle(30),status,"choosing II also chooses I");
-    for mask in [0,(1<<27)-1,elements.0,status.0,(1<<31)-1,u32::MAX] {
+    for mask in [0,(1<<27)-1,elements.0,status.0,(1<<31)-1,u64::from(u32::MAX),(1u64<<34)-1] {
         let law=Law(mask);assert!(law.valid());
         assert_eq!(Law::parse(&law.code()),Some(law));
     }

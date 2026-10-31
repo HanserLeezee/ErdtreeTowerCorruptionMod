@@ -212,7 +212,7 @@ fn clear_checked(data:&mut PlayerGameData)->Result<(),String> {
     Ok(())
 }
 /// 营地发放一块强化石（营地强化凭证）：不再清掉身上已有的强化石，离开营地也保留；只清掉更早版本的旧凭证
-pub fn prepare(data:&mut PlayerGameData)->Result<(),String> {
+pub fn prepare(_data:&mut PlayerGameData)->Result<(),String> {
     let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"铁匠参数未就绪")?;
     if params.get::<EquipParamGoods>(VOUCHER).is_none(){return Err("缺少强化石参数，请更新完整启动包".into());}
     let _=OLD_VOUCHER;

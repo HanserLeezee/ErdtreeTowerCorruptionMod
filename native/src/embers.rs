@@ -1,7 +1,7 @@
 use std::time::{Duration,Instant};
-use eldenring::cs::{ChrIns,ChrInsExt,FieldInsHandle,SoloParamRepository,SpEffectParam,WorldChrMan};
+use eldenring::{cs::{ChrIns,ChrInsExt,FieldInsHandle,SoloParamRepository,SpEffectParam,WorldChrMan},param::SP_EFFECT_PARAM_ST};
 use fromsoftware_shared::FromStatic;
-use erdtree_tower::{Phase,Run,embers::{self,Ember}};
+use erdtree_tower::{Phase,Run,embers::{self,Ember,Gain,Strike,StrikeRequest}};
 
 /// 余烬效果：scene-builder ember-patch 写入的 9670000 段
 pub const FIRST:i32=9670000;
@@ -13,7 +13,53 @@ const FLASH:i32=FIRST+40;
 /// 灵唤铃的号令：挂在召唤物身上
 const SPIRIT_COMMAND:i32=FIRST+50;
 fn frenzy_effect(stack:u8)->i32 {FIRST+30+i32::from(stack)}
-fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
+/// 处刑之链：常驻 → 致命一击时触发 → 短暂的标记（运行时看到标记出现就加一层）
+const CHAIN_RESIDENT:i32=FIRST+5;
+const CHAIN_MARK:i32=FIRST+7;
+fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,CHAIN_RESIDENT].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
+/// 叠层余烬不设上限：每种两行轮换（灵魂收容挂在召唤物身上，其余挂在玩家身上）。
+/// 层数变了就把新倍率写进没挂着的那一行、换上它，再摘掉旧的那一行；不改正在生效的那一行
+fn slots(ember:Ember)->Option<[i32;2]> {
+    let base=match ember {Ember::Godslayer=>60,Ember::SoulEater=>70,Ember::Chain=>80,Ember::SpiritKeeper=>90,_=>return None};
+    Some([FIRST+base,FIRST+base+1])
+}
+const PLAYER_STACKING:[Ember;3]=[Ember::Godslayer,Ember::SoulEater,Ember::Chain];
+fn holds(row:&SP_EFFECT_PARAM_ST,ember:Ember,rates:embers::Rates)->bool {
+    if ember==Ember::SpiritKeeper {row.physics_attack_power_rate()==rates.attack&&row.slash_damage_cut_rate()==rates.cut}
+    else {row.physics_attack_rate()==rates.attack&&row.max_hp_rate()==rates.hp}
+}
+fn write(row:&mut SP_EFFECT_PARAM_ST,ember:Ember,rates:embers::Rates) {
+    if ember==Ember::SpiritKeeper {
+        let a=rates.attack;
+        row.set_physics_attack_power_rate(a);row.set_magic_attack_power_rate(a);row.set_fire_attack_power_rate(a);row.set_thunder_attack_power_rate(a);row.set_dark_attack_power_rate(a);
+        let c=rates.cut;
+        row.set_slash_damage_cut_rate(c);row.set_blow_damage_cut_rate(c);row.set_thrust_damage_cut_rate(c);row.set_neutral_damage_cut_rate(c);
+        row.set_magic_damage_cut_rate(c);row.set_fire_damage_cut_rate(c);row.set_thunder_damage_cut_rate(c);row.set_dark_damage_cut_rate(c);
+    } else {
+        let a=rates.attack;
+        row.set_physics_attack_rate(a);row.set_magic_attack_rate(a);row.set_fire_attack_rate(a);row.set_thunder_attack_rate(a);row.set_dark_attack_rate(a);
+        row.set_max_hp_rate(rates.hp);
+    }
+}
+/// 这一层数该挂的那一行；present：目标角色身上已有的效果。None 表示不挂（没有层数、参数缺失，或两行都还挂着、等下一帧）
+fn scaled_slot(ember:Ember,level:u32,present:&[i32])->Option<i32> {
+    let (slots,rates)=(slots(ember)?,embers::stack_rates(ember,level)?);
+    if level==0 {return None;}
+    let params=unsafe {SoloParamRepository::instance_mut()}.ok()?;
+    let fits=|id:i32,params:&SoloParamRepository|params.get::<SpEffectParam>(id as u32).is_some_and(|row|holds(row,ember,rates));
+    if let Some(id)=slots.iter().copied().filter(|id|fits(*id,params)).max_by_key(|id|present.contains(id)) {return Some(id);}
+    let free=slots.into_iter().find(|id|!present.contains(id))?;
+    write(params.get_mut::<SpEffectParam>(free as u32)?,ember,rates);
+    Some(free)
+}
+/// 按 scaled_slot 的结果在一个角色身上换行：先挂新的再摘旧的（屠神者摘掉最大生命倍率时不会先把当前生命压低）
+fn swap<C:ChrInsExt+?Sized>(chr:&mut C,present:&[i32],ember:Ember,want:Option<i32>) {
+    let Some(slots)=slots(ember) else{return};
+    if let Some(id)=want&&!present.contains(&id) {chr.apply_speffect(id,false);}
+    for id in slots {if present.contains(&id)&&Some(id)!=want {chr.remove_speffect(id);}}
+}
+/// 击倒时按血条等级记魂点：带血条的 Boss、精英（含 Boss 房的随从）、普通敌人
+fn kill_rank(bar_rank:u8)->u8 {match bar_rank {0=>2,3=>0,_=>1}}
 fn ready(ids:&[i32])->bool {unsafe {SoloParamRepository::instance()}.is_ok_and(|p|ids.iter().all(|id|p.get::<SpEffectParam>(*id as u32).is_some()))}
 /// 低于敌人最大生命 0.3% 的掉血视为持续伤害，不算命中；同一敌人 0.3 秒内只算一次
 const HIT_PERMILLE:i64=3;
@@ -25,16 +71,31 @@ pub fn held(run:Option<&Run>)->Vec<Ember> {
 /// 玩家身上的余烬效果：无声处刑常驻，以血还血与癫火狂热只在战斗中按状态挂上
 pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight) {
     let mut want=Vec::new();
-    if held(run).contains(&Ember::Execution) {want.push(EXECUTION);}
+    let embers=held(run);
+    if embers.contains(&Ember::Execution) {want.push(EXECUTION);}
+    if embers.contains(&Ember::Chain) {want.push(CHAIN_RESIDENT);}
     if fight.revenge_active() {want.push(REVENGE);}
     if fight.frenzy>0 {want.push(frenzy_effect(fight.frenzy));}
     let present:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
+    let stacks=run.map(|r|r.ember_stacks).unwrap_or_default();
+    for ember in PLAYER_STACKING {
+        let level=if embers.contains(&ember) {stacks.level(ember)}else{0};
+        swap(chr,&present,ember,scaled_slot(ember,level,&present));
+    }
     for id in player_ids() {if present.contains(&id)&&!want.contains(&id){chr.remove_speffect(id);}}
     if want.is_empty()||!ready(&want) {return;}
     for id in want {if !present.contains(&id){chr.apply_speffect(id,false);}}
 }
 fn distance(a:[f32;3],b:[f32;3])->f32 {((a[0]-b[0]).powi(2)+(a[1]-b[1]).powi(2)+(a[2]-b[2]).powi(2)).sqrt()}
-struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:bool,hit_at:Option<Instant>}
+/// slot：这场战斗敌人名单里的位置（联机时房主与成员一致，成员发来的敌人侧效果按它找敌人）
+struct Foe {handle:FieldInsHandle,hp:i32,max:i32,pos:[f32;3],alive:bool,boss:bool,rank:u8,slot:u8,hit_at:Option<Instant>}
+/// 一帧的结果：噬神之蛇的饱食是否要补红瓶、让叠层余烬加层的事件、联机成员要请房主执行的敌人侧效果
+#[derive(Default)]
+pub struct Events {pub feast:bool,pub gains:Vec<Gain>,pub strikes:Vec<Strike>}
+/// 本机玩家与本机召唤物：联机时只算他们的命中与击倒（看敌人的 last_hit_by）
+fn own_handles(world:&WorldChrMan)->Vec<FieldInsHandle> {
+    world.main_player.as_ref().map(|p|p.chr_ins.field_ins_handle).into_iter().chain(world.summon_buddy_chr_set.characters().map(|c|c.field_ins_handle)).collect()
+}
 /// 一场战斗内的余烬状态：按敌人生命变化判断命中与倒下，按玩家生命变化判断受伤
 #[derive(Default)]
 pub struct Fight {
@@ -42,45 +103,77 @@ pub struct Fight {
     lifesteal:i64,rose:bool,dragon_ready:Option<Instant>,revenge_until:Option<Instant>,pub frenzy:u8,feasts:u8,missing:bool,
     /// 上一帧在场的召唤物位置（灵骸迸裂在它消失时引爆）
     spirit:Option<[f32;3]>,
+    /// 上一帧玩家身上有处刑之链的致命一击标记
+    marked:bool,
+    /// 房主：每个成员已执行到的敌人侧效果序号
+    remote:Vec<(u64,u32)>,
+    /// 联机时这场战斗是否已记过第一次“自己的命中”与“别人的命中”（日志，用来核对 last_hit_by 的归属）
+    attributed:[bool;2],
 }
 impl Fight {
     pub fn active(&self)->bool {self.key.is_some()}
     pub fn revenge_active(&self)->bool {self.revenge_until.is_some_and(|until|Instant::now()<until)}
-    /// 返回 true 表示触发了噬神之蛇的饱食，需要补一次红瓶
-    pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),held:&[Ember],foes:&[(FieldInsHandle,bool)],authority:bool,flasks:Option<u8>)->bool {
+    /// foes：(句柄, 血条等级 enemies::bar_rank, 名单位置)；authority：房主或单人（敌人侧效果直接执行，否则交给房主）；
+    /// party：联机（命中与击倒只算本机玩家与召唤物的）；keeper：灵魂收容当前层数
+    pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),held:&[Ember],foes:&[(FieldInsHandle,u8,u8)],authority:bool,party:bool,flasks:Option<u8>,keeper:u32)->Events {
         if self.key!=Some(key) {*self=Self{key:Some(key),..Default::default()};}
         let drank=matches!((self.flasks,flasks),(Some(before),Some(after)) if after<before);self.flasks=flasks;
-        if held.is_empty() {return false;}
+        let mut events=Events::default();
+        if held.is_empty() {return events;}
         let has=|e:Ember|held.contains(&e);
         let now=Instant::now();
-        let Some(player)=world.main_player.as_ref() else{return false};
-        if player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag() {return false;}
+        let Some(player)=world.main_player.as_ref() else{return events};
+        if player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag() {return events;}
+        if has(Ember::Chain) {
+            let marked=player.chr_ins.special_effect.entries().any(|e|e.param_id==CHAIN_MARK);
+            if marked&&!self.marked {events.gains.push(Gain::Critical);}
+            self.marked=marked;
+        }
         let data=&player.chr_ins.modules.data;
         let (hp,max_hp,stamina,max_stamina)=(data.hp,data.max_hp,data.stamina,data.max_stamina);
         let p=player.chr_ins.modules.physics.position;let here=[p.0,p.1,p.2];
         let taken=self.player_hp.map_or(0,|before|(before-hp).max(0));self.player_hp=Some(hp);
-        // 敌人：命中与倒下
+        // 敌人：命中与倒下。单人时都算自己的；联机时按敌人的 last_hit_by 只算本机玩家与召唤物的（队友的不算进自己的余烬）
+        let own=own_handles(world);
         let (mut hits,mut deaths)=(Vec::new(),Vec::new());
-        for (handle,boss) in foes {
+        for &(ref handle,rank,slot) in foes {
             let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
             let (foe_hp,foe_max)=(chr.modules.data.hp,chr.modules.data.max_hp);
             let q=chr.modules.physics.position;let pos=[q.0,q.1,q.2];
             let alive=foe_hp>0&&!chr.chr_flags1c5.death_flag();
+            let attacker=chr.last_hit_by;let mine=!party||own.contains(&attacker);
             let Some(index)=self.foes.iter().position(|f|f.handle==*handle) else {
-                self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:*boss,hit_at:None});continue;
+                self.foes.push(Foe{handle:*handle,hp:foe_hp,max:foe_max,pos,alive,boss:rank<=1,rank,slot,hit_at:None});continue;
             };
             let foe=&mut self.foes[index];
             let drop=foe.hp-foe_hp;
-            if foe.alive&&!alive {deaths.push(index);}
-            else if alive&&drop>0&&i64::from(drop)*1000>=i64::from(foe_max.max(1))*HIT_PERMILLE&&foe.hit_at.is_none_or(|t|now.duration_since(t)>=HIT_INTERVAL) {
-                hits.push((index,drop));foe.hit_at=Some(now);
-            }
+            let died=foe.alive&&!alive;
+            let hit=!died&&alive&&drop>0&&i64::from(drop)*1000>=i64::from(foe_max.max(1))*HIT_PERMILLE&&foe.hit_at.is_none_or(|t|now.duration_since(t)>=HIT_INTERVAL);
+            if hit {foe.hit_at=Some(now);}
             (foe.hp,foe.max,foe.pos,foe.alive)=(foe_hp,foe_max,pos,alive);
+            // 联机：每场战斗记一次“算进自己的”与“不算的”命中或击倒，实测时据此确认 last_hit_by 的归属
+            if party&&(hit||died)&&!self.attributed[usize::from(!mine)] {
+                self.attributed[usize::from(!mine)]=true;
+                super::log(format!("TOWER_EMBER party {} by {attacker:?} counted={mine}",if died{"kill"}else{"hit"}));
+            }
+            if !mine {continue;}
+            if died {deaths.push(index);} else if hit {hits.push((index,drop));}
         }
         // 召唤物：只看本机玩家的骨灰
         let spirit=world.summon_buddy_chr_set.characters().find(|c|c.modules.data.hp>0&&!c.chr_flags1c5.death_flag())
             .map(|c|{let q=c.modules.physics.position;(c.modules.data.hp,c.modules.data.max_hp,[q.0,q.1,q.2])});
         let vanished=self.spirit.filter(|_|spirit.is_none());self.spirit=spirit.map(|(_,_,pos)|pos);
+        for &dead in &deaths {events.gains.push(Gain::Kill{rank:kill_rank(self.foes[dead].rank),spirit:spirit.is_some()||vanished.is_some()});}
+        // 灵魂收容：每只在场的召唤物挂上当前层数的效果
+        if has(Ember::SpiritKeeper) {
+            let living=|c:&&mut _|{let c:&ChrIns=c;c.modules.data.hp>0&&!c.chr_flags1c5.death_flag()};
+            let present:Vec<i32>=world.summon_buddy_chr_set.characters().filter(living).flat_map(|c|c.special_effect.entries().map(|e|e.param_id).collect::<Vec<_>>()).collect();
+            let want=scaled_slot(Ember::SpiritKeeper,keeper,&present);
+            for chr in world.summon_buddy_chr_set.characters().filter(living) {
+                let own:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
+                swap(chr,&own,Ember::SpiritKeeper,want);
+            }
+        }
         // 玩家侧：所有玩家都生效
         let mut heal=0i64;
         // 仿身泪滴的替身：受到的伤害一部分转给召唤物（召唤物至少留 1 点生命，不由余烬直接打倒）
@@ -129,49 +222,66 @@ impl Fight {
                 data.fp=(i64::from(data.fp.max(0))+i64::from(data.max_fp)*i64::from(embers::SPIRIT_FEAST_FP_PERCENT)/100*feast_heal).min(i64::from(data.max_fp)) as i32;
             }
         }
-        let feast=has(Ember::Feast)&&!deaths.is_empty()&&self.feasts<embers::FEAST_PER_FIGHT;
-        if feast {self.feasts+=1;}
-        // 敌人侧：只由房主（或单人）计算
-        if !authority {return feast;}
-        let effects:Vec<i32>=[(Ember::Bloodlord,BLOOD),(Ember::Frost,FROST)].into_iter().filter(|(e,_)|has(*e)).map(|(_,id)|id).collect();
-        if !ready(&[BLOOD,FROST,FLASH]) {if !self.missing{super::log("TOWER_EMBER missing ember effects; update regulation.bin");self.missing=true;}}
-        else if !effects.is_empty() {
-            for (index,_) in &hits {if let Some(chr)=world.chr_ins_by_handle_mut(&self.foes[*index].handle) {for id in &effects {chr.apply_speffect(*id,false);}}}
+        events.feast=has(Ember::Feast)&&!deaths.is_empty()&&self.feasts<embers::FEAST_PER_FIGHT;
+        if events.feast {self.feasts+=1;}
+        // 敌人侧：房主与单人直接执行；联机成员算出来交给房主（命中、击倒都只算自己的）
+        let mut strikes:Vec<(usize,Strike)>=Vec::new();
+        for &(index,_) in &hits {
+            for ember in [Ember::Bloodlord,Ember::Frost] {if has(ember) {strikes.push((index,Strike::Buildup{slot:self.foes[index].slot,ember}));}}
         }
-        let mut wounds:Vec<(usize,i32)>=Vec::new();
-        if has(Ember::Deathflame) {
-            for &dead in &deaths {
-                let origin=self.foes[dead].pos;
-                for (index,foe) in self.foes.iter().enumerate() {
-                    if foe.alive&&distance(foe.pos,origin)<=embers::DEATHFLAME_RADIUS {wounds.push((index,embers::enemy_damage(foe.max,embers::DEATHFLAME_PERCENT,foe.boss)));}
-                }
-            }
-        }
-        if has(Ember::Echo)&&drank {
-            for (index,foe) in self.foes.iter().enumerate() {
-                if foe.alive&&distance(foe.pos,here)<=embers::ECHO_RADIUS {wounds.push((index,embers::enemy_damage(foe.max,embers::ECHO_PERCENT,foe.boss)));}
-            }
-        }
-        if has(Ember::SpiritBurst) && let Some(origin)=vanished {
-            for (index,foe) in self.foes.iter().enumerate() {
-                if foe.alive&&distance(foe.pos,origin)<=embers::SPIRIT_BURST_RADIUS {wounds.push((index,embers::enemy_damage(foe.max,embers::SPIRIT_BURST_PERCENT,foe.boss)));}
-            }
-            super::log("TOWER_EMBER spirit burst");
-        }
+        let mut wound=|origin:[f32;3],radius:f32,ember:Ember,foes:&[Foe]| {
+            for (index,foe) in foes.iter().enumerate() {if foe.alive&&distance(foe.pos,origin)<=radius {strikes.push((index,Strike::Wound{slot:foe.slot,ember}));}}
+        };
+        if has(Ember::Deathflame) {for &dead in &deaths {wound(self.foes[dead].pos,embers::DEATHFLAME_RADIUS,Ember::Deathflame,&self.foes);}}
+        if has(Ember::Echo)&&drank {wound(here,embers::ECHO_RADIUS,Ember::Echo,&self.foes);}
+        if has(Ember::SpiritBurst) && let Some(origin)=vanished {wound(origin,embers::SPIRIT_BURST_RADIUS,Ember::SpiritBurst,&self.foes);super::log("TOWER_EMBER spirit burst");}
         if has(Ember::Thorns)&&taken>0 {
             let nearest=self.foes.iter().enumerate().filter(|(_,f)|f.alive).min_by(|(_,a),(_,b)|distance(a.pos,here).total_cmp(&distance(b.pos,here)));
-            if let Some((index,foe))=nearest {wounds.push((index,embers::thorns_damage(taken,foe.max,foe.boss)));}
+            if let Some((index,foe))=nearest {strikes.push((index,Strike::Thorns{slot:foe.slot,taken:taken.min(embers::THORNS_TAKEN_LIMIT)}));}
         }
-        for (index,damage) in wounds {
-            if damage<=0 {continue;}
-            let foe=&mut self.foes[index];
-            let Some(chr)=world.chr_ins_by_handle_mut(&foe.handle) else{continue};
-            if chr.modules.data.hp<=0 {continue;}
-            // 不由余烬直接击杀，避免绕过游戏的死亡流程
-            chr.modules.data.hp=(chr.modules.data.hp-damage).max(1);foe.hp=chr.modules.data.hp;
-            if ready(&[FLASH]) {chr.apply_speffect(FLASH,false);}
+        if authority {for (index,strike) in strikes {self.strike(world,index,strike);}}
+        else {events.strikes=strikes.into_iter().map(|(_,strike)|strike).collect();}
+        events
+    }
+    /// 执行一条敌人侧效果。不由余烬直接击杀（至少留 1 点生命），避免绕过游戏的死亡流程
+    fn strike(&mut self,world:&mut WorldChrMan,index:usize,strike:Strike) {
+        if !ready(&[BLOOD,FROST,FLASH]) {if !self.missing{super::log("TOWER_EMBER missing ember effects; update regulation.bin");self.missing=true;}return;}
+        let foe=&mut self.foes[index];
+        let Some(chr)=world.chr_ins_by_handle_mut(&foe.handle) else{return};
+        if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag() {return;}
+        let max=chr.modules.data.max_hp;
+        let damage=match strike {
+            Strike::Buildup{ember,..}=>{chr.apply_speffect(if ember==Ember::Bloodlord{BLOOD}else{FROST},false);return;},
+            Strike::Wound{ember,..}=>embers::enemy_damage(max,embers::wound_percent(ember).unwrap_or(0),foe.boss),
+            Strike::Thorns{taken,..}=>embers::thorns_damage(taken,max,foe.boss),
+        };
+        if damage<=0 {return;}
+        chr.modules.data.hp=(chr.modules.data.hp-damage).max(1);foe.hp=chr.modules.data.hp;
+        chr.apply_speffect(FLASH,false);
+    }
+    /// 房主：执行成员发来的敌人侧效果。每个成员按序号只执行一次；成员没带对应的余烬、或找不到那个敌人的跳过
+    pub fn apply_remote(&mut self,world:&mut WorldChrMan,foes:&[(FieldInsHandle,u8,u8)],member:u64,held:&[Ember],requests:&[StrikeRequest]) {
+        let entry=match self.remote.iter().position(|(m,_)|*m==member) {Some(i)=>i,None=>{self.remote.push((member,0));self.remote.len()-1}};
+        let last=self.remote[entry].1;
+        let mut fresh:Vec<_>=requests.iter().filter(|r|r.seq>last).copied().collect();
+        fresh.sort_by_key(|r|r.seq);
+        let Some(newest)=fresh.last().map(|r|r.seq) else{return};
+        self.remote[entry].1=newest;
+        for request in fresh {
+            if !request.strike.valid(held) {super::log(format!("TOWER_EMBER member {member} strike rejected: {:?}",request.strike));continue;}
+            let Some(&(handle,rank,slot))=foes.iter().find(|f|f.2==request.strike.slot()) else{continue};
+            let index=match self.foes.iter().position(|f|f.handle==handle) {
+                Some(index)=>index,
+                None=>{
+                    let Some(chr)=world.chr_ins_by_handle(&handle) else{continue};
+                    let q=chr.modules.physics.position;
+                    let alive=chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag();
+                    self.foes.push(Foe{handle,hp:chr.modules.data.hp,max:chr.modules.data.max_hp,pos:[q.0,q.1,q.2],alive,boss:rank<=1,rank,slot,hit_at:None});
+                    self.foes.len()-1
+                },
+            };
+            self.strike(world,index,request.strike);
         }
-        feast
     }
 }
 
@@ -179,10 +289,16 @@ impl Fight {
 mod tests {
     use super::*;
     #[test]
-    fn player_effects_cover_every_frenzy_stack() {
+    fn effect_ids_do_not_overlap() {
         let ids:Vec<_>=player_ids().collect();
-        assert_eq!(ids.len(),2+usize::from(embers::FRENZY_STACKS));
+        assert_eq!(ids.len(),3+usize::from(embers::FRENZY_STACKS));
         assert_eq!(frenzy_effect(embers::FRENZY_STACKS),FIRST+38);
-        assert!(!ids.contains(&BLOOD)&&!ids.contains(&FLASH));
+        let mut all=ids.clone();all.extend([BLOOD,FROST,FLASH,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION+2]);
+        all.extend(Ember::ALL.into_iter().filter_map(slots).flatten());
+        let count=all.len();all.sort();all.dedup();assert_eq!(all.len(),count,"effect ids overlap");
+        assert!(all.iter().all(|id|(FIRST..FIRST+100).contains(id)),"inside the ember range");
+        assert!(Ember::ALL.into_iter().all(|e|e.stacking()==slots(e).is_some()));
+        assert!(PLAYER_STACKING.iter().all(|e|e.stacking()&&*e!=Ember::SpiritKeeper));
+        assert_eq!([0,1,2,3].map(kill_rank),[2,1,1,0]);
     }
 }
