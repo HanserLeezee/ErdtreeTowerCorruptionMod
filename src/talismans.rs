@@ -9,7 +9,10 @@ pub static CATALOG:LazyLock<Vec<Item>>=LazyLock::new(||VARIANTS.iter().map(|v|It
 static INDEX:LazyLock<HashMap<u32,usize>>=LazyLock::new(||VARIANTS.iter().enumerate().map(|(i,v)|(v.id,i)).collect());
 static GROUPS:LazyLock<Vec<Vec<usize>>>=LazyLock::new(||{
     let mut map=std::collections::BTreeMap::<&str,Vec<usize>>::new();
-    for (i,v) in VARIANTS.iter().enumerate(){map.entry(v.kind).or_default().push(i);}
+    for (i,v) in VARIANTS.iter().enumerate(){
+        if matches!(v.kind,"experienced rider"|"finding"){continue;}
+        map.entry(v.kind).or_default().push(i);
+    }
     map.into_values().collect()
 });
 pub fn lookup(id:u32)->Option<&'static Item>{INDEX.get(&id).map(|i|&CATALOG[*i])}
@@ -26,4 +29,20 @@ pub fn roll(run:&Run,original:u32,entropy:u64,repeat:bool)->u32 {
         for n in 0..group.len(){let id=VARIANTS[group[(picked+n)%group.len()]].id;if repeat||!run.claimed_items.contains(&id){return id;}}
     }
     original
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn riding_and_finding_variants_remain_readable_but_never_roll() {
+        let excluded:Vec<_>=VARIANTS.iter().enumerate().filter(|(_,v)|matches!(v.kind,"experienced rider"|"finding")).collect();
+        assert_eq!(excluded.len(),8);
+        for (index,v) in excluded {
+            assert!(lookup(v.id).is_some());
+            assert!(!GROUPS.iter().any(|g|g.contains(&index)),"{}",v.name);
+        }
+        assert_eq!(GROUPS.iter().map(Vec::len).sum::<usize>(),VARIANTS.len()-8);
+    }
 }
