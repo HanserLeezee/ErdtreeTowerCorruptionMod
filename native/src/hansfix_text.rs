@@ -146,3 +146,52 @@ fn strings_are_read_in_chunks_up_to_the_terminator() {
     let (read,absolute,_)=fmg.text(std::ptr::from_ref(&*slot) as usize).unwrap();
     assert_eq!(read,text);assert!(!absolute);
 }
+
+/// [HansFix] 读一张文本表里某个编号的文字（找不到返回 None）
+pub fn lookup(index:u32,id:u32)->Option<String> {
+    let repo=repository()?;let table=fmg(repo,index)?;
+    let (_,slot)=table.slots(id..id+1).into_iter().next()?;
+    table.text(slot).map(|(t,_,_)|t).filter(|t|!t.is_empty())
+}
+/// [HansFix] 给游戏新增文本条目：用我们自己的内容整张替换一张原本为空的文本表（DLC2 的那几张都是空表），
+/// 例如给火把位、法术战技补上名字。多次调用以最后一次为准；旧表留在内存里不释放（游戏可能还拿着指针）。
+pub fn install_table(index:u32,mut entries:Vec<(u32,String)>)->bool {
+    let Some(repo)=repository() else{return false};
+    let Some(count)=read_u32(repo+0x14) else{return false};
+    if index>=count||count>0x1000 {return false;}
+    let Some(versions)=read_u64(repo+8) else{return false};
+    let Some(tables)=read_u64(versions as usize) else{return false};
+    let slot=tables as usize+index as usize*8;
+    let Some(old)=read_u64(slot) else{return false};
+    let mut head=[0u8;0x28];
+    if old<0x10000||!read_bytes(old as usize,&mut head)||head[2]!=2 {return false;}
+    entries.sort_by_key(|(id,_)|*id);entries.dedup_by_key(|(id,_)|*id);
+    // 连续编号合成一组
+    let mut groups:Vec<(i32,i32,i32)>=Vec::new();
+    for (n,(id,_)) in entries.iter().enumerate() {
+        match groups.last_mut() {Some(g) if g.2+1==*id as i32=>g.2=*id as i32,_=>groups.push((n as i32,*id as i32,*id as i32))}
+    }
+    let strings:Vec<Vec<u16>>=entries.iter().map(|(_,t)|t.encode_utf16().chain(Some(0)).collect()).collect();
+    let offsets_at=0x28+groups.len()*16;
+    let strings_at=offsets_at+entries.len()*8;
+    let size=strings_at+strings.iter().map(|s|s.len()*2).sum::<usize>();
+    let mut blob=vec![0u8;size.next_multiple_of(16)].into_boxed_slice();
+    let base=blob.as_ptr() as usize;
+    blob[..0x28].copy_from_slice(&head);
+    blob[4..8].copy_from_slice(&(size as u32).to_le_bytes());
+    blob[0x0c..0x10].copy_from_slice(&(groups.len() as i32).to_le_bytes());
+    blob[0x10..0x14].copy_from_slice(&(entries.len() as i32).to_le_bytes());
+    blob[0x18..0x20].copy_from_slice(&((base+offsets_at) as u64).to_le_bytes());
+    for (g,(index,first,last)) in groups.iter().enumerate() {
+        let at=0x28+g*16;
+        blob[at..at+4].copy_from_slice(&index.to_le_bytes());blob[at+4..at+8].copy_from_slice(&first.to_le_bytes());blob[at+8..at+12].copy_from_slice(&last.to_le_bytes());
+    }
+    let mut at=strings_at;
+    for (n,s) in strings.iter().enumerate() {
+        blob[offsets_at+n*8..offsets_at+n*8+8].copy_from_slice(&(at as u64).to_le_bytes());
+        for (i,u) in s.iter().enumerate() {blob[at+i*2..at+i*2+2].copy_from_slice(&u.to_le_bytes());}
+        at+=s.len()*2;
+    }
+    let blob=Box::leak(blob);
+    write_u64(slot,blob.as_ptr() as u64)
+}

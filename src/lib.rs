@@ -15,6 +15,7 @@ pub mod act_gifts;
 pub mod elite;
 pub mod descent;
 pub mod fallen_oaths;
+pub mod torches;
 pub mod encounter;
 pub mod events;
 pub mod regional_events;
@@ -262,6 +263,11 @@ pub struct Run {
     /// [HansFix] 堕落模式：红篝火、堕落挑战与堕落首领（开启堕落模式的旅程才有）
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub fallen: Option<descent::Fallen>,
+    /// [HansFix] 本局拿到的火把（每把一个火把位）
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub torches: Vec<torches::Torch>,
+    #[serde(default,skip_serializing_if="is_zero")]
+    pub torch_rolls: u32,
     #[serde(default="first_act")]
     pub act:u8,
     pub seed: u64,
@@ -859,6 +865,8 @@ impl Run {
             cursed: Vec::new(),
             fallen_oaths: Vec::new(),
             fallen: None,
+            torches: Vec::new(),
+            torch_rolls: 0,
             act:1,
             seed,
             initial_seed: Some(seed),

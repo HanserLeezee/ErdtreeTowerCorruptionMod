@@ -1,45 +1,78 @@
-//! [HansFix] 火把战技原型：火把装上专用战灰（图标为法术图标、战技名为法术名、战技本身无动作），
-//! 左手举起火把（防御 / L1）累计 10 秒后直接把法术效果放在玩家身上，不播施法动作。
-//! 原型阶段：每次领取关卡奖励都会额外得到一把实验火把（黄金誓言）。
+//! [HansFix] 火把（游戏内部分）：
+//! - 火把位：把本局每把火把写进它占用的预留武器行（外观复制自原版火把，补正与 3 个词条按这把火把改写）；
+//! - 文字：火把位、法术战技（战技名/说明）与法术战灰的名字装进游戏原本为空的 DLC2 文本表；
+//! - 释放：左手举起（防御 / L1）装有法术战灰的火把满 10 秒，直接放出这个法术（范围判定或增益效果），
+//!   同时播放法术原版的释放光效与音效，不做动作。
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use eldenring::cs::{CSGaitemImp, CSWepGaitemIns, ChrAsmArmStyle, ChrIns, ChrInsExt, PlayerGameData, SoloParamRepository, SpEffectParam};
+use eldenring::cs::{CSGaitemImp, CSWepGaitemIns, ChrAsmArmStyle, ChrIns, ChrInsExt, EquipParamWeapon, PlayerGameData, SoloParamRepository, SpEffectParam};
+use erdtree_tower::torches::{self, Torch};
 use fromsoftware_shared::{FromStatic, Superclass};
 
-/// 原版火把
-pub const TORCH: u32 = 24000000;
-/// 实验战灰：黄金誓言（regulation 里由 torch_proto_patch.py 生成）
-pub const GEM: i32 = 990000;
-/// 黄金誓言的增益效果（原版祷告的范围判定挂的就是它）
-const GOLDEN_VOW: i32 = 1660000;
-/// 施法确认：0.5 秒的标记效果，只在玩家身上播放这个法术原版的释放特效与音效（不做动作）
-const CAST_FLASH: i32 = 9600300;
 const HOLD: Duration = Duration::from_secs(10);
+// DLC2 的空文本表：武器名/武器说明，战灰名/战灰说明，战技名/战技说明
+const WEAPON_NAME: u32 = 410; const WEAPON_CAPTION: u32 = 412;
+const GEM_NAME: u32 = 422; const GEM_CAPTION: u32 = 424;
+const ARTS_NAME: u32 = 431; const ARTS_CAPTION: u32 = 432;
 
 struct State {
     held_since: Option<Instant>,
     last: Option<(i32, i32, bool, bool)>,
+    applied: Option<Vec<Torch>>,
+    spells_text: bool,
 }
-static STATE: Mutex<State> = Mutex::new(State { held_since: None, last: None });
+static STATE: Mutex<State> = Mutex::new(State { held_since: None, last: None, applied: None, spells_text: false });
 
-
-fn torches(data: &PlayerGameData) -> u64 {
-    super::loot::held(data, |e| e.category() == eldenring::cs::ItemCategory::Weapon && e.param_id() / 100 * 100 == TORCH)
-}
-/// 发一把带实验战灰的火把（法术战灰只能装在火把上，火把之间可以互换）
-pub fn grant(data: &PlayerGameData) -> Result<(), String> {
-    let before = torches(data);
-    super::random_ashes::give(&[(TORCH as i32, 1, GEM)])?;
-    let after = torches(data);
-    super::log(format!("HANSFIX_TORCH granted torch={TORCH} gem={GEM} torches {before}->{after}"));
-    if after <= before { return Err("游戏没有收下实验火把（背包数量未变化）".into()); }
+/// 发一把火把（武器 = 它的火把位，战灰 = 它的法术）
+pub fn give(torch: &Torch) -> Result<(), String> {
+    apply_torches(std::slice::from_ref(torch), false);
+    super::random_ashes::give(&[(torch.weapon_id() as i32, 1, torch.gem() as i32)])?;
+    super::log(format!("HANSFIX_TORCH granted slot={} weapon={} base={} spell={} scaling={:?} affixes={:?}", torch.slot, torch.weapon_id(), torch.base, torch.spell, torch.scaling, torch.affixes));
     Ok(())
 }
 
-/// 原型：领取关卡奖励后额外发放（概率 100%）
-pub fn on_reward_claimed(data: &PlayerGameData) {
-    if !super::hansfix::wander() { return; }
-    if let Err(e) = grant(data) { super::log(format!("HANSFIX_TORCH grant failed: {e}")); }
+fn base_name(base: u32) -> String {
+    super::hansfix_text::lookup(11, base).or_else(|| super::hansfix_text::lookup(310, base)).unwrap_or_else(|| "火把".into())
+}
+fn base_caption(base: u32) -> String {
+    super::hansfix_text::lookup(25, base).or_else(|| super::hansfix_text::lookup(312, base)).unwrap_or_default()
+}
+/// 把火把写进它的火把位（参数与文字）。all=true 时按整局的火把重写文字表
+fn apply_torches(list: &[Torch], all: bool) {
+    let Ok(params) = (unsafe { SoloParamRepository::instance_mut() }) else { return };
+    for torch in list {
+        let Some(base) = params.get::<EquipParamWeapon>(torch.base).map(|r| r as *const _) else { continue };
+        let Some(slot) = params.get_mut::<EquipParamWeapon>(torch.weapon_id()) else { continue };
+        unsafe { std::ptr::copy_nonoverlapping(base, slot as *mut _, 1) };
+        let v = torch.scaling_values();
+        slot.set_correct_strength(v[0]); slot.set_correct_agility(v[1]); slot.set_correct_magic(v[2]); slot.set_correct_faith(v[3]); slot.set_correct_luck(v[4]);
+        let a = |i: usize| torch.affixes.get(i).map_or(-1, |e| *e as i32);
+        slot.set_resident_sp_effect_id(a(0)); slot.set_resident_sp_effect_id1(a(1)); slot.set_resident_sp_effect_id2(a(2));
+        slot.set_gem_mount_type(2);
+    }
+    if all {
+        let names = list.iter().map(|t| (t.weapon_id(), format!("{}{}", t.prefix(), base_name(t.base)))).collect();
+        let captions = list.iter().map(|t| {
+            let spell = torches::SPELLS.get(usize::from(t.spell)).map_or("", |s| s.name);
+            let mut text = base_caption(t.base);
+            text.push_str(&format!("\n\n{}\n{}\n\n举起（防御）10 秒后自动释放战技：{}", t.scaling_line(), t.affix_lines().join("\n"), spell));
+            (t.weapon_id(), text)
+        }).collect();
+        let ok = super::hansfix_text::install_table(WEAPON_NAME, names) & super::hansfix_text::install_table(WEAPON_CAPTION, captions);
+        super::log(format!("HANSFIX_TORCH slots applied torches={} texts={ok}", list.len()));
+    }
+}
+fn install_spell_texts() -> bool {
+    let spells = &*torches::SPELLS;
+    let caption = |s: &torches::Spell| format!("火把专用的法术战技。\n左手举起火把（防御）满 10 秒时自动释放「{}」，不做动作，无法手动发动。\n可以在火把之间互换。", s.name);
+    let ok = [
+        super::hansfix_text::install_table(ARTS_NAME, spells.iter().map(|s| (torches::ART_FIRST + u32::from(s.index), s.name.to_owned())).collect()),
+        super::hansfix_text::install_table(ARTS_CAPTION, spells.iter().map(|s| (torches::ART_FIRST + u32::from(s.index), caption(s))).collect()),
+        super::hansfix_text::install_table(GEM_NAME, spells.iter().map(|s| (torches::GEM_FIRST + u32::from(s.index), format!("火把战技：{}", s.name))).collect()),
+        super::hansfix_text::install_table(GEM_CAPTION, spells.iter().map(|s| (torches::GEM_FIRST + u32::from(s.index), caption(s))).collect()),
+    ];
+    super::log(format!("HANSFIX_TORCH spell texts installed={ok:?}"));
+    ok.iter().all(|b| *b)
 }
 
 fn left_weapon(data: &PlayerGameData) -> Option<(i32, i32)> {
@@ -59,48 +92,51 @@ fn left_weapon(data: &PlayerGameData) -> Option<(i32, i32)> {
     });
     Some((id, gem))
 }
+fn is_torch(weapon: i32) -> bool {
+    let id = weapon as u32 / 100 * 100;
+    weapon >= 0 && (torches::slot_of(weapon as u32).is_some() || torches::BASES.contains(&id))
+}
 
 /// 每帧
-pub fn sync(chr: &mut ChrIns, data: &PlayerGameData) {
+pub fn sync(chr: &mut ChrIns, data: &PlayerGameData, run: Option<&erdtree_tower::Run>) {
     let Ok(mut state) = STATE.lock() else { return };
+    if !state.spells_text { state.spells_text = install_spell_texts(); }
+    let list = run.map(|r| r.torches.clone()).unwrap_or_default();
+    if state.applied.as_ref() != Some(&list) { apply_torches(&list, true); state.applied = Some(list); }
     let (weapon, gem) = left_weapon(data).unwrap_or((-1, -1));
-    let ours = weapon >= 0 && weapon as u32 / 100 * 100 == TORCH && gem == GEM;
+    let spell = (gem >= 0).then(|| torches::spell_of_gem(gem as u32)).flatten();
+    let ours = is_torch(weapon) && spell.is_some();
     let requests = &chr.modules.action_request.action_requests;
     let (guard, l1) = (requests.guard(), requests.l1());
-    let raised = ours && (guard || l1);
     if state.last != Some((weapon, gem, guard, l1)) {
-        // 只在左手是火把时记录，便于确认“举起”到底触发了哪个输入
-        if weapon >= 0 && weapon as u32 / 100 * 100 == TORCH {
-            super::log(format!("HANSFIX_TORCH left={weapon} gem={gem} ours={ours} guard={guard} l1={l1}"));
-        }
+        if is_torch(weapon) { super::log(format!("HANSFIX_TORCH left={weapon} gem={gem} ours={ours} guard={guard} l1={l1}")); }
         state.last = Some((weapon, gem, guard, l1));
     }
-    if !raised { state.held_since = None; return; }
+    let Some(spell) = spell.filter(|_| ours && (guard || l1)) else { state.held_since = None; return };
     let since = *state.held_since.get_or_insert_with(Instant::now);
     if since.elapsed() < HOLD { return; }
     state.held_since = Some(Instant::now());
-    let present = unsafe { SoloParamRepository::instance() }.ok().is_some_and(|p| p.get::<SpEffectParam>(GOLDEN_VOW as u32).is_some());
-    if present {
-        chr.apply_speffect(CAST_FLASH, false);
-        // 从玩家身上发射原版黄金誓言的范围判定（范围与原版相同），范围内的玩家（含自己、联机队友）获得效果；
-        // 发射失败就退回只给自己。（30 米范围只用于“灼烧的 / 黑焰的”火把举起时的光环效果）
-        match spawn_area(chr, AREA_BULLET) {
-            Ok(()) => super::log("HANSFIX_TORCH cast golden vow (native area) after 10s raised"),
-            Err(e) => {
-                chr.apply_speffect(GOLDEN_VOW, false);
-                super::log(format!("HANSFIX_TORCH area bullet failed ({e}); applied to self only"));
-            }
-        }
+    cast(chr, spell);
+}
+
+fn cast(chr: &mut ChrIns, spell: &torches::Spell) {
+    let Ok(params) = (unsafe { SoloParamRepository::instance() }) else { return };
+    let flash = (torches::FLASH_FIRST + u32::from(spell.index)) as i32;
+    if params.get::<SpEffectParam>(flash as u32).is_some() { chr.apply_speffect(flash, false); }
+    let result = if spell.bullet { spawn_bullet(chr, spell.reference as i32) }
+        else if params.get::<SpEffectParam>(spell.reference).is_some() { chr.apply_speffect(spell.reference as i32, false); Ok(()) }
+        else { Err(format!("effect {} missing", spell.reference)) };
+    match result {
+        Ok(()) => super::log(format!("HANSFIX_TORCH cast {} ({}) after 10s raised", spell.name, spell.magic)),
+        Err(e) => super::log(format!("HANSFIX_TORCH cast {} failed: {e}", spell.name)),
     }
 }
 
-/// 原版黄金誓言的范围判定
-const AREA_BULLET: i32 = 10660000;
 #[repr(C, align(16))]
 struct SpawnData([u8; 0x110]);
 type Spawn = unsafe extern "C" fn(*mut std::ffi::c_void, *mut i32, *const SpawnData, *mut i32);
-/// 以玩家为原点发射一个范围判定（不播动作）。布局与 star_stream 的 SpawnData / fromsoftware-rs 的 BulletSpawnData 一致
-fn spawn_area(chr: &ChrIns, bullet: i32) -> Result<(), String> {
+/// 以玩家为原点、面朝方向发射一个法术判定（不播动作）。布局与 star_stream 的 SpawnData / fromsoftware-rs 的 BulletSpawnData 一致
+fn spawn_bullet(chr: &ChrIns, bullet: i32) -> Result<(), String> {
     use eldenring::cs::{Bullet, CSBulletManager};
     let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "参数未就绪")?;
     if params.get::<Bullet>(bullet as u32).is_none() { return Err(format!("bullet {bullet} missing")); }
@@ -111,15 +147,18 @@ fn spawn_area(chr: &ChrIns, bullet: i32) -> Result<(), String> {
     let owner = unsafe { std::ptr::read_unaligned((&chr.field_ins_handle as *const eldenring::cs::FieldInsHandle).cast::<u64>()) };
     let put_i32 = |data: &mut SpawnData, at: usize, v: i32| data.0[at..at + 4].copy_from_slice(&v.to_le_bytes());
     data.0[0..8].copy_from_slice(&owner.to_le_bytes());
-    put_i32(&mut data, 0x08, -1); // behavior
-    put_i32(&mut data, 0x0c, -1); // magic
+    put_i32(&mut data, 0x08, -1); put_i32(&mut data, 0x0c, -1);
     put_i32(&mut data, 0x14, bullet);
-    put_i32(&mut data, 0x18, -1); // goods
-    put_i32(&mut data, 0x1c, -1); // dummy poly
-    data.0[0x20..0x28].fill(0xff); // target: none
+    put_i32(&mut data, 0x18, -1); put_i32(&mut data, 0x1c, -1);
+    data.0[0x20..0x28].fill(0xff);
+    // 面朝方向：physics.orientation 是绕 Y 轴的四元数，朝向为 (-sin yaw, 0, -cos yaw)
+    let q = chr.modules.physics.orientation;
+    let yaw = 2.0 * q.1.atan2(q.3);
+    let forward = [-yaw.sin(), 0.0, -yaw.cos()];
+    let right = [forward[2], 0.0, -forward[0]];
     let p = chr.modules.physics.position;
-    for (offset, row) in [(0x50, [1.0f32, 0.0, 0.0, 0.0]), (0x60, [0.0, 1.0, 0.0, 0.0]), (0x70, [0.0, 0.0, 1.0, 0.0]), (0x80, [p.0, p.1, p.2, 1.0])] {
-        for (i, v) in row.into_iter().enumerate() { data.0[offset + i * 4..offset + i * 4 + 4].copy_from_slice(&v.to_le_bytes()); }
+    for (offset, row) in [(0x50, [right[0], right[1], right[2], 0.0]), (0x60, [0.0, 1.0, 0.0, 0.0]), (0x70, [forward[0], forward[1], forward[2], 0.0]), (0x80, [p.0, p.1 + 1.2, p.2, 1.0])] {
+        for (i, v) in row.into_iter().enumerate() { data.0[offset + i * 4..offset + i * 4 + 4].copy_from_slice(&f32::to_le_bytes(v)); }
     }
     let spawn: Spawn = unsafe { std::mem::transmute(function) };
     let (mut out, mut error) = (0i32, 0i32);

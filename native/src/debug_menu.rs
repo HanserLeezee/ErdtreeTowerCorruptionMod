@@ -130,8 +130,8 @@ impl Menu {
             ui.separator();
         }
         // [HansFix] 火把战技原型
-        ui.text_colored([0.95,0.65,0.30,1.0],"火把战技原型 · 黄金誓言");
-        if ui.small_button("获得实验火把##torch-give") {send(Command::TorchGive);}
+        ui.text_colored([0.95,0.65,0.30,1.0],"火把（测试）");
+        if ui.small_button("获得随机火把##torch-give") {send(Command::TorchGive);}
         ui.separator();
         ui.text("跳到节点（路线图上会变成可选）");
         ui.child_window("##debug-nodes").size([0.0,220.0]).build(|| {
