@@ -139,7 +139,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,record:Option<(u32,&str)>)->Option<LawA
                 draw.add_rect_filled_multicolor(min,max,ImColor32::from_rgba(34,29,22,a),ImColor32::from_rgba(20,17,13,a),ImColor32::from_rgba(14,12,9,a),ImColor32::from_rgba(26,22,17,a));
             }
             draw.add_rect(p(x+5.0,y+5.0),p(x+49.0,y+49.0),ImColor32::from_rgba(0,0,0,150)).filled(true).rounding(3.0*s).build();
-            crate::law_art::draw(&draw,node.art,p(x+6.0,y+6.0),p(x+48.0,y+48.0),if chosen{255}else if open{200}else{70});
+            crate::law_art::draw_line(&draw,node.art,p(x+11.0,y+11.0),p(x+43.0,y+43.0),if chosen{255}else if open{200}else{70});
             let border=if chosen{lit}else if focus{ImColor32::from_rgba(236,220,176,230)}else if open{ImColor32::from_rgba(150,126,84,200)}else{ImColor32::from_rgba(80,70,54,170)};
             draw.add_rect(min,max,border).rounding(4.0*s).thickness(if chosen||focus{2.2}else{1.0}*s).build();
             let tri=if chosen{ImColor32::from_rgba(255,236,200,255)}else if open{lit}else{gray};

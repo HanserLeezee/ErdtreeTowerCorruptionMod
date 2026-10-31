@@ -219,7 +219,7 @@ pub fn reset(data: &mut PlayerGameData, archetype: u8) -> Result<(), String> {
     super::items::give_flasks(true,true)?;
     super::physick::ensure(data)?;
     super::items::give(&[(0x40000000|8590,1,-1)])?;
-    // 开局护符（默认祖灵角，职业传承可以更换）在大赐福开局时发放
+    // 开局护符（每个职业有自己的默认护符，职业传承可以更换）在大赐福开局时发放
     super::items::give(&[(0x40000000|8158,1,-1)])?;
     super::passives::give_starting(data,super::class_from_archetype(archetype).unwrap())?;
     super::log(format!("Initial class restored: archetype={archetype}, level={}",data.level));

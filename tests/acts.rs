@@ -22,7 +22,8 @@ fn bosses_restore_resources_only_between_acts_and_keep_progression() {
         run.enter(run.available()[0]).unwrap();run.win_combat().unwrap();
         run.hp=27;run.flasks=1;
         let gold=run.gold;let loot=run.claimed_items.clone();
-        if act==2 {run.claim_reward(0).unwrap();} else {run.decline_reward().unwrap();}
+        // 最后一幕的 Boss 直接登顶，没有三选一
+        if act==2 {run.claim_reward(0).unwrap();} else if act<3 {run.decline_reward().unwrap();} else {assert!(run.decline_reward().is_err());}
         assert_eq!(run.gold,gold);
         assert_eq!(run.initial_seed,Some(26));
         assert_eq!(run.completed_nodes,u32::from(act)*run.floors() as u32);

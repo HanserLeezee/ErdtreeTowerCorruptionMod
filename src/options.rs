@@ -7,6 +7,7 @@
 //!   key.archive=J        旅程档案
 //!   key.build=C          构筑面板（地图界面）
 //!   key.debug=F8         调试菜单
+//!   sfx=70               界面音效音量（0–100，0 为关闭）
 
 pub const FILE: &str = "tower-options.ini";
 
@@ -55,11 +56,13 @@ pub struct Options {
     pub debug: bool,
     pub dlc: crate::dlc::Mode,
     keys: [&'static str; 5],
+    /// 界面音效音量（0–100）
+    pub sfx: u8,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { debug: false, dlc: crate::dlc::Mode::Full, keys: Hotkey::ALL.map(Hotkey::default_key) }
+        Options { debug: false, dlc: crate::dlc::Mode::Full, keys: Hotkey::ALL.map(Hotkey::default_key), sfx: 70 }
     }
 }
 
@@ -84,6 +87,10 @@ pub fn parse(text: &str) -> Options {
         let (name, value) = (name.trim().to_ascii_lowercase(), value.trim());
         if name == "debug" {
             options.debug = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes");
+        } else if name == "sfx" {
+            if let Ok(volume) = value.trim().parse::<u32>() {
+                options.sfx = volume.min(100) as u8;
+            }
         } else if name == "dlc" {
             if let Some(mode) = crate::dlc::Mode::parse(value) {
                 options.dlc = mode;

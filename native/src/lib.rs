@@ -58,6 +58,8 @@ mod archive_ui;
 mod cosmetic_unlocks;
 mod transmog;
 mod transmog_ui;
+mod archive_style;
+mod weapon_ui;
 mod class_ui;
 mod legacy;
 mod law_ui;
@@ -101,6 +103,7 @@ mod scenery;
 mod spirit_tune;
 mod dual_bosses;
 mod affix_stack;
+mod sfx;
 
 #[derive(Clone, Copy)]
 struct Snapshot {
@@ -293,6 +296,23 @@ impl ImguiRenderLoop for TowerPreview {
                 }])));
             },
             Err(error)=>log(format!("Title font missing: {error}")),
+        }
+        // 结算页黑体：思源黑体粗体的子集（约一千字），正文按 26 像素加载；大号数字与评级字母另按 220 像素只加载这几个字
+        match std::fs::read(fancy_text::button_font_path()) {
+            Ok(font)=>{
+                fancy_text::set_button_font(fancy_text::TitleFont(ctx.fonts().add_font(&[FontSource::TtfData {
+                    data: &font,
+                    size_pixels: fancy_text::SANS_PIXELS,
+                    // 字体里只有子集里的字，按全范围加载也只栅格化这些字
+                    config: Some(FontConfig {glyph_ranges: FontGlyphRanges::chinese_full(),..Default::default()}),
+                }])));
+                fancy_text::set_display_font(fancy_text::TitleFont(ctx.fonts().add_font(&[FontSource::TtfData {
+                    data: &font,
+                    size_pixels: 220.0,
+                    config: Some(FontConfig {glyph_ranges: FontGlyphRanges::from_slice(&fancy_text::DISPLAY_CHARS),..Default::default()}),
+                }])));
+            },
+            Err(error)=>log(format!("Summary font missing: {error}")),
         }
     }
 

@@ -1689,8 +1689,6 @@ fn tick_locked() {
         return;
     }
     let arena=state.view.run.as_ref().map_or_else(||super::arenas::for_act(1),|r|super::arenas::for_run(r,state.party.is_some()));
-    // 主题幕：进竞技场时按主题切换时间
-    if state.travel.is_some()&&block==arena.block {if let Some(run)=state.view.run.as_ref(){super::scenery::arena_time(run);}}
     if state.travel.is_some()&&block==arena.block&&!game.warp_requested&&!player_dead&&arena.below_floor(player.block_position.y) {
         let error="门外地面未就绪，已退回安全点，未消耗节点。".to_string();
         if super::native_talk::set_flag(45007994,true).is_ok() {
@@ -1769,7 +1767,9 @@ fn tick_locked() {
         let touched=state.reward_portal.armed()&&super::native_talk::flag(45020971).unwrap_or(false);
         let entered=state.party.as_mut().is_some_and(|p|touched&&!p.rewards&&!std::mem::replace(&mut p.portal,true));
         let portal_used=state.party.as_ref().map_or(touched,|p|p.rewards);
-        if entered {report(&mut state,"已进入传送门，等待全部队友进入后一起领取奖励。");}
+        // 最后一幕的 Boss：没有三选一，传送门直接结束旅程
+        let last=matches!(next.phase,Phase::Combat{id} if next.act>=3&&next.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Boss));
+        if entered {report(&mut state,if last{"已进入传送门，等待全部队友进入后一起结束旅程。"}else{"已进入传送门，等待全部队友进入后一起领取奖励。"});}
         match state.reward_portal.poll(started.elapsed(), player_dead, portal_used) {
             ResultState::Waiting => {
                 state.reward_wait = Some((started, next));
@@ -1785,7 +1785,7 @@ fn tick_locked() {
                     .and_then(|_|super::native_talk::set_flag(45020970,true))
                     .and_then(|_|super::native_talk::set_flag(45020972,true));
                 state.reward_wait = Some((started, next));
-                report(&mut state, portal.err().unwrap_or_else(|| "传送门已激活，交互后领取奖励。".into()));
+                report(&mut state, portal.err().unwrap_or_else(|| if last {"传送门已激活，交互后结束旅程。"}else{"传送门已激活，交互后领取奖励。"}.into()));
                 return;
             }
             ResultState::Ready => {

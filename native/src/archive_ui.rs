@@ -1,5 +1,5 @@
 // 旅程档案：往期旅程（最近的整局记录，可打开当时的结算页）、图鉴（誓约、余烬、Boss、词条的解锁情况）
-// 与职业传承（局外养成：每个职业单独的熟练度，升级解锁可替换祖灵角的开局护符）。
+// 与职业传承（局外养成：每个职业单独的熟练度，升级解锁可替换默认开局护符的护符）。
 // 键盘 J、路线图边栏“档案”、苦难律法界面的按钮或手柄 View 键打开；Q / E 或 LB / RB 切换分页。
 use erdtree_tower::{Class,contracts::Kind,embers::Ember,journal::{self,Codex,Outcome,Record},legacy::{self as heritage,Legacy}};
 use hudhook::imgui::{Condition,ImColor32,Key,StyleVar,TextureId,Ui,WindowFlags};
@@ -454,13 +454,9 @@ fn titles(ui:&Ui,archive:&mut Archive,moved:bool,ready:bool,s:f32,ox:f32,oy:f32)
     if let Some((notice,at))=&archive.notice {if ui.time()-at<3.0 {text(800.0,780.0,notice,GOLD,0.9,0.5);}}
 }
 /// 传承页的按键：职业列表上下切换职业，右移进入护符列表，上下选择、A 选用
-const WEAPON_GROUPS:[&str;8]=["剑与刀","槌与斧","长柄武器","其他近战","盾牌","施法工具","弓弩","幽影武器"];
-fn weapon_rows(group:usize)->Vec<usize> {
-    erdtree_tower::weapon_training::TYPES.iter().enumerate().filter(|(_, (kind,_))|match group {
-        0=>(1..=10).contains(kind),1=>(11..=15).contains(kind),2=>(16..=19).contains(kind),3=>(20..=24).contains(kind),
-        4=>(30..=32).contains(kind),5=>(33..=34).contains(kind),6=>(40..=44).contains(kind),_=>(60..=68).contains(kind),
-    }).map(|(i,_)|i+1).collect()
-}
+use crate::weapon_ui::{WeaponAction,weapon_rows};
+#[cfg(test)]
+use crate::weapon_ui::WEAPON_GROUPS;
 fn set_weapon_group(archive:&mut Archive,group:usize) {archive.weapon_group=group;archive.weapon_row=weapon_rows(group)[0];}
 fn train_weapon(archive:&mut Archive,upgrade:bool,now:f64) {
     let Some((owner,_))=archive.legacy.as_ref() else {archive.notice=Some(("请先载入角色".into(),now));return;};
@@ -478,70 +474,18 @@ fn train_weapon(archive:&mut Archive,upgrade:bool,now:f64) {
 }
 #[allow(clippy::too_many_arguments)]
 fn weapons(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureId>,ready:bool,s:f32,ox:f32,oy:f32) {
-    use erdtree_tower::weapon_training::{TYPES,weight_percent};
-    let p=|x:f32,y:f32|[ox+x*s,oy+y*s];
-    let text=|x:f32,y:f32,value:&str,color:[f32;4],scale:f32| {
-        ui.set_window_font_scale(scale*s);ui.set_cursor_screen_pos(p(x,y));ui.text_colored(color,value);
+    let Some((_,data))=archive.legacy.clone() else {
+        ui.set_window_font_scale(s);ui.set_cursor_screen_pos([ox+600.0*s,oy+430.0*s]);ui.text_colored(DIM,"载入角色后才能设置武器偏好");return;
     };
-    let Some((_,data))=archive.legacy.clone() else {text(600.0,430.0,"载入角色后才能设置武器偏好",DIM,1.0);return;};
-    let enabled=data.training.preferences().len();
-    text(76.0,178.0,"兵 器 研 习",GOLD,1.45);
-    text(300.0,188.0,"投资你的打法，让心仪的武器更常出现",MUTED,0.95);
-    text(1160.0,184.0,&format!("传承点  {}",data.training_balance()),GOLD,1.2);
-    text(76.0,234.0,"武器分类",DIM,0.85);
-    for (group,name) in WEAPON_GROUPS.iter().enumerate() {
-        let y=274.0+group as f32*55.0;
-        ui.set_cursor_screen_pos(p(64.0,y));ui.set_window_font_scale(s);
-        if ui.invisible_button(format!("weapon-group-{group}"),[206.0*s,45.0*s])&&ready {set_weapon_group(archive,group);}
-        let active=archive.weapon_group==group;let hover=ui.is_item_hovered();
-        let draw=ui.get_window_draw_list();
-        if active||hover {draw.add_rect(p(64.0,y),p(270.0,y+45.0),ImColor32::from_rgba(66,53,31,if active{210}else{100})).filled(true).build();}
-        if active {draw.add_rect(p(64.0,y+6.0),p(67.0,y+39.0),ImColor32::from_rgba(231,197,126,255)).filled(true).build();}
-        drop(draw);text(82.0,y+10.0,name,if active{GOLD}else{MUTED},1.0);
-        text(235.0,y+12.0,&weapon_rows(group).len().to_string(),DIM,0.85);
+    let now=ui.time();
+    let notice=archive.notice.as_ref().filter(|(_,at)|now-at<4.0).map(|(message,_)|message.clone());
+    match crate::weapon_ui::draw(ui,&data,archive.weapon_group,archive.weapon_row,notice.as_deref(),icon,ready,s,ox,oy) {
+        Some(WeaponAction::Group(group))=>set_weapon_group(archive,group),
+        Some(WeaponAction::Row(row))=>archive.weapon_row=row,
+        Some(WeaponAction::Upgrade)=>train_weapon(archive,true,now),
+        Some(WeaponAction::Toggle)=>train_weapon(archive,false,now),
+        None=>{},
     }
-    text(76.0,748.0,&format!("已启用 {enabled} 类偏好"),GOLD,0.9);
-    text(300.0,235.0,WEAPON_GROUPS[archive.weapon_group],WHITE,1.1);
-    text(750.0,239.0,"金色圆点表示已启用",MUTED,0.8);
-    for (slot,row) in weapon_rows(archive.weapon_group).into_iter().enumerate() {
-        let (kind,name)=TYPES[row-1];let level=data.training.level_for(kind);let active=data.training.enabled.contains(&kind)&&level>0;
-        let (x,y)=(300.0+(slot%3) as f32*256.0,277.0+(slot/3) as f32*126.0);
-        ui.set_cursor_screen_pos(p(x,y));ui.set_window_font_scale(s);
-        if ui.invisible_button(format!("weapon-pref-{row}"),[240.0*s,110.0*s])&&ready {archive.weapon_row=row;}
-        let focus=archive.weapon_row==row;let hover=ui.is_item_hovered();
-        let draw=ui.get_window_draw_list();
-        draw.add_rect(p(x,y),p(x+240.0,y+110.0),if focus {ImColor32::from_rgba(57,47,30,245)}else{ImColor32::from_rgba(17,19,19,235)}).filled(true).rounding(5.0*s).build();
-        draw.add_rect(p(x,y),p(x+240.0,y+110.0),if focus {ImColor32::from_rgba(228,197,139,250)}else if hover {ImColor32::from_rgba(160,147,120,200)}else{ImColor32::from_rgba(90,88,76,120)}).rounding(5.0*s).thickness(if focus{1.8*s}else{s}).build();
-        if let Some(texture)=crate::reward_ui::weapon_type_icon(kind).and_then(&mut *icon) {draw.add_image(texture,p(x+8.0,y+12.0),p(x+86.0,y+90.0)).build();}
-        if active {draw.add_circle(p(x+223.0,y+17.0),3.0*s,ImColor32::from_rgba(242,203,118,255)).filled(true).build();}
-        for pip in 0..5 {draw.add_rect(p(x+98.0+pip as f32*24.0,y+83.0),p(x+116.0+pip as f32*24.0,y+87.0),if pip<level {ImColor32::from_rgba(225,188,113,255)}else{ImColor32::from_rgba(76,73,63,230)}).filled(true).build();}
-        drop(draw);
-        text(x+98.0,y+15.0,name,WHITE,1.03);
-        text(x+98.0,y+49.0,&format!("{:.1}×  /  Lv {level}",weight_percent(level) as f32/100.0),if active{GOLD}else{MUTED},0.86);
-    }
-    let (kind,name)=TYPES[archive.weapon_row.saturating_sub(1).min(TYPES.len()-1)];
-    let level=data.training.level_for(kind);let active=data.training.enabled.contains(&kind);let cost=data.training.cost_for(kind);
-    panel(&ui.get_window_draw_list(),p(1100.0,236.0),p(1530.0,800.0),s);
-    if let Some(texture)=crate::reward_ui::weapon_type_icon(kind).and_then(&mut *icon) {ui.get_window_draw_list().add_image(texture,p(1142.0,260.0),p(1242.0,360.0)).build();}
-    text(1260.0,274.0,name,GOLD,1.5);
-    text(1260.0,318.0,&format!("研习等级 {level} / 5"),MUTED,0.92);
-    text(1132.0,386.0,"抽取权重",MUTED,0.9);
-    text(1132.0,420.0,&format!("{:.1}×",weight_percent(level) as f32/100.0),WHITE,2.1);
-    if level<5 {text(1270.0,434.0,&format!("→  {:.1}×",weight_percent(level+1) as f32/100.0),GOLD,1.3);}
-    else {text(1270.0,434.0,"研习已满级",GOLD,1.0);}
-    wrapped(ui,p(1132.0,488.0),ox+1498.0*s,"只影响武器类型的相对出率，不提高金紫品质。每类独立升级，下一局生效。",MUTED,0.88*s);
-    let can_upgrade=cost.is_some_and(|c|data.training_balance()>=c);
-    let label=match cost {None=>"研习已满级".to_string(),Some(c) if !can_upgrade=>format!("传承点不足 · 需要 {c}"),Some(c)=>format!("提升研习  ·  {c} 传承点")};
-    ui.set_cursor_screen_pos(p(1132.0,584.0));ui.set_window_font_scale(s);
-    if ui.invisible_button("weapon-training-upgrade",[366.0*s,58.0*s])&&ready&&can_upgrade {train_weapon(archive,true,ui.time());}
-    let draw=ui.get_window_draw_list();
-    draw.add_rect(p(1132.0,584.0),p(1498.0,642.0),if can_upgrade{ImColor32::from_rgba(161,124,59,235)}else{ImColor32::from_rgba(43,41,35,220)}).filled(true).rounding(4.0*s).build();drop(draw);
-    text(1152.0,601.0,&label,if can_upgrade{WHITE}else{DIM},0.98);
-    ui.set_cursor_screen_pos(p(1132.0,658.0));ui.set_window_font_scale(s);
-    if ui.invisible_button("weapon-training-toggle",[366.0*s,44.0*s])&&ready&&level>0 {train_weapon(archive,false,ui.time());}
-    text(1152.0,668.0,if level==0{"升级后即可启用偏好"}else if active{"● 已启用偏好   ·   点击关闭"}else{"启用此类偏好   [Enter / A]"},if active&&level>0{GOLD}else{MUTED},0.92);
-    if let Some((message,at))=&archive.notice&&ui.time()-at<4.0 {wrapped(ui,p(1132.0,731.0),ox+1498.0*s,message,BOON,0.86*s);}
-    else {wrapped(ui,p(1132.0,731.0),ox+1498.0*s,"完成旅程获得传承点，花费不扣职业经验。",DIM,0.8*s);}
 }
 fn legacy_keys(archive:&mut Archive,pressed:&dyn Fn(&[Key])->bool,now:f64) {
     if archive.legacy.is_none() {return;}
@@ -609,7 +553,7 @@ fn legacy(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureId
     text(1500.0,196.0,"下一局的开局护符",MUTED,0.84,1.0);
     text(1500.0,224.0,&crate::reward_ui::talisman_description(chosen).0,GOLD,1.2,1.0);
     if let Some((message,at))=&archive.notice && now-at<2.5 {text(1500.0,264.0,message,BOON,0.84,1.0);}
-    // 可选的开局护符：祖灵角与四枚按熟练度解锁的护符
+    // 可选的开局护符：职业默认护符与四枚按熟练度解锁的护符
     for (i,talisman) in heritage::talismans(class).into_iter().enumerate() {
         let y=316.0+i as f32*96.0;let (min,max)=(p(450.0,y),p(1530.0,y+88.0));
         ui.set_cursor_screen_pos(min);ui.set_window_font_scale(s);

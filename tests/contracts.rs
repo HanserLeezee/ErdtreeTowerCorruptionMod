@@ -127,7 +127,7 @@ fn act_changes_replace_contract_and_selection_blocks_travel() {
         for _ in 0..run.floors() {
             let id=run.available()[0];run.enter(id).unwrap();
             match run.nodes[id].kind {
-                NodeKind::Monster|NodeKind::Elite|NodeKind::Boss=>{run.win_combat().unwrap();run.decline_reward().unwrap();},
+                NodeKind::Monster|NodeKind::Elite|NodeKind::Boss=>{run.win_combat().unwrap();if matches!(run.phase,erdtree_tower::Phase::Reward{..}){run.decline_reward().unwrap();}},
                 NodeKind::Camp=>run.leave_camp().unwrap(),NodeKind::Shop=>run.leave_shop().unwrap(),
                 NodeKind::Chest=>run.finish_chest().unwrap(),NodeKind::Event=>{run.resolve_event(false).unwrap();},
             }

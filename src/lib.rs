@@ -27,6 +27,7 @@ pub mod law;
 pub mod debug;
 pub mod merchant;
 pub mod journal;
+pub mod score;
 pub mod legacy;
 pub mod weapon_training;
 pub mod transmog;
@@ -849,6 +850,8 @@ impl Run {
         }
         self.checkpoint = None;
         if matches!(kind,NodeKind::Elite|NodeKind::Boss) {self.ember_stacks.gain(&self.embers,embers::Gain::Slain);}
+        // 最后一幕的 Boss：直接登顶，不再三选一
+        if kind==NodeKind::Boss&&self.act>=3 {self.finish(id);return Ok(());}
         self.phase = Phase::Reward {
             id,
             offers: self.offers(id),

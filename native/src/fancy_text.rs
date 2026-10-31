@@ -33,6 +33,23 @@ unsafe impl Sync for TitleFont {}
 static TITLE_FONT:std::sync::Mutex<Option<TitleFont>>=std::sync::Mutex::new(None);
 pub fn set_title_font(font:TitleFont) {if let Ok(mut slot)=TITLE_FONT.lock(){*slot=Some(font);}}
 pub fn title_font()->Option<hudhook::imgui::FontId> {TITLE_FONT.lock().ok().and_then(|f|*f).map(|f|f.0)}
+/// 结算页黑体：思源黑体粗体的子集（scene-builder/button_font.py），结算页的文字、按钮与大号数字用
+pub fn button_font_path()->std::path::PathBuf {crate::LOG_PATH.with_file_name("scene-assets").join("fonts").join("TowerSans-Bold.otf")}
+/// 正文字号的黑体（26 像素）
+pub const SANS_PIXELS:f32=26.0;
+static BUTTON_FONT:std::sync::Mutex<Option<TitleFont>>=std::sync::Mutex::new(None);
+pub fn set_button_font(font:TitleFont) {if let Ok(mut slot)=BUTTON_FONT.lock(){*slot=Some(font);}}
+pub fn button_font()->Option<hudhook::imgui::FontId> {BUTTON_FONT.lock().ok().and_then(|f|*f).map(|f|f.0)}
+/// 大号数字与评级字母（同一份黑体按 220 像素只加载这几个字）
+pub const DISPLAY_CHARS:[u32;15]=[0x30,0x39,0x41,0x44,0x53,0x53,0x2B,0x2B,0x2E,0x2E,0xD7,0xD7,0x20,0x20,0];
+static DISPLAY_FONT:std::sync::Mutex<Option<TitleFont>>=std::sync::Mutex::new(None);
+pub fn set_display_font(font:TitleFont) {if let Ok(mut slot)=DISPLAY_FONT.lock(){*slot=Some(font);}}
+pub fn display_font()->Option<hudhook::imgui::FontId> {DISPLAY_FONT.lock().ok().and_then(|f|*f).map(|f|f.0)}
+/// 黑体子集里有的字（ui-sans-glyphs.txt；ASCII 都有）
+static SANS_GLYPHS:std::sync::LazyLock<std::collections::HashSet<char>>=std::sync::LazyLock::new(||
+    std::fs::read_to_string(button_font_path().with_file_name("ui-sans-glyphs.txt")).unwrap_or_default().chars().collect());
+/// 黑体已加载，且这段文字的每个字黑体里都有（否则用宋体画，免得出现问号）
+pub fn sans_covers(text:&str)->bool {button_font().is_some()&&text.chars().all(|c|c.is_ascii()||c=='\u{3000}'||SANS_GLYPHS.contains(&c))}
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum Effect {
     /// 不加动态效果，只有描边（与特效文字并排时保持一致的外观）

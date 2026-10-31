@@ -4,6 +4,8 @@ The law screen and the build panel draw icon N from scene-assets/law-art/icons.r
 (N % 5, N // 5). src/law.rs Node::art holds N; the order below is the art index. Each source is trimmed to its visible pixels and
 centred with a small margin, so icons of different framing look the same size. Usage:
 python scene-builder/law_icons.py [--source art-source/law-icons] [--output scene-assets/law-art]
+--style line packs the minimal white line icons (art-source/law-icons-line, one generated sheet sliced per icon, prompt in
+prompt.txt) into scene-assets/law-art/icons-line.rgba with the same layout; the run summary page draws those.
 """
 import argparse
 from pathlib import Path
@@ -27,13 +29,13 @@ def fit(image):
     return square.resize((inner, inner), Image.LANCZOS)
 
 
-def build(source, output):
+def build(source, output, file_name='icons.rgba'):
     atlas = Image.new('RGBA', (CELL * COLUMNS, CELL * ROWS))
     for index, name in enumerate(ICONS):
         icon = fit(Image.open(source / f'{name}.png'))
         atlas.alpha_composite(icon, ((index % COLUMNS) * CELL + 6, (index // COLUMNS) * CELL + 6))
     output.mkdir(parents=True, exist_ok=True)
-    (output / 'icons.rgba').write_bytes(atlas.tobytes())
+    (output / file_name).write_bytes(atlas.tobytes())
     preview = Image.new('RGBA', atlas.size, (24, 20, 16, 255)); preview.alpha_composite(atlas)
     return atlas, preview
 
@@ -41,11 +43,14 @@ def build(source, output):
 if __name__ == '__main__':
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=Path, default=root / 'art-source/law-icons')
+    parser.add_argument('--style', choices=['art', 'line'], default='art')
+    parser.add_argument('--source', type=Path)
     parser.add_argument('--output', type=Path, default=root / 'scene-assets/law-art')
     parser.add_argument('--preview', type=Path)
     args = parser.parse_args()
-    atlas, preview = build(args.source, args.output)
+    source = args.source or root / ('art-source/law-icons-line' if args.style == 'line' else 'art-source/law-icons')
+    file_name = 'icons-line.rgba' if args.style == 'line' else 'icons.rgba'
+    atlas, preview = build(source, args.output, file_name)
     if args.preview:
         preview.convert('RGB').save(args.preview)
-    print(f'Packed {len(ICONS)} law icons into {args.output / "icons.rgba"} ({atlas.width}x{atlas.height})')
+    print(f'Packed {len(ICONS)} law icons into {args.output / file_name} ({atlas.width}x{atlas.height})')

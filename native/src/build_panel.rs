@@ -187,7 +187,7 @@ pub fn draw(ui: &Ui, run: &Run, view: &View, icon: &mut dyn FnMut(u32) -> Option
                     let min = [start[0] + (i % per_row) as f32 * (side + gap), y + (i / per_row) as f32 * (side + gap)];let max = [min[0] + side, min[1] + side];
                     let draw = ui.get_window_draw_list();
                     draw.add_rect(min, max, ImColor32::from_rgba(0, 0, 0, 150)).filled(true).rounding(3.0 * s).build();
-                    crate::law_art::draw(&draw, node.art, [min[0] + 2.0 * s, min[1] + 2.0 * s], [max[0] - 2.0 * s, max[1] - 2.0 * s], 255);
+                    crate::law_art::draw_line(&draw, node.art, [min[0] + 5.0 * s, min[1] + 5.0 * s], [max[0] - 5.0 * s, max[1] - 5.0 * s], 240);
                     draw.add_rect(min, max, ImColor32::from_rgba(171, 143, 87, 110)).rounding(3.0 * s).build();drop(draw);
                     if ui.is_mouse_hovering_rect(min, max) {ui.set_window_font_scale(s);ui.tooltip_text(format!("{}\n{}", node.name, node.effect));}
                 }
