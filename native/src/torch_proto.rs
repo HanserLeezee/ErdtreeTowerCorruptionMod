@@ -162,8 +162,9 @@ fn spawn_bullet(chr: &ChrIns, bullet: i32, magic: i32) -> Result<(), String> {
     let yaw = 2.0 * q.1.atan2(q.3);
     let forward = [-yaw.sin(), 0.0, -yaw.cos()];
     let right = [forward[2], 0.0, -forward[0]];
+    // 从人物前方 1.5 米处放出（像从手上放出那样），不贴在身体里：贴身生成的雾类判定会一直残留在身上
     let p = chr.modules.physics.position;
-    for (offset, row) in [(0x50, [right[0], right[1], right[2], 0.0]), (0x60, [0.0, 1.0, 0.0, 0.0]), (0x70, [forward[0], forward[1], forward[2], 0.0]), (0x80, [p.0, p.1 + 1.2, p.2, 1.0])] {
+    for (offset, row) in [(0x50, [right[0], right[1], right[2], 0.0]), (0x60, [0.0, 1.0, 0.0, 0.0]), (0x70, [forward[0], forward[1], forward[2], 0.0]), (0x80, [p.0 + forward[0] * 1.5, p.1 + 1.2, p.2 + forward[2] * 1.5, 1.0])] {
         for (i, v) in row.into_iter().enumerate() { data.0[offset + i * 4..offset + i * 4 + 4].copy_from_slice(&f32::to_le_bytes(v)); }
     }
     let spawn: Spawn = unsafe { std::mem::transmute(function) };

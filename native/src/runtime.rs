@@ -2290,6 +2290,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
     let mut reward_ash=-1;
     let mut sacred_tear=false;
     let mut upgrade_stone=false;
+    let mut torch_reward=false;
     let mut camp_refill=None;
     match action {
         Action::Camp(choice) => {
@@ -2302,6 +2303,7 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
                 if let Some(erdtree_tower::Reward::Item(id))=offers.get(index){item_reward=Some(*id);reward_ash=super::random_ashes::preview(&old,node,index,*id);}
                 sacred_tear=matches!(offers.get(index),Some(erdtree_tower::Reward::SacredTear));
                 upgrade_stone=matches!(offers.get(index),Some(erdtree_tower::Reward::UpgradeStone));
+                torch_reward=matches!(offers.get(index),Some(erdtree_tower::Reward::Torch(_)));
             }
             next.claim_reward(index)?;
         },
@@ -2347,6 +2349,8 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         super::blessings::Blessings::deliver(unsafe {player.player_game_data.as_mut()}, &mut next)?;
     }
     if let Some(id)=item_reward {super::items::give_reward_with_ash(unsafe {player.player_game_data.as_mut()},id,reward_ash)?;}
+    // [HansFix] 火把奖励：领取时随机出来的那把（最后一把）发到背包
+    if torch_reward {if let Some(torch)=next.torches.last().cloned() {super::torch_proto::give(&torch,&next.torches)?;}}
     if sacred_tear {super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR)?;}
     if upgrade_stone {super::items::give_stack(unsafe {player.player_game_data.as_mut()},super::smith::VOUCHER)?;}
     if next.flask_bonus!=old.flask_bonus {

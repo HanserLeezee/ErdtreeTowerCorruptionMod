@@ -463,6 +463,7 @@ impl Panel {
                     Reward::MemorySlot=>("增益","记忆扩容".into(),"记忆栏位 +1\n魔法与祷告共用，本局生效".into()),
                     Reward::StarStream=>("增益","星流引导".into(),"彗星亚兹勒随视角左右瞄准\n光束保持水平".into()),
                     Reward::Ember(ember)=>("余烬",ember.name().into(),format!("{}\n本局生效",ember.effect())),
+                    Reward::Torch(_)=>("火把","火把".into(),"随机 1~5 项补正、3 个词条\n和一个法术战技（举起 10 秒释放）\n可在铁匠处合成、合并进其他武器".into()),
                 };
                 let tier=quality(run,reward);
                 // 余烬：卡面与名字按余烬的品质着色，类别写成“余烬 · 品质”，外加一圈余火色的外框，和普通奖励区分开

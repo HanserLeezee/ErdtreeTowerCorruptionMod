@@ -132,8 +132,8 @@ impl Menu {
         // [HansFix] 火把战技原型
         ui.text_colored([0.95,0.65,0.30,1.0],"火把（测试）");
         if ui.small_button("获得随机火把##torch-give") {send(Command::TorchGive);}
-        ui.same_line();if ui.small_button("获得全部战技的火把##torch-all") {send(Command::TorchAll);}
-        ui.same_line();let mut fast=crate::torch_proto::fast();if ui.checkbox("举起 1 秒释放##torch-fast",&mut fast) {send(Command::TorchFast(fast));}
+        if ui.small_button("获得全部战技的火把（37 把）##torch-all") {send(Command::TorchAll);}
+        let mut fast=crate::torch_proto::fast();if ui.checkbox("举起 1 秒释放##torch-fast",&mut fast) {send(Command::TorchFast(fast));}
         ui.separator();
         ui.text("跳到节点（路线图上会变成可选）");
         ui.child_window("##debug-nodes").size([0.0,220.0]).build(|| {

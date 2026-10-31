@@ -417,6 +417,7 @@ pub(crate) fn reward_description(run: &Run, reward: &Reward) -> String {
         Reward::TalismanBuff(id)=>format!("{}：直接生效，不占护符栏位，持续本局",erdtree_tower::rewards::lookup(0x20000000|id).map_or("护符效果",|i|i.name)),
         Reward::SacredTear=>"圣杯滴露 ×1：交给服务 NPC 提升红、蓝瓶恢复量".into(),
         Reward::UpgradeStone=>"强化石 ×1：在营地铁匠或商店强化一次武器（也可升阶护符、调灵骨灰）；可保留".into(),
+        Reward::Torch(_)=>"火把：随机补正、词条与法术战技；举起 10 秒释放战技".into(),
         Reward::Item(id)=>erdtree_tower::rewards::lookup(*id).map_or("未知奖励".into(),|item|
             format!("{}：{}（领取实物，按原版要求装备或记忆）",item.kind.label(),item.name)),
     }

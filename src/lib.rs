@@ -170,6 +170,8 @@ pub enum Reward {
     Ember(embers::Ember),
     /// 强化石（营地强化凭证 7500100）：在营地铁匠或商店强化一次武器（也可升阶护符、调灵骨灰）
     UpgradeStone,
+    /// [HansFix] 火把（品质 0–3）：领取时才随机补正、词条与法术战技，占用一个火把位
+    Torch(u8),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1184,6 +1186,31 @@ impl Run {
     #[cfg(test)]
     pub(crate) fn offers_for_test(&self,id:usize)->Vec<Reward> {self.offers(id)}
     fn offers(&self, id: usize) -> Vec<Reward> {
+        let mut offers=self.offers_base(id);
+        self.torch_offer(id,&mut offers);
+        offers
+    }
+    /// [HansFix] 火把出现在战斗关卡的奖励页里：堕落模式每页 30% 把其中一张换成火把；
+    /// 普通模式当作普通武器：每张武器卡 3% 换成火把
+    fn torch_offer(&self,id:usize,offers:&mut [Reward]) {
+        #[cfg(test)] if !torches::TEST_OFFERS.with(|t|t.get()) {return;}
+        let Some(node)=self.nodes.get(id) else{return};
+        if offers.is_empty()||!matches!(node.kind,NodeKind::Monster|NodeKind::Elite|NodeKind::Boss) {return;}
+        let roll=|salt:u64|mix(self.reward_seed()^(id as u64).wrapping_mul(7919)^salt);
+        if self.wander {
+            let page=self.fallen.as_ref().filter(|_|Some(id)==self.fallen_id()).map_or(0,|f|u64::from(f.page));
+            if roll(0x70c4_0030^page)%100>=30 {return;}
+            let quality=if Some(id)==self.fallen_id() {3} else if self.red_combat(id).is_some() {2} else {match node.kind {NodeKind::Monster=>1,NodeKind::Elite=>2,_=>3}};
+            let slot=(roll(0x70c4_5107^page)%offers.len() as u64) as usize;
+            offers[slot]=Reward::Torch(quality);
+        } else {
+            for (slot,reward) in offers.iter_mut().enumerate() {
+                let weapon=matches!(reward,Reward::Item(item) if rewards::lookup(*item).is_some_and(|i|i.kind==rewards::ItemKind::Weapon));
+                if weapon&&roll(0x70c4_0003^slot as u64)%100<3 {*reward=Reward::Torch(1);}
+            }
+        }
+    }
+    fn offers_base(&self, id: usize) -> Vec<Reward> {
         // [HansFix] 堕落首领：两页三件“两个词条 ×2、一个 ×(-2)”的传说装备
         if Some(id)==self.fallen_id() {let page=self.fallen.as_ref().map_or(0,|f|f.page);return if page>=2 {vec![]} else {descent::fallen_offers(self,id,page)};}
         // [HansFix] 红色战斗关卡：精英结算，选项数量随向下次数增加
@@ -1263,6 +1290,7 @@ impl Run {
                 self.star_stream=true;
             },
             Reward::SacredTear|Reward::UpgradeStone=>{},
+            Reward::Torch(quality)=>{self.new_torch(quality,0x7e_a7)?;},
             Reward::Ember(ember)=>{
                 if !self.ember_rewards||self.embers.contains(&ember){return Err("余烬已获得或无效".into());}
                 self.embers.push(ember);
@@ -1326,7 +1354,7 @@ impl Run {
     }
     /// 精英结算的奖励页（不带向下规则），红色关卡在它的基础上增减选项
     fn elite_page(&self,id:usize)->Vec<Reward> {
-        let mut elite=self.clone();elite.nodes[id].kind=NodeKind::Elite;elite.wander=false;elite.offers(id)
+        let mut elite=self.clone();elite.nodes[id].kind=NodeKind::Elite;elite.wander=false;elite.offers_base(id)
     }
     /// 红色关卡奖励：精英奖励的装备、额外一件（含魔法与祷告）、护符效果、圣杯滴露，按向下次数取前 1–4 个
     fn descent_offers(&self,id:usize,level:u32)->Vec<Reward> {

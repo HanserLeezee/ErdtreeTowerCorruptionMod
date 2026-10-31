@@ -6,6 +6,11 @@
 use std::sync::LazyLock;
 use serde::{Deserialize,Serialize};
 
+#[cfg(test)]
+thread_local! {
+    /// 测试：其他测试固定了奖励页内容，只在专门的测试里打开火把卡
+    pub static TEST_OFFERS:std::cell::Cell<bool>=const {std::cell::Cell::new(false)};
+}
 pub const SLOT_FIRST:u32=24800000;
 pub const SLOTS:u16=512;
 pub const GEM_FIRST:u32=990000;
@@ -145,5 +150,26 @@ mod tests {
         let slots:std::collections::HashSet<_>=run.torches.iter().map(|t|t.slot).collect();assert_eq!(slots.len(),40);
         assert_eq!(slot_of(24000000),None);
         assert_eq!(crate::Run::decode(&run.encode().unwrap()).unwrap(),run);
+    }
+}
+
+#[cfg(test)]
+mod offer_tests {
+    #[test]
+    fn fallen_mode_pages_offer_a_torch_about_a_third_of_the_time_and_claiming_it_rolls_one() {
+        super::TEST_OFFERS.with(|t|t.set(true));
+        let (mut pages,mut torches)=(0,0);
+        for seed in 0..300u64 {
+            let mut run=crate::Run::new(seed,crate::Class::Hero);run.wander=true;
+            let id=run.nodes.iter().position(|n|n.kind==crate::NodeKind::Monster).unwrap();
+            let offers=run.offers_for_test(id);pages+=1;
+            let n=offers.iter().filter(|r|matches!(r,crate::Reward::Torch(_))).count();assert!(n<=1);torches+=n;
+            if let Some(index)=offers.iter().position(|r|matches!(r,crate::Reward::Torch(_))) {
+                run.enter(id).unwrap();run.win_combat().unwrap();
+                let crate::Phase::Reward{ref offers,..}=run.phase else{panic!()};
+                if offers.get(index).is_some_and(|r|matches!(r,crate::Reward::Torch(_))) {run.claim_reward(index).unwrap();assert_eq!(run.torches.len(),1);}
+            }
+        }
+        assert!((60..=120).contains(&torches),"{torches} torches in {pages} pages");
     }
 }
