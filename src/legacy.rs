@@ -51,8 +51,18 @@ impl ClassLegacy {
 /// 一个角色存档下全部职业的传承
 #[derive(Clone,Debug,Default,PartialEq,Eq,Serialize,Deserialize)]
 #[serde(default)]
-pub struct Legacy {pub classes:Vec<(Class,ClassLegacy)>}
+pub struct Legacy {pub classes:Vec<(Class,ClassLegacy)>,pub training:crate::weapon_training::Training}
 impl Legacy {
+    pub fn training_balance(&self)->u32 {self.classes.iter().fold(0u32,|n,(_,c)|n.saturating_add(c.xp)).saturating_sub(self.training.spent())}
+    pub fn upgrade_training(&mut self,kind:u8)->Result<(),&'static str> {
+        if !crate::weapon_training::known(kind){return Err("无效的武器类型");}
+        let cost=self.training.cost_for(kind).ok_or("此类武器偏好已满级")?;
+        if self.training_balance()<cost{return Err("传承点不足");}
+        if let Some(p)=self.training.levels.iter_mut().find(|p|p.kind==kind){p.level+=1;}
+        else {self.training.levels.push(crate::weapon_training::Preference{kind,level:1});}
+        if !self.training.enabled.contains(&kind){self.training.enabled.push(kind);}
+        Ok(())
+    }
     pub fn get(&self,class:Class)->ClassLegacy {self.classes.iter().find(|(c,_)|*c==class).map(|(_,l)|l.clone()).unwrap_or_default()}
     pub fn get_mut(&mut self,class:Class)->&mut ClassLegacy {
         if let Some(i)=self.classes.iter().position(|(c,_)|*c==class) {return &mut self.classes[i].1;}
@@ -64,7 +74,9 @@ impl Legacy {
         let Ok(value)=serde_json::from_str::<serde_json::Value>(text) else{return Self::default();};
         let classes=value.get("classes").and_then(|v|v.as_array()).map_or_else(Vec::new,|entries|entries.iter()
             .filter_map(|entry|serde_json::from_value::<(Class,ClassLegacy)>(entry.clone()).ok()).collect());
-        Self{classes}
+        let mut training=value.get("training").and_then(|v|serde_json::from_value::<crate::weapon_training::Training>(v.clone()).ok()).filter(|t|t.valid()).unwrap_or_default();
+        training.migrate();
+        Self{classes,training}
     }
     /// 记一局结算：给这一局的职业加经验，返回变化（调试旅程不计）
     pub fn award(&mut self,record:&Record)->Option<Gain> {

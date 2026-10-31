@@ -18,6 +18,12 @@ pub struct NativeTalk {
     enemies: Vec<i32>,
     talismans: Vec<super::smith::TalismanOffer>,
     talisman: Option<super::smith::TalismanOffer>,
+    spirit_session: Option<super::spirit_tune::Session>,
+}
+impl Drop for NativeTalk {
+    fn drop(&mut self) {
+        if self.spirit_session.is_some() {if let Err(error)=self.suspend(){super::log(format!("Spirit menu cleanup: {error}"));}}
+    }
 }
 #[derive(Clone,Copy,Default)]
 pub struct EventMenu {pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
@@ -39,10 +45,9 @@ pub const GAMBLE_NO_AFFIX:i32=9500151;
 pub const GAMBLE_NO_SIBLING:i32=9500152;
 pub const GAMBLE_FAILED:i32=9500153;
 pub const GAMBLE_USED:i32=9500154;
-/// 营地调灵（小红帽）：菜单项、没有可调灵的骨灰、完成（文字在 scene-builder/RecoveryText.cs）
+/// 营地调灵（小红帽）：菜单项与无可用骨灰提示（文字在 scene-builder/RecoveryText.cs）。
 pub const TUNE_OPTION:i32=9500155;
 pub const TUNE_NONE:i32=9500156;
-pub const TUNE_DONE:i32=9500157;
 impl EventMenu {
     fn confirmation(self,choice:i32)->Option<i32> {
         use erdtree_tower::regional_events::Trial;
@@ -84,7 +89,7 @@ impl CampInteraction {
 unsafe impl Send for NativeTalk {}
 impl NativeTalk {
     pub fn new(block: i32, handle: FieldInsHandle, service: u32) -> Self {
-        Self { script: TalkScript::new(BlockId::from(block), 950000000 + service as i32, handle), service, state: 0, menu_kind: 0, choice: None, flask_upgrade: None, camp: CampInteraction::default(),event_menu:Default::default(),event_request:None,event_confirmation:None,enemies:Vec::new(),talismans:Vec::new(),talisman:None }
+        Self { script: TalkScript::new(BlockId::from(block), 950000000 + service as i32, handle), service, state: 0, menu_kind: 0, choice: None, flask_upgrade: None, camp: CampInteraction::default(),event_menu:Default::default(),event_request:None,event_confirmation:None,enemies:Vec::new(),talismans:Vec::new(),talisman:None,spirit_session:None }
     }
     fn event(&mut self, id: i32, args: &[i32]) -> Result<(), String> {
         if id==48 {super::whetblades::sync_owned()?;}
@@ -104,7 +109,7 @@ impl NativeTalk {
     pub fn suspend(&mut self)->Result<(),String> {
         if !self.active(){return Ok(());}
         for event in [67,18,35] {self.event(event,&[])?;}
-        if self.state==20 {super::spirit_tune::close();let _=super::spirit_tune::take_result();}
+        self.spirit_session=None;
         self.state=0;self.choice=None;self.event_request=None;self.event_confirmation=None;
         Ok(())
     }
@@ -283,15 +288,16 @@ impl NativeTalk {
                     let (event,args,menu)=smith_menu(1).unwrap();
                     self.event(event,&args)?;self.menu_kind=menu;self.state=7;return Ok(());
                 }
-                // 调灵：与补瓶共用营地的一次服务；骨灰列表画在叠加层上，选定后在状态 20 执行
+                // 原生调灵每次消耗一块强化石。
                 if self.service==0&&choice==5 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                     let data=unsafe {player.player_game_data.as_ref()};
                     if super::smith::remaining(data)==0 {return self.dialog(9500012);}
                     let offers=super::spirit_tune::offers(data);
                     if offers.is_empty() {return self.dialog(TUNE_NONE);}
-                    super::log(format!("Spirit tuning menu: {offers:?}"));
-                    super::spirit_tune::open_picker(offers);self.state=20;return Ok(());
+                    let session=super::spirit_tune::prepare(data)?;
+                    self.event(super::spirit_tune::OPEN_EVENT,&[])?;
+                    self.spirit_session=Some(session);self.menu_kind=super::spirit_tune::MENU_KIND;self.state=7;return Ok(());
                 }
                 if choice != 1 && !(self.service == 0 && matches!(choice,2..=4)) { self.state = 0; return Ok(()); }
                 if self.service == 5 {
@@ -302,7 +308,7 @@ impl NativeTalk {
                 } else if self.service == 2 {
                     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.map_err(|_|"角色未加载")?;
                     super::native_shop::refresh_weapon_levels(unsafe {player.player_game_data.as_ref()})?;
-                    self.event(22, &[super::native_shop::GOODS as i32, (super::native_shop::GOODS+super::native_shop::STOCK_COUNT-1) as i32])?;
+                    self.event(22, &[super::native_shop::GOODS as i32, (super::native_shop::GOODS+super::native_shop::MAX_STOCK-1) as i32])?;
                     self.state = 3;
                 } else if self.service == 0 {
                     if !self.camp.request(choice) {return self.dialog(9500011);}
@@ -335,18 +341,10 @@ impl NativeTalk {
                 super::smith::upgrade_talisman(unsafe {player.player_game_data.as_mut()},offer.ok_or("护符选择已失效")?)?;
                 self.dialog(9500114)?;
             },
-            20 => if let Some(choice)=super::spirit_tune::take_result() {
-                self.state=0;
-                let Some(offer)=choice else{return Ok(());};
-                let player=unsafe {eldenring::cs::PlayerIns::local_player_mut()}.map_err(|_|"角色未加载")?;
-                if player.chr_ins.modules.data.hp<=0 {return Ok(());}
-                super::spirit_tune::tune(unsafe {player.player_game_data.as_mut()},offer)?;
-                self.dialog(TUNE_DONE)?;
-            },
             5 => self.state=6,
             6 => if self.query(25,&[23])? == 0 {self.state=0;},
             7 => self.state=8,
-            8 => if self.query(59,&[self.menu_kind,0])?==0 && self.query(58,&[0])?==0 {self.state=0;},
+            8 => if self.query(59,&[self.menu_kind,0])?==0 && self.query(58,&[0])?==0 {self.spirit_session=None;self.state=0;},
             9 => if self.query(58,&[0])?==0 {
                 if !dialog_confirmed(self.query(22,&[])?) {self.state=0;return Ok(());}
                 if self.query(47,&[3,super::rebirth::TEAR,2,0,0])?==0 {return self.dialog(22001002);}

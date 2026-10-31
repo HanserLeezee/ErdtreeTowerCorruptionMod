@@ -4,7 +4,11 @@ string[] modes=["advanced-affix-patch","advanced-affix-verify","affix-patch","af
 modes=modes.Append("party-dlc-patch").ToArray();
 modes=modes.Append("bout-patch").ToArray();
 modes=modes.Append("party-boss-model-sync").ToArray();
+modes=modes.Append("rennala-patch").ToArray();
+modes=modes.Append("merchant-patch").ToArray();
+modes=modes.Concat(new[]{"dormant-loading-patch","dormant-loading-test"}).ToArray();
 modes=modes.Append("aura-patch").ToArray();
+modes=modes.Append("countdown-patch").ToArray();
 modes=modes.Append("arena-build").ToArray();
 modes=modes.Append("affix-stack-patch").ToArray();
 modes=modes.Append("smith-stone-patch").ToArray();
@@ -12,12 +16,17 @@ modes=modes.Append("smith-stone-text").ToArray();
 modes=modes.Append("arena-candidates").ToArray();
 modes=modes.Append("stormveil-no-runes-patch").ToArray();
 modes=modes.Append("stormveil-sidewall-patch").ToArray();
+modes=modes.Append("title-texture-patch").ToArray();
 if(args.Length<4||!modes.Contains(args[3])||args.Length!=4||args.Take(3).Any(modes.Contains)){Console.Error.WriteLine("Usage: SceneBuilder <game> <output> <cache> <mode>"+(args.Length>3?" (rejected: "+string.Join(" ",args.Skip(3))+")":"")+"\nModes: "+string.Join(" ",modes));Environment.Exit(2);}
 var game=args[0];var output=args[1];var cache=args[2];
 if(args.Contains("personal-events-test")){PersonalEvents.Test();return;}
+if(args.Contains("dormant-loading-test")){DormantLoadingAssets.Test();return;}
 if(args.Contains("party-enemy-events-test")){PartyEnemyEvents.Test();return;}
 if(args.Contains("affix-text-test")){AffixTextFix.Test(cache);return;}
 Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(game,"oo2core_6_win64.dll"));
+if(args.Contains("title-texture-patch")){TitleTextureAssets.Build(game,output,cache);return;}
+if(args.Contains("merchant-patch")){MerchantAssets.Patch(cache,output);return;}
+if(args.Contains("dormant-loading-patch")){DormantLoadingAssets.Patch(cache,output);return;}
 if(args.Contains("stormveil-no-runes-patch")){StormveilRuneAssets.Patch(cache,output);return;}
 if(args.Contains("stormveil-sidewall-patch")){StormveilBarrierAssets.Patch(cache,output);return;}
 if(args.Contains("bgm-patch")){MusicAssets.Patch(cache,output);return;}
@@ -38,8 +47,10 @@ if(args.Contains("advanced-affix-append")){AffixAssets.Patch(cache,output,true,t
 if(args.Contains("shop-order-patch")){ShopOrderAssets.Patch(cache,output);return;}
 if(args.Contains("boss-affix-patch")){BossAffixAssets.Patch(cache,output);return;}
 if(args.Contains("weapon-glow-patch")){WeaponGlowAssets.Patch(cache,output);return;}
-if(args.Contains("aura-patch")){AuraAssets.Patch(cache,output);return;}
+if(args.Contains("aura-patch")){AuraAssets.Patch(cache,output);AuraFfxAssets.Build(game,output);return;}
+if(args.Contains("countdown-patch")){CountdownAssets.Patch(cache,output);return;}
 if(args.Contains("boss-append-patch")){BossAssets.Append(cache,output);return;}
+if(args.Contains("rennala-patch")){BossAssets.Append(cache,output,141);return;}
 if(args.Contains("party-boss-model-sync")){PartyBossModels.Sync(cache,output);return;}
 if(args.Contains("law-patch")){LawAssets.Patch(cache,output);return;}
 if(args.Contains("oath-patch")){OathAssets.Patch(cache,output);return;}

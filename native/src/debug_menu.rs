@@ -1,10 +1,10 @@
-// 调试菜单：启动目录里有 tower-debug.enable 时可用，F8 打开。只在单人模式下生效，命令交给运行时在安全时机执行。
+// 调试菜单：开启调试后由快捷键打开。普通命令仅单人；Boss 测试由房主在全员同意调试后同步发起。
 use std::{collections::VecDeque,sync::{LazyLock,Mutex,atomic::{AtomicBool,Ordering}}};
 use hudhook::imgui::{Condition,Ui};
 use erdtree_tower::{NodeKind,Run,contracts::Kind,embers::Ember,law::{Law,NODES}};
 use crate::enemies::Enemy;
 
-pub enum Command {Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool)}
+pub enum Command {BossTest(u16),EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool)}
 
 // tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
 static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()||crate::options::get().debug);
@@ -14,15 +14,39 @@ static QUEUE:Mutex<VecDeque<Command>>=Mutex::new(VecDeque::new());
 static GOD:AtomicBool=AtomicBool::new(false);
 static ONE_SHOT:AtomicBool=AtomicBool::new(false);
 static APPLIED:Mutex<Option<(bool,bool)>>=Mutex::new(None);
+static BOUT_PROTECT:AtomicBool=AtomicBool::new(false);
+static PLAYER_PROTECTION:Mutex<PlayerProtection>=Mutex::new(PlayerProtection{previous:None});
+struct PlayerProtection {previous:Option<(usize,bool)>}
+impl PlayerProtection {
+    fn update(&mut self,owner:usize,current:bool,wanted:bool)->bool {
+        if self.previous.is_some_and(|(old,_)|old!=owner){self.previous=None;}
+        if wanted {self.previous.get_or_insert((owner,current));true}
+        else {self.previous.take().map_or(current,|(_,before)|if current{before}else{current})}
+    }
+}
+fn sync_player_hit(world:&mut eldenring::cs::WorldChrMan) {
+    if let Ok(mut state)=PLAYER_PROTECTION.lock(){
+        if let Some(player)=world.main_player.as_mut(){
+            let chr=&mut player.chr_ins;let owner=std::ptr::from_ref(chr) as usize;
+            let wanted=GOD.load(Ordering::Relaxed)||BOUT_PROTECT.load(Ordering::Relaxed);
+            let hit=state.update(owner,chr.debug_flags.disabled_hit(),wanted);
+            chr.debug_flags.set_disabled_hit(hit);
+        }else{state.previous=None;}
+    }
+}
+fn write_cheat_flags(flags:&mut eldenring::cs::WorldChrManDbgFlags,want:(bool,bool)) {
+    flags.player_no_dead=want.0;flags.all_no_hit=false;flags.player_exterminate=want.1;
+}
 /// 每帧：把开关写进游戏的调试标志；联机或调试菜单不可用时全部关掉
 pub fn apply_cheats(party:bool) {
-    if party||!enabled() {GOD.store(false,Ordering::Relaxed);ONE_SHOT.store(false,Ordering::Relaxed);}
+    use fromsoftware_shared::FromStatic;
+    if party||!enabled() {GOD.store(false,Ordering::Relaxed);ONE_SHOT.store(false,Ordering::Relaxed);BOUT_PROTECT.store(false,Ordering::Relaxed);}
+    if let Ok(world)=unsafe {eldenring::cs::WorldChrMan::instance_mut()}{sync_player_hit(world);}
     let want=(GOD.load(Ordering::Relaxed),ONE_SHOT.load(Ordering::Relaxed));
     let Ok(mut applied)=APPLIED.lock() else{return};
     if *applied==Some(want)||applied.is_none()&&want==(false,false) {return;}
-    use fromsoftware_shared::FromStatic;
     let Ok(flags)=(unsafe {eldenring::cs::WorldChrManDbgFlags::instance_mut()}) else{return};
-    flags.player_no_dead=want.0;flags.all_no_hit=want.0;flags.player_exterminate=want.1;
+    write_cheat_flags(flags,want);
     *applied=Some(want);
     crate::log(format!("DEBUG_MENU cheats god={} one_shot={}",want.0,want.1));
 }
@@ -40,7 +64,16 @@ fn ime_here(ui:&Ui) {
     if ui.is_item_active() {let min=ui.item_rect_min();let max=ui.item_rect_max();hudhook::set_ime_position(min[0],max[1]);}
 }
 fn send(command:Command) {if let Ok(mut queue)=QUEUE.lock(){queue.push_back(command);}}
-pub fn take()->Option<Command> {QUEUE.lock().ok()?.pop_front()}
+pub fn take()->Option<Command> {let mut queue=QUEUE.lock().ok()?;let index=queue.iter().position(|c|!matches!(c,Command::BossTest(_)|Command::EndBossTest|Command::ChainTest(_)))?;queue.remove(index)}
+pub fn take_test()->Option<Command> {
+    let mut queue=QUEUE.lock().ok()?;
+    let index=queue.iter().position(|c|matches!(c,Command::BossTest(_)|Command::EndBossTest|Command::ChainTest(_)))?;
+    queue.remove(index)
+}
+static PARTY_ROLE:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
+pub fn set_party_role(host:Option<bool>){PARTY_ROLE.store(host.map_or(0,|h|if h{1}else{2}),Ordering::Relaxed);}
+pub fn close(){OPEN.store(false,Ordering::Relaxed);}
+pub fn clear_roster(){if let Ok(mut roster)=ROSTER.lock(){*roster=None;}if let Ok(mut bout)=BOUT.lock(){*bout=None;}}
 /// 下一场单人战斗改用指定的敌人，生成时取出
 pub fn take_roster()->Option<Vec<Enemy>> {ROSTER.lock().ok()?.take()}
 fn pending_roster()->Option<String> {ROSTER.lock().ok()?.as_ref().map(|r|r.iter().map(|e|e.name).collect::<Vec<_>>().join("、"))}
@@ -66,7 +99,7 @@ impl Bout {
         use eldenring::cs::ChrInsExt;
         let setup=self.setup?;
         if self.done {return None;}
-        if !self.guarded {if let Some(player)=world.main_player.as_mut() {player.chr_ins.debug_flags.set_disabled_hit(true);self.guarded=true;}}
+        if !self.guarded&&world.main_player.is_some(){BOUT_PROTECT.store(true,Ordering::Relaxed);sync_player_hit(world);self.guarded=true;}
         let effect=BOUT_FIRST+i32::from(setup.team);
         for (index,(handle,name)) in foes.iter().enumerate() {
             if self.applied.contains(handle)||!(setup.both||index==1) {continue;}
@@ -85,7 +118,7 @@ impl Bout {
         self.done=true;self.release(world);crate::log(format!("BOUT result {message}"));Some(message)
     }
     fn release(&mut self,world:&mut eldenring::cs::WorldChrMan) {
-        if self.guarded {if let Some(player)=world.main_player.as_mut() {player.chr_ins.debug_flags.set_disabled_hit(false);}self.guarded=false;}
+        if self.guarded {BOUT_PROTECT.store(false,Ordering::Relaxed);sync_player_hit(world);self.guarded=false;}
     }
     /// 战斗结束或中断时调用，保证玩家恢复正常
     pub fn end(&mut self,world:&mut eldenring::cs::WorldChrMan) {if self.active() {self.release(world);*self=Self::default();}}
@@ -105,6 +138,8 @@ impl Menu {
             let Some(run)=view.run.as_ref() else {ui.text("尚未开始旅程：在大赐福开始新局后再使用");return;};
             ui.text(format!("第 {} 幕 · 已走 {} 层 · {:?}{}",run.act,run.visited.len(),run.phase,if run.debug{" · 调试旅程"}else{""}));
             if let Some(_bar)=ui.tab_bar("##debug-tabs") {
+                if let Some(_tab)=ui.tab_item("处刑之链实测") {chain_test(ui,run);}
+                if let Some(_tab)=ui.tab_item("Boss 测试") {self.boss_tests(ui,view,run);}
                 if let Some(_tab)=ui.tab_item("战斗") {self.combat(ui,run);}
                 if let Some(_tab)=ui.tab_item("构筑") {self.build(ui,run);}
                 if let Some(_tab)=ui.tab_item("物品") {self.items(ui);}
@@ -113,6 +148,34 @@ impl Menu {
             }
         });
         if !keep {OPEN.store(false,Ordering::Relaxed);}
+    }
+    fn boss_tests(&mut self,ui:&Ui,view:&crate::runtime::View,run:&Run) {
+        let role=PARTY_ROLE.load(Ordering::Relaxed);let party=role!=0;
+        ui.text_wrapped("选择任意 Boss 组合直接测试，旅程会标记为调试，不计入正式成绩与解锁。");
+        ui.text_wrapped(if party {"联机需全员开启调试并完成领奖、誓约选择；仅房主可发起或结束测试。"}else{"请在路线图状态发起；试验条目也会列出，可能存在原版场景依赖。"});
+        if let Some(test)=run.boss_test {
+            let group=crate::enemies::debug_encounters().get(usize::from(test.encounter)).cloned().unwrap_or_default();
+            ui.text_wrapped(format!("当前测试 #{}：{}",test.encounter,crate::enemies::debug_group_name(&group)));
+            if let Some((hp,max))=view.enemy_hp {ui.text(format!("敌人总生命：{hp}/{max}"));}
+            let _disabled=ui.begin_disabled(role==2);
+            if ui.button("结束测试，返回大赐福") {send(Command::EndBossTest);}
+        }
+        ui.separator();ui.input_text("搜索 Boss",&mut self.enemy_filter).build();ime_here(ui);
+        let groups=crate::enemies::debug_encounters();
+        ui.text(format!("共 {} 个 Boss 组合；多实体组合整组测试",groups.len()));
+        let ready=role!=2&&run.phase==erdtree_tower::Phase::Map&&!view.travelling&&!view.busy;
+        ui.child_window("##boss-tests").size([0.0,0.0]).build(|| {
+            for (index,group) in groups.iter().enumerate() {
+                let names=crate::enemies::debug_group_name(group);
+                if !self.enemy_filter.trim().is_empty()&&!names.to_lowercase().contains(&self.enemy_filter.trim().to_lowercase()){continue;}
+                let available=crate::enemies::boss_test_allowed(group,party,erdtree_tower::dlc::enemies_allowed());
+                let _disabled=ui.begin_disabled(!ready||available.is_err());
+                if ui.button(format!("测试##boss-test-{index}")){send(Command::BossTest(index as u16));}
+                drop(_disabled);ui.same_line();
+                ui.text_wrapped(format!("#{index} 第{}幕 {names} · {} 只{}{}",group[0].act,group.len(),if group.iter().any(|e|e.dlc){" · DLC"}else{""},if group.iter().any(|e|e.retired){" · 试验"}else{""}));
+                if let Err(reason)=available {ui.text_disabled(reason);}
+            }
+        });
     }
     fn combat(&mut self,ui:&Ui,run:&Run) {
         ui.text("跳到节点（路线图上会变成可选）");
@@ -167,11 +230,11 @@ impl Menu {
             }
             ui.text_colored([0.7,0.7,0.7,1.0],"Boss 组（整组生成）");
             for (index,parts) in crate::enemies::debug_encounters().into_iter().enumerate() {
-                let names=parts.iter().map(|e|e.name).collect::<Vec<_>>();
-                if !filter.is_empty()&&!names.iter().any(|n|n.contains(filter.as_str())) {continue;}
-                let mut unique=names.clone();unique.dedup();
+                if PARTY_ROLE.load(Ordering::Relaxed)==0&&crate::enemies::party_only_group(&parts){continue;}
+                let name=crate::enemies::debug_group_name(&parts);
+                if !filter.is_empty()&&!name.to_lowercase().contains(&filter.to_lowercase()) {continue;}
                 let trial=if parts[0].retired {"（试验）"}else{""};
-                if ui.selectable(format!("第{}幕 {}（{} 只）{trial}##boss-{index}",parts[0].act,unique.join("＋"),parts.len())) {set_roster(parts);}
+                if ui.selectable(format!("第{}幕 {name}（{} 只）{trial}##boss-{index}",parts[0].act,parts.len())) {set_roster(parts);}
             }
         });
     }
@@ -191,11 +254,7 @@ impl Menu {
             let mut held=run.embers.contains(&ember);
             if ui.checkbox(format!("{}##ember-{i}",ember.name()),&mut held) {send(Command::Ember(ember,held));}
         }
-        // 双生的灵唤铃的实验方式：0 只放开使用；1 召第二只前清空“当前召唤”的记录
-        ui.text("双生的灵唤铃：");
-        let mode=crate::spirits::twin_mode();
-        ui.same_line();if ui.radio_button_bool("只放开使用##twin-0",mode==0) {crate::spirits::set_twin_mode(0);}
-        ui.same_line();if ui.radio_button_bool("另清空当前召唤##twin-1",mode==1) {crate::spirits::set_twin_mode(1);}
+        ui.text("双生的灵唤铃：保留第一组召唤物（单人试验）");
         ui.separator();
         ui.text(format!("苦难律法：{} 分 · 律法码 {}",run.law.score(),run.law.code()));
         ui.same_line();if ui.small_button("清空律法") {send(Command::Law(Law::default()));}
@@ -243,7 +302,7 @@ impl Menu {
         ui.separator();
         if ui.button("回满生命、专注与圣杯瓶") {send(Command::Heal);}
         let (mut god,mut one_shot)=(GOD.load(Ordering::Relaxed),ONE_SHOT.load(Ordering::Relaxed));
-        let changed=ui.checkbox("无敌（敌人打不中，也不会死）",&mut god)|{ui.same_line();ui.checkbox("秒杀（每次命中 9999999 伤害）",&mut one_shot)};
+        let changed=ui.checkbox("无敌（仅玩家免伤，可正常攻击）",&mut god)|{ui.same_line();ui.checkbox("秒杀（每次命中 9999999 伤害）",&mut one_shot)};
         if changed {GOD.store(god,Ordering::Relaxed);ONE_SHOT.store(one_shot,Ordering::Relaxed);send(Command::Cheats(god,one_shot));}
         if ui.button("卢恩 +10000") {send(Command::Runes(10000));}
         ui.same_line();if ui.button("卢恩 +100000") {send(Command::Runes(100000));}
@@ -259,7 +318,8 @@ fn arenas(ui:&Ui,run:&Run) {
     crate::fancy_text::text_wrapped(ui,format!("本幕主题：{}（{}）　场地键：{}",theme.name,theme.region,if theme.arena.is_empty(){"（用竞技场）"}else{theme.arena}));
     crate::fancy_text::text_wrapped(ui,format!("下一战（单人）：{}　地图块 {:#010x}",current.name,current.block));
     ui.separator();
-    ui.text("下一战指定场地（单人；联机始终用竞技场）");
+    ui.text("当前单机／联机三幕统一使用龙王平台，场地选择暂时停用。");
+    let _disabled=ui.begin_disabled(true);
     let chosen=crate::arenas::override_key();
     if ui.radio_button_bool("按主题",chosen.is_none()) {crate::arenas::set_override(None);}
     let built=crate::arenas::built();
@@ -267,13 +327,14 @@ fn arenas(ui:&Ui,run:&Run) {
     for (key,name) in built {
         if ui.radio_button_bool(format!("{name}##arena-{key}"),chosen==Some(key)) {crate::arenas::set_override(Some(key));}
     }
+    drop(_disabled);
     ui.separator();
     if ui.button("记下当前位置") {
         let line=match unsafe {eldenring::cs::PlayerIns::local_player()} {
             Ok(player)=>{
-                let p=player.chr_ins.modules.physics.position;let block=i32::from(player.current_block_id).to_be_bytes();
+                let p=player.block_position;let block=i32::from(player.current_block_id).to_be_bytes();
                 let yaw=player.chr_ins.modules.physics.orientation.to_euler_angles().1.to_degrees();
-                format!("m{:02}_{:02}_{:02}_{:02}|{:.3}|{:.3}|{:.3}|{:.1}",block[0],block[1],block[2],block[3],p.0-player.block_position.x,p.1-player.block_position.y,p.2-player.block_position.z,yaw)
+                format!("m{:02}_{:02}_{:02}_{:02}|{:.3}|{:.3}|{:.3}|{:.1}",block[0],block[1],block[2],block[3],p.x,p.y,p.z,yaw)
             },
             Err(_)=>"角色未加载".into(),
         };
@@ -285,7 +346,47 @@ fn arenas(ui:&Ui,run:&Run) {
     POINT.with(|p|if !p.borrow().is_empty(){crate::fancy_text::text_wrapped(ui,&*p.borrow());});
 }
 thread_local! {static POINT:std::cell::RefCell<String>=const {std::cell::RefCell::new(String::new())};}
+fn chain_test(ui:&Ui,run:&Run) {
+    ui.text_wrapped("测试会将本局标记为调试，不计正式成绩。只修改当前角色的处刑之链。");
+    if ui.button("开始真实触发测试（获得余烬，重置为 0 层）") {send(Command::ChainTest(0));}
+    if ui.button("设为 10 层，对照 +60% 致命一击倍率") {send(Command::ChainTest(10));}
+    ui.separator();
+    let (trace,count)=crate::embers::chain_trace();
+    let level=run.ember_stacks.level(Ember::Chain);
+    ui.text(format!("持有余烬：{}   当前层数：{level}",run.embers.contains(&Ember::Chain)));
+    ui.text(format!("本次观察到的真实致命一击标记：{count} 次"));
+    ui.text(format!("原生处决监听：{}   待处理处决事件：{}",trace.resident,trace.marker));
+    let expected=erdtree_tower::embers::stack_rates(Ember::Chain,level).unwrap().attack;
+    ui.text(format!("预期倍率：{expected:.2}x   实际参数：{}",trace.rate.map_or("未挂载".into(),|rate|format!("{rate:.2}x"))));
+    let ok=trace.level==level&&trace.resident&&if level==0 {trace.effects==0}else{trace.effects==1&&trace.critical_only&&trace.rate.is_some_and(|r|(r-expected).abs()<0.0001)};
+    ui.text_colored(if ok{[0.5,0.95,0.6,1.0]}else{[1.0,0.65,0.35,1.0]},if ok{"参数检查通过（不代表已完成实战伤害验证）"}else{"参数未就绪或与层数不符"});
+    ui.text(format!("已挂载倍率效果数：{}   限定致命一击：{}",trace.effects,trace.critical_only));
+    ui.separator();
+    ui.text_wrapped("进入战斗后背刺或处决一次，再打开此页：真实触发次数应 +1，层数应 +1，倍率应增加 0.06。普通攻击不应加层。营地假人不走战斗叠层检测，请使用战斗或 Boss 测试入口。");
+    ui.text_wrapped("10 层按钮仅用于手动对照参数，不计入真实触发次数。比较伤害请保持同一把武器、同一敌人及其他增益不变，并关闭秒杀。");
+}
 fn set_roster(roster:Vec<Enemy>) {
     crate::log(format!("DEBUG_MENU next roster: {}",roster.iter().map(|e|e.name).collect::<Vec<_>>().join(",")));
     if let Ok(mut slot)=ROSTER.lock(){*slot=Some(roster);}
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn god_mode_leaves_global_hit_and_enemy_protection_off() {
+        let mut flags:eldenring::cs::WorldChrManDbgFlags=unsafe {std::mem::zeroed()};
+        super::write_cheat_flags(&mut flags,(true,false));
+        assert!(flags.player_no_dead);assert!(!flags.all_no_hit&&!flags.all_no_damage&&!flags.all_no_dead);
+        super::write_cheat_flags(&mut flags,(false,true));
+        assert!(!flags.player_no_dead&&flags.player_exterminate&&!flags.all_no_hit);
+    }
+    #[test]
+    fn player_protection_restores_owner_and_tracks_reloads_and_bout_overlap() {
+        let mut state=super::PlayerProtection{previous:None};
+        assert!(state.update(1,false,true));assert!(state.update(1,true,true));
+        assert!(!state.update(1,true,false));
+        assert!(state.update(1,true,true));assert!(state.update(1,true,false));
+        assert!(state.update(1,false,true));assert!(!state.update(2,false,false));
+        assert!(state.update(2,false,true));assert!(!state.update(2,false,false));
+    }
 }

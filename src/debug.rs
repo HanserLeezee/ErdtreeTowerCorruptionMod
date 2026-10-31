@@ -1,7 +1,20 @@
 // 调试菜单的规则部分：只在路线图界面使用，用过的旅程打上 debug 标记（放宽誓约进度校验，不计入律法纪录）
 use crate::{Phase,Run,RuleResult,contracts::{Kind,Oath,MAX_LEVEL},embers::Ember,law::Law};
 
+#[derive(Clone,Copy,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
+pub struct BossTest {pub encounter:u16,pub act:u8}
+
 impl Run {
+    pub fn debug_boss_test(&mut self,encounter:u16,act:u8)->RuleResult<usize> {
+        if encounter>=4096{return Err("Boss 测试编号无效".into());}
+        let mut next=self.clone();
+        next.debug_act(act)?;
+        if let Some(contract)=next.contract.as_mut(){contract.skip()?;}
+        let node=next.nodes.iter().position(|n|n.kind==crate::NodeKind::Boss).ok_or("本幕没有 Boss 节点")?;
+        next.debug_jump(node)?;
+        next.boss_test=Some(BossTest{encounter,act});next.validate()?;
+        *self=next;Ok(node)
+    }
     fn debug_begin(&mut self)->RuleResult<()> {
         if self.phase!=Phase::Map {return Err("请在路线图界面使用调试功能".into());}
         self.debug=true;Ok(())
@@ -75,6 +88,21 @@ impl Run {
 #[cfg(test)]
 mod tests {
     use crate::{Class,NodeKind,Phase,Run,contracts::Kind,embers::Ember,law::Law};
+    #[test]
+    fn boss_test_prepares_an_available_boss_and_survives_save() {
+        for act in 1..=3 {
+            let mut run=Run::new(55,Class::Samurai);
+            let node=run.debug_boss_test(7,act).unwrap();
+            assert!(run.debug&&run.available().contains(&node));
+            assert_eq!(run.nodes[node].kind,NodeKind::Boss);
+            assert_eq!(run.boss_test,Some(super::BossTest{encounter:7,act}));
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+            run.enter(node).unwrap();assert!(run.debug_boss_test(8,act).is_err());
+        }
+        let mut run=Run::new(1,Class::Samurai);let before=run.clone();
+        assert!(run.debug_boss_test(7,4).is_err());assert_eq!(run,before);
+        assert!(!run.encode().unwrap().contains("boss_test"));
+    }
     #[test]
     fn jumping_makes_any_node_reachable_and_keeps_saves_loadable() {
         for seed in 0..40 {

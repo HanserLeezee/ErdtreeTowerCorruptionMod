@@ -50,6 +50,10 @@ fn ash_refund_target(before:&[(u32,u32)],current:&[(u32,u32)],used:Option<u32>)-
     let now=current.iter().find(|(item,_)|*item==id).map_or(0,|(_,n)|*n);
     (old>0&&now<old).then_some(id)
 }
+pub fn ash_refund_confirmed(before:&[(u32,u32)],current:&[(u32,u32)],used:Option<u32>)->bool {
+    used.is_some_and(|id|before.iter().any(|&(item,n)|item==id&&n>0))
+        &&ash_refund_target(before,current,used).is_none()
+}
 pub fn refund_spent_ashes(data:&mut PlayerGameData,before:&[(u32,u32)],used:Option<u32>)->Result<usize,String> {
     let current=ash_snapshot(data)?;
     let Some(id)=ash_refund_target(before,&current,used) else{return Ok(0);};
@@ -87,6 +91,14 @@ pub fn clear_spent_ashes(data:&mut PlayerGameData)->Result<(),String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ash_refund_is_confirmed_only_after_the_requested_item_returns() {
+        let before=[(212001,1),(232000,1)];
+        assert!(!super::ash_refund_confirmed(&before,&[(232000,1)],Some(212001)));
+        assert!(!super::ash_refund_confirmed(&before,&[(212000,1),(232000,1)],Some(212001)));
+        assert!(super::ash_refund_confirmed(&before,&before,Some(212001)));
+        assert!(!super::ash_refund_confirmed(&before,&before,None));
+    }
     #[test]
     fn refund_tracks_used_ash_even_when_entry_is_removed_or_stack_is_not_empty() {
         let before=[(200000,1),(201000,3)];

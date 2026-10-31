@@ -90,7 +90,7 @@ pub fn arena_time(run:&Run) {
     let Ok(mut last)=TIME.lock() else{return};
     if last.is_some_and(|(k,at)|k==key||at.elapsed()<Duration::from_secs(2)) {return;}
     let Ok(time)=(unsafe {eldenring::cs::WorldAreaTime::instance_mut()}) else{return};
-    let hour=u32::from(theme(run).hour);
+    let hour=if crate::arenas::for_run(run,false).uses_circle(){12}else{u32::from(theme(run).hour)};
     time.request_time(hour,0,0);
     *last=Some((key,Instant::now()));
     crate::log(format!("Arena time for theme {}: {hour}:00",theme(run).name));

@@ -6,6 +6,12 @@ use erdtree_tower::NodeKind;
 use fromsoftware_shared::{F32Vector4, FromStatic};
 use std::time::{Duration, Instant};
 
+fn merchant_collision(flags:&mut eldenring::cs::ChrCtrlFlags,down:bool) {
+    flags.set_disable_hit(down);
+    flags.set_disable_player_collision(down);
+    flags.set_disable_character_capsule_collision(down);
+}
+
 fn first_stale<T>(bindings:&[(T,usize)],mut lookup:impl FnMut(&T)->Option<usize>)->Option<usize> {
     bindings.iter().position(|(handle,address)|lookup(handle)!=Some(*address))
 }
@@ -54,6 +60,10 @@ pub struct RoomView {
 }
 
 pub struct Room {
+    merchant_hit_logged:bool,
+    pub merchant_down:bool,
+    pub shop_refresh_pending:bool,
+    pub hunter:Option<super::map_guards::Guards>,
     hub: bool,
     pub node: usize,
     pub kind: NodeKind,
@@ -77,6 +87,11 @@ pub struct Room {
     pub chest_attempt:Option<Instant>,
 }
 impl Room {
+    pub fn merchant_dead(&self,world:&WorldChrMan)->bool {
+        self.kind==NodeKind::Shop&&self.handles.first().is_some_and(|(handle,address)|world.chr_ins_by_handle(handle)
+            .is_some_and(|c|std::ptr::from_ref(c) as usize==*address&&!c.debug_flags.character_disabled()
+                &&loaded(unsafe {c.chr_set_entry.as_ref()}.chr_load_status)&&(c.modules.data.hp<=0||c.chr_flags1c5.death_flag())))
+    }
     fn map_backed(&self)->bool {self.hub||self.kind==NodeKind::Camp||!conditional_services(self.block,self.kind).is_empty()}
     pub fn dialog_active(&self)->bool {self.talks.iter().any(|t|t.active())}
     pub fn suspend_dialogues(&mut self)->Result<(),String> {
@@ -152,6 +167,7 @@ impl Room {
         }
         super::log(format!("Native room {node}: {title}, block={block:x}"));
         Ok(Self {
+            merchant_down:false,shop_refresh_pending:false,hunter:None,merchant_hit_logged:false,
             scarabs:Default::default(),
             chest_attempt:None,
             hub,
@@ -215,7 +231,7 @@ impl Room {
         }
         let specs = if self.hub {vec![(0,[-329.5,-21.9,-309.0]),(0,[-329.5,-21.9,-302.0])]} else {npcs(self.kind)};
         if let Some(index)=first_stale(&self.handles,|handle|world.chr_ins_by_handle(handle)
-            .filter(|c|!c.debug_flags.character_disabled()&&c.modules.data.hp>0&&!c.chr_flags1c5.death_flag())
+            .filter(|c|(self.kind==NodeKind::Shop&&self.handles.first().is_some_and(|(h,_)|h==handle))||(!c.debug_flags.character_disabled()&&c.modules.data.hp>0&&!c.chr_flags1c5.death_flag()))
             .map(|c|std::ptr::from_ref(c) as usize)) {
             // Complete an outstanding spawn before rebuilding the ordered service slots.
             if self.pending_since.is_none() {
@@ -244,12 +260,12 @@ impl Room {
             let matches=|slot,entity,model,param,status,hp| {
                 if self.hub {map_service_matches(slot,entity,model,param,status,hp)}
                 else if self.kind==NodeKind::Camp {camp_service_matches(slot,entity,model,param,status,hp)}
-                else {conditional.get(slot).is_some_and(|&(id,m,p,_)|(entity,model,param)==(id,m,p))&&loaded(status)&&hp>0}
+                else {conditional.get(slot).is_some_and(|&(id,m,p,_)|(entity,model,param)==(id,m,p))&&loaded(status)&&(hp>0||self.kind==NodeKind::Shop&&slot==0&&self.merchant_down)}
             };
             let found=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).find(|chr|
                 matches(slot,chr.event_entity_id,chr.npc_id,chr.npc_param_id,
                     unsafe {chr.chr_set_entry.as_ref()}.chr_load_status,chr.modules.data.hp)
-                &&!chr.debug_flags.character_disabled()&&!chr.chr_flags1c5.death_flag())
+                &&((self.kind==NodeKind::Shop&&slot==0&&self.merchant_down)||(!chr.debug_flags.character_disabled()&&!chr.chr_flags1c5.death_flag())))
                 .map(|chr|(chr.field_ins_handle,std::ptr::from_ref(chr) as usize));
             if let Some((handle,address))=found {
                 self.handles.push((handle,address));
@@ -332,18 +348,29 @@ impl Room {
             }
             self.view.message = "正在布置 NPC……".into();
         }
-        for &(handle, address) in &self.handles {
+        for (index,&(handle, address)) in self.handles.iter().enumerate() {
             let chr = world
                 .chr_ins_by_handle_mut(&handle)
                 .filter(|c| std::ptr::from_ref(*c) as usize == address)
                 .ok_or("服务 NPC 已卸载")?;
-            chr.team_type = 0;
-            chr.chr_flags1c5.set_is_invincible(true);
-            chr.debug_flags.set_disabled_hit(true);
+            let merchant=self.kind==NodeKind::Shop&&index==0;
+            chr.team_type = if merchant {6}else{0};
+            chr.chr_flags1c5.set_is_invincible(!merchant);
+            chr.debug_flags.set_disabled_hit(!merchant||self.merchant_down);
+            if merchant&&self.merchant_down {chr.debug_flags.set_character_disabled(true);}
             chr.debug_flags.set_disabled_movement(true);
             chr.debug_flags.set_disabled_secondary_actions(true);
-            chr.chr_ctrl.flags.set_disable_player_collision(true);
-            chr.chr_ctrl.flags.set_disable_character_capsule_collision(true);
+            if merchant {
+                let before=chr.chr_ctrl.flags;
+                merchant_collision(&mut chr.chr_ctrl.flags,self.merchant_down);
+                if !self.merchant_hit_logged {
+                    super::log(format!("MERCHANT_HIT entity={} hp={} team={} invincible={} debug_hit_disabled={} ctrl_before={before:?} ctrl_after={:?}",chr.event_entity_id,chr.modules.data.hp,chr.team_type,chr.chr_flags1c5.is_invincible(),chr.debug_flags.disabled_hit(),chr.chr_ctrl.flags));
+                    self.merchant_hit_logged=true;
+                }
+            }else{
+                chr.chr_ctrl.flags.set_disable_player_collision(true);
+                chr.chr_ctrl.flags.set_disable_character_capsule_collision(true);
+            }
         }
         self.view.loading = self.handles.len() < specs.len();
         if self.view.loading {
@@ -370,10 +397,12 @@ impl Room {
             }
         }
         for talk in &mut self.talks {talk.set_camp_used(self.view.completed);}
-        if let Some(index) = self.talks.iter().position(|talk| talk.active()) {
+        let skip=usize::from(self.merchant_down);
+        if self.merchant_down&&let Some(talk)=self.talks.first_mut(){talk.suspend()?;}
+        if let Some((index,_)) = self.talks.iter().enumerate().skip(skip).find(|(_,talk)|talk.active()) {
             self.talks[index].poll()?;
         } else {
-            for talk in &mut self.talks {
+            for talk in self.talks.iter_mut().skip(skip) {
                 talk.poll()?;
                 if talk.active() { break; }
             }
@@ -392,9 +421,8 @@ impl Room {
         ready_flag(self.kind) - 991
     }
     pub fn retire(&self, world: &mut WorldChrMan) {
+        if let Some(hunter)=&self.hunter {hunter.retire();}
         self.scarabs.retire(world);
-        if self.kind==NodeKind::Camp {super::spirit_tune::close();}
-        // 强化石离开营地也保留（新旅程开始时才清掉）
         if !self.hub && self.kind!=NodeKind::Monster && let Ok(flags) = unsafe { CSEventFlagMan::instance_mut() } {
             flags.virtual_memory_flag.set_flag(self.base() + 993, false);
             if self.kind==NodeKind::Chest { flags.virtual_memory_flag.set_flag(45010939,false); }
@@ -441,6 +469,16 @@ fn npcs(kind: NodeKind) -> Vec<(i32, [f32; 3])> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn living_merchant_restores_hit_and_body_collisions_without_touching_map_collision() {
+        let mut flags=eldenring::cs::ChrCtrlFlags(0);
+        flags.set_disable_hit(true);flags.set_disable_player_collision(true);flags.set_disable_character_capsule_collision(true);flags.set_disable_map_collision(true);
+        super::merchant_collision(&mut flags,false);
+        assert!(!flags.disable_hit()&&!flags.disable_player_collision()&&!flags.disable_character_capsule_collision());
+        assert!(flags.disable_map_collision(),"unrelated movement flags are preserved");
+        super::merchant_collision(&mut flags,true);
+        assert!(flags.disable_hit()&&flags.disable_player_collision()&&flags.disable_character_capsule_collision());
+    }
     #[test]
     fn npc_spawning_requires_three_continuous_grounded_seconds() {
         let start=std::time::Instant::now();let mut since=None;

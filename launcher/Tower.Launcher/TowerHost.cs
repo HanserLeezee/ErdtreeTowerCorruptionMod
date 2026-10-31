@@ -36,6 +36,7 @@ namespace Tower.Launcher
         ReleaseManifest? latest;
         string updateStatus = "尚未检查";
         bool checking, launching;
+        bool historyLoading;
         int? launchWorkerId;
         CancellationTokenSource? running;
         bool pausing, lastVerify;
@@ -349,6 +350,8 @@ namespace Tower.Launcher
                 case "openGuide": OpenDocument(Path.Combine(paths.InstallDir, "安装教程.txt"), Repo + "#readme"); break;
                 case "openLicenses": OpenDocument(Path.Combine(paths.InstallDir, "THIRD_PARTY_NOTICES.md"), Repo + "/tree/main/licenses"); break;
                 case "openLogs": OpenLogs(); break;
+                case "openModLogs": OpenModLogs(); break;
+                case "releaseHistory": _ = HistoryAsync(); break;
                 case "restartLauncher": Restart(); break;
             }
         }
@@ -801,6 +804,54 @@ namespace Tower.Launcher
             Directory.CreateDirectory(paths.LaunchLogs);
             var latestLog = Directory.GetDirectories(paths.LaunchLogs).OrderByDescending(Path.GetFileName).FirstOrDefault();
             OpenFolder(latestLog ?? paths.DataDir);
+        }
+
+        void OpenModLogs()
+        {
+            var file=ModLogs.Latest(paths.InstallDir);
+            if(file!=null)Process.Start("explorer.exe","/select,"+Quote(file))?.Dispose();
+            else {OpenFolder(paths.InstallDir);Toast("尚未生成 tower-preview.log，已打开 Mod 目录；启动游戏后会生成日志", "info", 6000);}
+        }
+
+        List<HistoryEntry> SavedHistory()
+        {
+            var rows=new List<HistoryEntry>();
+            foreach(var file in new[]{Path.Combine(paths.UiDir,"release-history.json"),Path.Combine(paths.DataDir,"release-history.json")})
+            {
+                try {if(File.Exists(file))rows=ReleaseHistory.Merge(rows,ReleaseHistory.ParseGitHub(File.ReadAllText(file)));}
+                catch(Exception e) when(e is IOException||e is UnauthorizedAccessException||e is JsonException||e is InvalidOperationException){Log.Write("读取更新历史失败："+e.Message);}
+            }
+            return rows;
+        }
+
+        void PushHistory(List<HistoryEntry> rows,string status,bool loading)
+        {
+            form.Post("app","releaseHistory",new {status,loading,items=rows.Select(r=>new {tag=r.Tag,title=r.Title,notes=r.Notes,date=r.PublishedAt,url=Repo+"/releases/tag/"+Uri.EscapeDataString(r.Tag)})});
+        }
+
+        async Task HistoryAsync()
+        {
+            if(historyLoading){PushHistory(SavedHistory(),"正在刷新历史记录…",true);return;}
+            historyLoading=true;
+            var rows=SavedHistory();
+            PushHistory(rows,"正在刷新历史记录…",true);
+            try
+            {
+                using var cancel=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                using var response=await http.GetAsync("https://api.github.com/repos/tamikip/erdtree-tower/releases?per_page=100",cancel.Token);
+                response.EnsureSuccessStatusCode();
+                var json=await response.Content.ReadAsStringAsync();
+                rows=ReleaseHistory.Merge(rows,ReleaseHistory.ParseGitHub(json));
+                try {File.WriteAllText(Path.Combine(paths.DataDir,"release-history.json"),json,new UTF8Encoding(false));}
+                catch(Exception e) when(e is IOException||e is UnauthorizedAccessException){Log.Write("保存更新历史缓存失败："+e.Message);}
+                PushHistory(rows,"已刷新 · 最近 100 条发布及随包历史",false);
+            }
+            catch(Exception e) when(e is HttpRequestException||e is OperationCanceledException||e is JsonException||e is InvalidOperationException)
+            {
+                Log.Write("刷新更新历史失败："+e.Message);
+                PushHistory(rows,rows.Count>0?"在线刷新失败，正在显示本地历史记录":"暂时无法获取记录，请稍后重试或查看发布页",false);
+            }
+            finally {historyLoading=false;}
         }
 
         static void OpenDocument(string path, string fallbackUrl)

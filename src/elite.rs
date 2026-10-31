@@ -5,7 +5,13 @@ pub const BUFFS:&[u32]=&[1000,1010,1020,1030,1040,1060,1070,1080,1090,1150,2060,
 pub const TEAR:u32=10020;
 pub fn boss_offers(run:&Run,node:usize)->Vec<Reward> {
     if run.boss_reward_rules==0 {return old_boss_offers(run,node);}
-    let guaranteed=old_boss_items(run,node).into_iter().find(|id|run.casting_tools.is_none_or(|tools|rewards::castable(*id,tools))).expect("Boss pool contains repeatable weapons");
+    let items=old_boss_items(run,node);
+    let mut guaranteed=items.iter().copied().find(|id|run.casting_tools.is_none_or(|tools|rewards::castable(*id,tools))).expect("Boss pool contains repeatable weapons");
+    if !run.preferences().is_empty()&&guaranteed>>28==0 {
+        let owned=run.claimed_items.contains(&guaranteed);
+        let weapons:Vec<_>=items.into_iter().filter(|id|id>>28==0&&run.claimed_items.contains(id)==owned).collect();
+        guaranteed=weapons[crate::weapon_training::pick_many(&weapons,crate::mix(run.reward_seed()^node as u64^0xb055),run.preferences(),None)];
+    }
     let mut result=vec![Reward::Item(guaranteed)];
     for reward in rewards::boss_regular_offers(run,node) {
         if result.len()==3 {break;}
@@ -27,7 +33,7 @@ pub fn offers(run:&Run,node:usize)->Vec<Reward> {
     let items:Vec<_>=EPIC.iter().chain(LEGENDARY).copied().filter(|id|crate::dlc::item_allowed(*id)&&!run.claimed_items.contains(id)&&rewards::lookup(*id).is_some_and(|i|i.kind.allowed(run.class)&&!(run.law.lone_wolf()&&i.kind==rewards::ItemKind::Spirit))).collect();
     let roll=crate::mix(run.reward_seed()^node as u64^0xe91c);
     if !items.is_empty() {
-        result[0]=Reward::Item(items[roll as usize%items.len()]);
+        result[0]=Reward::Item(crate::weapon_training::reward(run,&items,roll));
     }
     result
 }
@@ -35,7 +41,7 @@ pub(crate) fn legendary_offers(run:&Run,node:usize)->Vec<Reward> {
     let items:Vec<_>=LEGENDARY.iter().copied().filter(|id|crate::dlc::item_allowed(*id)&&!run.claimed_items.contains(id)&&rewards::lookup(*id).is_some_and(|i|i.kind.allowed(run.class)&&!(run.law.lone_wolf()&&i.kind==rewards::ItemKind::Spirit))).collect();
     let buffs:Vec<_>=BUFFS.iter().copied().filter(|id|!run.elite_buffs.contains(id)).collect();
     let roll=crate::mix(run.reward_seed()^node as u64^0xe117e);
-    vec![if items.is_empty(){Reward::Gold(5000)}else{Reward::Item(items[roll as usize%items.len()])},
+    vec![if items.is_empty(){Reward::Gold(5000)}else{Reward::Item(crate::weapon_training::reward(run,&items,roll))},
         if buffs.is_empty(){Reward::Gold(5000)}else{Reward::TalismanBuff(buffs[(roll>>32) as usize%buffs.len()])},Reward::SacredTear]
 }
 #[cfg(test)]

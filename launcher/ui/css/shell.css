@@ -91,7 +91,7 @@
   width: var(--sidebar-w);
   height: 100%;
   box-sizing: border-box;
-  display: flex;
+  display: none;
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
@@ -308,6 +308,17 @@
 
 .social-item:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+.social-item svg {
+  width: 26px;
+  height: 26px;
+  color: #eee9dc;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.social-item:hover svg {
+  color: var(--brand);
 }
 
 .social-item img {

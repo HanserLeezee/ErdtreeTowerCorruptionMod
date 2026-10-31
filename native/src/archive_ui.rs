@@ -12,15 +12,15 @@ enum Item {Oath(usize),Ember(usize),Boss(usize),Affix(usize)}
 /// 往期旅程只列最近的这么多局
 const LIMIT:usize=100;
 const ROMAN:[&str;4]=["","I","II","III"];
-const GOLD:[f32;4]=[0.86,0.74,0.48,1.0];const WHITE:[f32;4]=[0.93,0.9,0.81,1.0];const MUTED:[f32;4]=[0.62,0.59,0.51,1.0];
-const DIM:[f32;4]=[0.45,0.43,0.38,1.0];const RED:[f32;4]=[0.92,0.47,0.38,1.0];const BOON:[f32;4]=[0.86,0.8,0.64,1.0];
+const GOLD:[f32;4]=[0.94,0.82,0.56,1.0];const WHITE:[f32;4]=[0.96,0.94,0.87,1.0];const MUTED:[f32;4]=[0.78,0.75,0.67,1.0];
+const DIM:[f32;4]=[0.65,0.62,0.55,1.0];const RED:[f32;4]=[0.92,0.47,0.38,1.0];const BOON:[f32;4]=[0.86,0.8,0.64,1.0];
 pub struct Archive {records:Vec<Record>,codex:Codex,bosses:Vec<(u8,String)>,affixes:Vec<String>,tab:usize,selected:usize,focus:usize,follow:bool,opened:Option<f64>,now:u64,
     /// 职业传承：角色存档与读到的数据；class 是选中的职业，talent 是选中的开局护符，column 0 为职业列表、1 为护符列表
     legacy:Option<((u32,i32),Legacy)>,class:usize,talent:usize,column:usize,notice:Option<(String,f64)>,
     /// 称号页：已解锁的称号编号（按全部旅程档案算）、选中的行
     titles:Vec<u8>,title_row:usize,
     /// 光环页：已解锁的光环编号、选中的行
-    auras:Vec<u8>,aura_row:usize}
+    auras:Vec<u8>,aura_row:usize,weapon_row:usize,weapon_group:usize,appearance:crate::transmog_ui::Page}
 impl Archive {
     pub fn progression(records:Vec<Record>)->Self {
         let mut archive=Self::new(records);
@@ -30,8 +30,10 @@ impl Archive {
     }
     pub fn new(records:Vec<Record>)->Self {
         let codex=journal::codex(&records);
-        let titles=erdtree_tower::titles::TITLES.iter().map(|t|t.id).filter(|id|erdtree_tower::titles::unlocked(*id,&records)).collect();
-        let auras=erdtree_tower::auras::AURAS.iter().map(|a|a.id).filter(|id|erdtree_tower::auras::unlocked(*id,&records)).collect();
+        let owner=crate::legacy::owner();
+        let unlocks=owner.map(crate::cosmetic_unlocks::Unlocks::load).unwrap_or_default();
+        let titles=erdtree_tower::titles::TITLES.iter().map(|t|t.id).filter(|id|unlocks.title(*id,&records)).collect();
+        let auras=erdtree_tower::auras::AURAS.iter().map(|a|a.id).filter(|id|unlocks.aura(*id,&records)).collect();
         let recent:Vec<Record>=records.into_iter().rev().take(LIMIT).collect();
         let mut bosses:Vec<(u8,String)>=Vec::new();
         for group in crate::enemies::debug_encounters() {
@@ -41,9 +43,9 @@ impl Archive {
         let mut affixes:Vec<String>=crate::reward_ui::affix_names().to_vec();
         for (name,_) in &codex.affixes {if !affixes.contains(name) {affixes.push(name.clone());}}
         let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|t|t.as_secs());
-        let legacy=crate::legacy::owner().map(|owner|(owner,crate::legacy::load(owner)));
+        let legacy=owner.map(|owner|(owner,crate::legacy::load(owner)));
         let class=recent_class(&recent).and_then(|c|Class::PLAYABLE.iter().position(|x|*x==c)).unwrap_or(0);
-        Self{records:recent,codex,bosses,affixes,tab:0,selected:0,focus:0,follow:true,opened:None,now,legacy,class,talent:0,column:1,notice:None,titles,title_row:0,auras,aura_row:0}
+        Self{records:recent,codex,bosses,affixes,tab:0,selected:0,focus:0,follow:true,opened:None,now,legacy,class,talent:0,column:1,notice:None,titles,title_row:0,auras,aura_row:0,weapon_row:1,weapon_group:0,appearance:Default::default()}
     }
     fn unlocked(&self,item:Item)->bool {
         match item {
@@ -94,7 +96,7 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
     let shade=|a:u8|ImColor32::from_rgba(0,0,0,a);
     background.add_rect_filled_multicolor([0.0,0.0],size,shade(90),shade(90),shade(170),shade(170));drop(background);
     let opened=*archive.opened.get_or_insert(ui.time());let ready=ui.time()-opened>=0.3;
-    let pressed=|keys:&[Key]|ready&&keys.iter().any(|k|ui.is_key_pressed(*k));
+    let pressed=|keys:&[Key]|ready&&!ui.io().want_text_input&&keys.iter().any(|k|ui.is_key_pressed(*k));
     let mut action=None;
     if pressed(&[Key::Escape,Key::GamepadFaceRight,crate::options::key(erdtree_tower::options::Hotkey::Archive),Key::GamepadBack]) {action=Some(ArchiveAction::Close);}
     if pressed(&[Key::E,Key::GamepadR1]) {archive.tab=(archive.tab+1)%TABS.len();archive.follow=true;}
@@ -115,10 +117,23 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
         if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {archive.title_row=(archive.title_row+1).min(count-1);}
         if pressed(&[Key::Enter,Key::GamepadFaceDown]) {wear(archive,archive.title_row,ui.time());}
     } else if archive.tab==4 {
-        let count=erdtree_tower::auras::AURAS.len();
+        let count=erdtree_tower::auras::AURAS.len()+1;
         if pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]) {archive.aura_row=archive.aura_row.saturating_sub(1);}
         if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {archive.aura_row=(archive.aura_row+1).min(count-1);}
         if pressed(&[Key::Enter,Key::GamepadFaceDown]) {wear_aura(archive,archive.aura_row,ui.time());}
+    } else if archive.tab==5 {
+        if pressed(&[Key::PageUp,Key::GamepadL2]) {set_weapon_group(archive,(archive.weapon_group+7)%8);}
+        if pressed(&[Key::PageDown,Key::GamepadR2]) {set_weapon_group(archive,(archive.weapon_group+1)%8);}
+        let rows=weapon_rows(archive.weapon_group);let mut index=rows.iter().position(|r|*r==archive.weapon_row).unwrap_or(0);
+        if pressed(&[Key::LeftArrow,Key::A,Key::GamepadDpadLeft]) {index=index.saturating_sub(1);}
+        if pressed(&[Key::RightArrow,Key::D,Key::GamepadDpadRight]) {index=(index+1).min(rows.len()-1);}
+        if pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]) {index=index.saturating_sub(3);}
+        if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {index=(index+3).min(rows.len()-1);}
+        archive.weapon_row=rows[index];
+        if pressed(&[Key::Enter,Key::GamepadFaceDown]) {train_weapon(archive,false,ui.time());}
+        if pressed(&[Key::Space,Key::GamepadFaceUp]) {train_weapon(archive,true,ui.time());}
+    } else if archive.tab==6 {
+        // Appearance navigation and search are handled inside its panel.
     } else {
         for (keys,dx,dy) in [(&[Key::LeftArrow,Key::A,Key::GamepadDpadLeft][..],-1.0,0.0),(&[Key::RightArrow,Key::D,Key::GamepadDpadRight][..],1.0,0.0),
             (&[Key::UpArrow,Key::W,Key::GamepadDpadUp][..],0.0,-1.0),(&[Key::DownArrow,Key::S,Key::GamepadDpadDown][..],0.0,1.0)] {
@@ -131,7 +146,10 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
         let text=|x:f32,y:f32,value:&str,color:[f32;4],scale:f32,align:f32| {
             ui.set_window_font_scale(scale*s);ui.set_cursor_screen_pos([ox+x*s-ui.calc_text_size(value)[0]*align,oy+y*s]);ui.text_colored(color,value);
         };
-        text(800.0,26.0,"旅 程 档 案",GOLD,1.9,0.5);
+        {
+            let title=crate::fancy_text::title_font().map(|font|ui.push_font(font));
+            text(800.0,26.0,"旅 程 档 案",GOLD,if title.is_some(){1.9*20.0/32.0}else{1.9},0.5);
+        }
         // 分页标签
         for (i,label) in TABS.into_iter().enumerate() {
             let x=800.0-(TABS.len()-1) as f32*80.0+i as f32*160.0;let active=archive.tab==i;
@@ -142,13 +160,15 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
             if active {ui.get_window_draw_list().add_rect(p(x-46.0,130.0),p(x+46.0,132.0),ImColor32::from_rgba(214,180,112,230)).filled(true).build();}
         }
         let draw=ui.get_window_draw_list();ornament(&draw,p(800.0,150.0),420.0*s,s);drop(draw);
-        match archive.tab {0=>history(ui,archive,icon,&mut action,moved,ready,s,ox,oy),1=>codex(ui,archive,&layout,icon,moved,s,ox,oy),2=>legacy(ui,archive,icon,moved,ready,s,ox,oy),3=>titles(ui,archive,moved,ready,s,ox,oy),_=>auras(ui,archive,moved,ready,s,ox,oy)}
+        match archive.tab {0=>history(ui,archive,icon,&mut action,moved,ready,s,ox,oy),1=>codex(ui,archive,&layout,icon,moved,s,ox,oy),2=>legacy(ui,archive,icon,moved,ready,s,ox,oy),3=>titles(ui,archive,moved,ready,s,ox,oy),4=>auras(ui,archive,moved,ready,s,ox,oy),5=>weapons(ui,archive,icon,ready,s,ox,oy),_=>crate::transmog_ui::draw(ui,&mut archive.appearance,icon,ready,s,ox,oy)}
         archive.follow=false;
         // 底部：操作提示与返回
         let hint=match archive.tab {0=>"上下键选择 · Enter / A 查看结算 · Q / E 或 LB / RB 切换分页",1=>"方向键选择 · 鼠标悬停查看 · Q / E 或 LB / RB 切换分页",
             2=>"上下键选择 · 右键进入护符列表 · Enter / A 或点击选用 · 每个职业单独计算，从下一局开始生效",
             3=>"上下键选择 · Enter / A 或点击佩戴，再选一次摘下 · 联机时队友头顶的名牌会显示你的称号",
-            _=>"上下键选择 · Enter / A 或点击换上，再选一次摘下 · 只有光效、不加数值，联机时队友也看得到"};
+            4=>"上下键选择 · Enter / A 或点击换上，再选一次摘下 · 只有光效、不加数值，联机时队友也看得到",
+            5=>"PgUp / PgDn 或 LT / RT 分类 · 方向键选择 · Enter / A 开关 · 空格 / Y 升级",
+            _=>"选择部位 · 点击防具立即幻化 · PgUp / PgDn 或 LT / RT 翻页 · 外观按角色保存"};
         text(60.0,846.0,hint,DIM,0.8,0.0);
         let pos=p(1220.0,822.0);let extent=[320.0*s,60.0*s];
         ui.set_cursor_screen_pos(pos);ui.set_window_font_scale(s);
@@ -351,12 +371,14 @@ fn codex(ui:&Ui,archive:&mut Archive,layout:&Layout,icon:&mut dyn FnMut(u32)->Op
     text(p(1130.0,764.0),"只统计非调试旅程，整局结束后计入",DIM,0.76,0.0);
 }
 
-const TABS:[&str;5]=["往期旅程","图鉴","传承","称号","光环"];
+const TABS:[&str;7]=["往期旅程","图鉴","传承","称号","光环","武器偏好","防具幻化"];
+const NO_AURA:erdtree_tower::auras::Aura=erdtree_tower::auras::Aura{id:0,name:"无光环",vfx:-1,source:"无特效",unlock:"默认设置",color:0xB0AAA0};
+fn aura_choice(row:usize)->Option<&'static erdtree_tower::auras::Aura> {if row==0 {Some(&NO_AURA)}else{erdtree_tower::auras::AURAS.get(row-1)}}
 /// 换上第 row 个光环；已经挂着时摘下
 fn wear_aura(archive:&mut Archive,row:usize,now:f64) {
-    let aura=&erdtree_tower::auras::AURAS[row];
+    let Some(aura)=aura_choice(row) else{return;};
     let Some((owner,_))=archive.legacy else{archive.notice=Some(("载入角色后才能更换光环".into(),now));return;};
-    if !archive.auras.contains(&aura.id) {archive.notice=Some((format!("尚未解锁：{}",aura.unlock),now));return;}
+    if aura.id!=0&&!archive.auras.contains(&aura.id) {archive.notice=Some((format!("尚未解锁：{}",aura.unlock),now));return;}
     let id=if crate::auras::worn()==aura.id {0}else{aura.id};
     archive.notice=Some((match crate::auras::choose(owner,id) {Ok(())=>if id==0 {"已摘下光环".into()}else{format!("已换上「{}」",aura.name)},Err(error)=>error},now));
 }
@@ -368,25 +390,25 @@ fn auras(ui:&Ui,archive:&mut Archive,moved:bool,ready:bool,s:f32,ox:f32,oy:f32) 
     };
     let worn=crate::auras::worn();
     text(800.0,176.0,&format!("已解锁 {} / {}",archive.auras.len(),erdtree_tower::auras::AURAS.len()),MUTED,0.9,0.5);
-    for (row,aura) in erdtree_tower::auras::AURAS.iter().enumerate() {
-        let (x,y)=(400.0,214.0+row as f32*64.0);let lit=archive.auras.contains(&aura.id);
+    for (row,aura) in std::iter::once(&NO_AURA).chain(erdtree_tower::auras::AURAS.iter()).enumerate() {
+        let (x,y)=(400.0,214.0+row as f32*56.0);let lit=aura.id==0||archive.auras.contains(&aura.id);
         ui.set_cursor_screen_pos(p(x,y));ui.set_window_font_scale(s);
-        if ui.invisible_button(format!("aura-{row}"),[800.0*s,56.0*s])&&ready {archive.aura_row=row;wear_aura(archive,row,ui.time());}
+        if ui.invisible_button(format!("aura-{row}"),[800.0*s,50.0*s])&&ready {archive.aura_row=row;wear_aura(archive,row,ui.time());}
         if ui.is_item_hovered()&&moved {archive.aura_row=row;}
         let focus=archive.aura_row==row;let on=worn==aura.id;
         let draw=ui.get_window_draw_list();
-        draw.add_rect(p(x,y),p(x+800.0,y+56.0),ImColor32::from_rgba(24,20,16,if focus{220}else{150})).filled(true).rounding(6.0*s).build();
-        if focus||on {draw.add_rect(p(x,y),p(x+800.0,y+56.0),ImColor32::from_rgba(214,180,112,if on{240}else{140})).rounding(6.0*s).thickness(if on{2.5}else{1.5}*s).build();}
+        draw.add_rect(p(x,y),p(x+800.0,y+50.0),ImColor32::from_rgba(24,20,16,if focus{220}else{150})).filled(true).rounding(6.0*s).build();
+        if focus||on {draw.add_rect(p(x,y),p(x+800.0,y+50.0),ImColor32::from_rgba(214,180,112,if on{240}else{140})).rounding(6.0*s).thickness(if on{2.5}else{1.5}*s).build();}
         let c=aura.color;let (r,g,b)=((c>>16) as u8,(c>>8) as u8,c as u8);
-        let pulse=if lit {0.6+0.4*(ui.time() as f32*2.2+row as f32).sin().abs()}else{0.25};
+        let pulse=if aura.id==0 {0.6}else if lit {0.6+0.4*(ui.time() as f32*2.2+row as f32).sin().abs()}else{0.25};
         draw.add_circle(p(x+34.0,y+28.0),15.0*s,ImColor32::from_rgba(r,g,b,(70.0*pulse) as u8)).filled(true).build();
         draw.add_circle(p(x+34.0,y+28.0),8.0*s,ImColor32::from_rgba(r,g,b,(255.0*pulse) as u8)).filled(true).build();
         drop(draw);
         let color=if lit{[f32::from(r)/255.0,f32::from(g)/255.0,f32::from(b)/255.0,1.0]}else{DIM};
         text(x+64.0,y+8.0,if lit{aura.name}else{"？？？"},color,1.05,0.0);
-        text(x+64.0,y+32.0,&format!("原版光效：{}",aura.source),MUTED,0.72,0.0);
+        text(x+64.0,y+32.0,&if aura.id==0 {"无身体光效、无粒子、无地面法阵".into()}else{format!("原版光效：{}",aura.source)},MUTED,0.72,0.0);
         text(x+330.0,y+18.0,aura.unlock,if lit{MUTED}else{DIM},0.8,0.0);
-        if on {text(x+770.0,y+16.0,"已换上",GOLD,0.95,1.0);}
+        if on {text(x+770.0,y+16.0,if aura.id==0 {"已选用"}else{"已换上"},GOLD,0.95,1.0);}
     }
     if let Some((notice,at))=&archive.notice {if ui.time()-at<3.0 {text(800.0,800.0,notice,GOLD,0.9,0.5);}}
 }
@@ -432,6 +454,95 @@ fn titles(ui:&Ui,archive:&mut Archive,moved:bool,ready:bool,s:f32,ox:f32,oy:f32)
     if let Some((notice,at))=&archive.notice {if ui.time()-at<3.0 {text(800.0,780.0,notice,GOLD,0.9,0.5);}}
 }
 /// 传承页的按键：职业列表上下切换职业，右移进入护符列表，上下选择、A 选用
+const WEAPON_GROUPS:[&str;8]=["剑与刀","槌与斧","长柄武器","其他近战","盾牌","施法工具","弓弩","幽影武器"];
+fn weapon_rows(group:usize)->Vec<usize> {
+    erdtree_tower::weapon_training::TYPES.iter().enumerate().filter(|(_, (kind,_))|match group {
+        0=>(1..=10).contains(kind),1=>(11..=15).contains(kind),2=>(16..=19).contains(kind),3=>(20..=24).contains(kind),
+        4=>(30..=32).contains(kind),5=>(33..=34).contains(kind),6=>(40..=44).contains(kind),_=>(60..=68).contains(kind),
+    }).map(|(i,_)|i+1).collect()
+}
+fn set_weapon_group(archive:&mut Archive,group:usize) {archive.weapon_group=group;archive.weapon_row=weapon_rows(group)[0];}
+fn train_weapon(archive:&mut Archive,upgrade:bool,now:f64) {
+    let Some((owner,_))=archive.legacy.as_ref() else {archive.notice=Some(("请先载入角色".into(),now));return;};
+    let owner=*owner;let mut data=crate::legacy::load(owner);
+    let selected=archive.weapon_row.checked_sub(1).and_then(|i|erdtree_tower::weapon_training::TYPES.get(i)).map(|&(id,_)|id);
+    let result=if upgrade {selected.ok_or("请先选择要升级的武器类型").and_then(|kind|data.upgrade_training(kind))}
+        else if selected.is_some_and(|kind|data.training.level_for(kind)==0){Err("请先升级此类武器研习")}
+        else{data.training.choose(selected)};
+    let result=result.map_err(str::to_owned).and_then(|_|crate::legacy::save(owner,&data));
+    let message=match result {
+        Ok(())=>{archive.legacy=Some((owner,data));if upgrade {"升级成功，下一局生效"}else{"偏好已保存，下一局生效"}.to_string()},
+        Err(error)=>error,
+    };
+    archive.notice=Some((message,now));
+}
+#[allow(clippy::too_many_arguments)]
+fn weapons(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureId>,ready:bool,s:f32,ox:f32,oy:f32) {
+    use erdtree_tower::weapon_training::{TYPES,weight_percent};
+    let p=|x:f32,y:f32|[ox+x*s,oy+y*s];
+    let text=|x:f32,y:f32,value:&str,color:[f32;4],scale:f32| {
+        ui.set_window_font_scale(scale*s);ui.set_cursor_screen_pos(p(x,y));ui.text_colored(color,value);
+    };
+    let Some((_,data))=archive.legacy.clone() else {text(600.0,430.0,"载入角色后才能设置武器偏好",DIM,1.0);return;};
+    let enabled=data.training.preferences().len();
+    text(76.0,178.0,"兵 器 研 习",GOLD,1.45);
+    text(300.0,188.0,"投资你的打法，让心仪的武器更常出现",MUTED,0.95);
+    text(1160.0,184.0,&format!("传承点  {}",data.training_balance()),GOLD,1.2);
+    text(76.0,234.0,"武器分类",DIM,0.85);
+    for (group,name) in WEAPON_GROUPS.iter().enumerate() {
+        let y=274.0+group as f32*55.0;
+        ui.set_cursor_screen_pos(p(64.0,y));ui.set_window_font_scale(s);
+        if ui.invisible_button(format!("weapon-group-{group}"),[206.0*s,45.0*s])&&ready {set_weapon_group(archive,group);}
+        let active=archive.weapon_group==group;let hover=ui.is_item_hovered();
+        let draw=ui.get_window_draw_list();
+        if active||hover {draw.add_rect(p(64.0,y),p(270.0,y+45.0),ImColor32::from_rgba(66,53,31,if active{210}else{100})).filled(true).build();}
+        if active {draw.add_rect(p(64.0,y+6.0),p(67.0,y+39.0),ImColor32::from_rgba(231,197,126,255)).filled(true).build();}
+        drop(draw);text(82.0,y+10.0,name,if active{GOLD}else{MUTED},1.0);
+        text(235.0,y+12.0,&weapon_rows(group).len().to_string(),DIM,0.85);
+    }
+    text(76.0,748.0,&format!("已启用 {enabled} 类偏好"),GOLD,0.9);
+    text(300.0,235.0,WEAPON_GROUPS[archive.weapon_group],WHITE,1.1);
+    text(750.0,239.0,"金色圆点表示已启用",MUTED,0.8);
+    for (slot,row) in weapon_rows(archive.weapon_group).into_iter().enumerate() {
+        let (kind,name)=TYPES[row-1];let level=data.training.level_for(kind);let active=data.training.enabled.contains(&kind)&&level>0;
+        let (x,y)=(300.0+(slot%3) as f32*256.0,277.0+(slot/3) as f32*126.0);
+        ui.set_cursor_screen_pos(p(x,y));ui.set_window_font_scale(s);
+        if ui.invisible_button(format!("weapon-pref-{row}"),[240.0*s,110.0*s])&&ready {archive.weapon_row=row;}
+        let focus=archive.weapon_row==row;let hover=ui.is_item_hovered();
+        let draw=ui.get_window_draw_list();
+        draw.add_rect(p(x,y),p(x+240.0,y+110.0),if focus {ImColor32::from_rgba(57,47,30,245)}else{ImColor32::from_rgba(17,19,19,235)}).filled(true).rounding(5.0*s).build();
+        draw.add_rect(p(x,y),p(x+240.0,y+110.0),if focus {ImColor32::from_rgba(228,197,139,250)}else if hover {ImColor32::from_rgba(160,147,120,200)}else{ImColor32::from_rgba(90,88,76,120)}).rounding(5.0*s).thickness(if focus{1.8*s}else{s}).build();
+        if let Some(texture)=crate::reward_ui::weapon_type_icon(kind).and_then(&mut *icon) {draw.add_image(texture,p(x+8.0,y+12.0),p(x+86.0,y+90.0)).build();}
+        if active {draw.add_circle(p(x+223.0,y+17.0),3.0*s,ImColor32::from_rgba(242,203,118,255)).filled(true).build();}
+        for pip in 0..5 {draw.add_rect(p(x+98.0+pip as f32*24.0,y+83.0),p(x+116.0+pip as f32*24.0,y+87.0),if pip<level {ImColor32::from_rgba(225,188,113,255)}else{ImColor32::from_rgba(76,73,63,230)}).filled(true).build();}
+        drop(draw);
+        text(x+98.0,y+15.0,name,WHITE,1.03);
+        text(x+98.0,y+49.0,&format!("{:.1}×  /  Lv {level}",weight_percent(level) as f32/100.0),if active{GOLD}else{MUTED},0.86);
+    }
+    let (kind,name)=TYPES[archive.weapon_row.saturating_sub(1).min(TYPES.len()-1)];
+    let level=data.training.level_for(kind);let active=data.training.enabled.contains(&kind);let cost=data.training.cost_for(kind);
+    panel(&ui.get_window_draw_list(),p(1100.0,236.0),p(1530.0,800.0),s);
+    if let Some(texture)=crate::reward_ui::weapon_type_icon(kind).and_then(&mut *icon) {ui.get_window_draw_list().add_image(texture,p(1142.0,260.0),p(1242.0,360.0)).build();}
+    text(1260.0,274.0,name,GOLD,1.5);
+    text(1260.0,318.0,&format!("研习等级 {level} / 5"),MUTED,0.92);
+    text(1132.0,386.0,"抽取权重",MUTED,0.9);
+    text(1132.0,420.0,&format!("{:.1}×",weight_percent(level) as f32/100.0),WHITE,2.1);
+    if level<5 {text(1270.0,434.0,&format!("→  {:.1}×",weight_percent(level+1) as f32/100.0),GOLD,1.3);}
+    else {text(1270.0,434.0,"研习已满级",GOLD,1.0);}
+    wrapped(ui,p(1132.0,488.0),ox+1498.0*s,"只影响武器类型的相对出率，不提高金紫品质。每类独立升级，下一局生效。",MUTED,0.88*s);
+    let can_upgrade=cost.is_some_and(|c|data.training_balance()>=c);
+    let label=match cost {None=>"研习已满级".to_string(),Some(c) if !can_upgrade=>format!("传承点不足 · 需要 {c}"),Some(c)=>format!("提升研习  ·  {c} 传承点")};
+    ui.set_cursor_screen_pos(p(1132.0,584.0));ui.set_window_font_scale(s);
+    if ui.invisible_button("weapon-training-upgrade",[366.0*s,58.0*s])&&ready&&can_upgrade {train_weapon(archive,true,ui.time());}
+    let draw=ui.get_window_draw_list();
+    draw.add_rect(p(1132.0,584.0),p(1498.0,642.0),if can_upgrade{ImColor32::from_rgba(161,124,59,235)}else{ImColor32::from_rgba(43,41,35,220)}).filled(true).rounding(4.0*s).build();drop(draw);
+    text(1152.0,601.0,&label,if can_upgrade{WHITE}else{DIM},0.98);
+    ui.set_cursor_screen_pos(p(1132.0,658.0));ui.set_window_font_scale(s);
+    if ui.invisible_button("weapon-training-toggle",[366.0*s,44.0*s])&&ready&&level>0 {train_weapon(archive,false,ui.time());}
+    text(1152.0,668.0,if level==0{"升级后即可启用偏好"}else if active{"● 已启用偏好   ·   点击关闭"}else{"启用此类偏好   [Enter / A]"},if active&&level>0{GOLD}else{MUTED},0.92);
+    if let Some((message,at))=&archive.notice&&ui.time()-at<4.0 {wrapped(ui,p(1132.0,731.0),ox+1498.0*s,message,BOON,0.86*s);}
+    else {wrapped(ui,p(1132.0,731.0),ox+1498.0*s,"完成旅程获得传承点，花费不扣职业经验。",DIM,0.8*s);}
+}
 fn legacy_keys(archive:&mut Archive,pressed:&dyn Fn(&[Key])->bool,now:f64) {
     if archive.legacy.is_none() {return;}
     let (left,right,up,down)=(pressed(&[Key::LeftArrow,Key::A,Key::GamepadDpadLeft]),pressed(&[Key::RightArrow,Key::D,Key::GamepadDpadRight]),
@@ -528,6 +639,27 @@ fn legacy(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<TextureId
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn weapon_categories_cover_every_type_once_and_have_icons() {
+        let mut rows=Vec::new();
+        for group in 0..WEAPON_GROUPS.len() {
+            let current=weapon_rows(group);assert!(!current.is_empty()&&current.len()<=12);
+            rows.extend(current);
+        }
+        rows.sort_unstable();
+        assert_eq!(rows,(1..=erdtree_tower::weapon_training::TYPES.len()).collect::<Vec<_>>());
+        for &(kind,name) in erdtree_tower::weapon_training::TYPES {
+            assert!(crate::reward_ui::weapon_type_icon(kind).is_some(),"{name} missing icon");
+        }
+        let mut archive=Archive::new(vec![]);
+        for group in 0..WEAPON_GROUPS.len(){set_weapon_group(&mut archive,group);assert!(weapon_rows(group).contains(&archive.weapon_row));}
+    }
+    #[test]
+    fn aura_list_starts_with_no_effect_and_preserves_existing_ids() {
+        assert_eq!(aura_choice(0).unwrap().id,0);
+        for (row,aura) in erdtree_tower::auras::AURAS.iter().enumerate(){assert_eq!(aura_choice(row+1).unwrap().id,aura.id);}
+        assert!(aura_choice(erdtree_tower::auras::AURAS.len()+1).is_none());
+    }
     #[test]
     fn progression_opens_legacy_with_class_focus_without_changing_archive_default() {
         let archive=Archive::new(vec![]);

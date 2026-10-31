@@ -256,6 +256,7 @@ impl Hub {
             run.set_law(std::mem::take(&mut self.law))?;
             if !run.law.is_empty() {super::log(format!("TOWER_LAW start code={} score={}",run.law.code(),run.law.score()));}
             run.set_start_talisman(talisman)?;
+            run.weapon_preferences=super::legacy::load(self.owner).training.preferences();
             return Ok(Some(run));
         }
         if self.room.is_none() {

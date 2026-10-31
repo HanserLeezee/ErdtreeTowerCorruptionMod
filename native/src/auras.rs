@@ -5,17 +5,32 @@ use fromsoftware_shared::FromStatic;
 
 static WORN:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
 pub fn worn()->u8 {WORN.load(std::sync::atomic::Ordering::Relaxed)}
+pub fn countdown(chr:&mut ChrIns,active:bool) {
+    const EFFECT:i32=9870100;
+    let present=chr.special_effect.entries().any(|e|e.param_id==EFFECT);
+    let active=active&&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag();
+    if !active&&present {chr.remove_speffect(EFFECT);super::log("Countdown ground effect removed");}
+    if active&&!present&&unsafe {SoloParamRepository::instance()}.is_ok_and(|p|p.get::<SpEffectParam>(EFFECT as u32).is_some()) {
+        chr.apply_speffect(EFFECT,false);
+        let attached=chr.special_effect.entries().any(|e|e.param_id==EFFECT);
+        let loaded=unsafe {eldenring::cs::CSSfxImp::instance()}.ok().map(|sfx| {
+            let manager=unsafe {sfx.scene_ctrl.graphics_resource_manager.as_ref()};
+            manager.resource_container.fxr_definitions.iter().any(|fx|fx.id==9872000)
+        });
+        super::log(format!("Countdown ground effect requested: attached={attached} fxr_loaded={loaded:?}"));
+    }
+}
 
 fn path(owner:(u32,i32))->std::path::PathBuf {super::hub::path(owner,"aura")}
 /// 读取并校验本机的光环：没解锁的光环不挂
 pub fn load(owner:(u32,i32)) {
     let chosen=std::fs::read_to_string(path(owner)).ok().and_then(|s|s.trim().parse::<u8>().ok()).unwrap_or(0);
-    let worn=erdtree_tower::auras::worn(chosen,&super::run_log::records()).map_or(0,|a|a.id);
+    let worn=if super::cosmetic_unlocks::Unlocks::load(owner).aura(chosen,&super::run_log::records()){chosen}else{0};
     WORN.store(worn,std::sync::atomic::Ordering::Relaxed);
 }
 /// 选用光环（0 为摘下），立即写盘
 pub fn choose(owner:(u32,i32),id:u8)->Result<(),String> {
-    if id!=0&&!erdtree_tower::auras::unlocked(id,&super::run_log::records()) {return Err("这个光环还没有解锁".into());}
+    if id!=0&&!super::cosmetic_unlocks::Unlocks::load(owner).aura(id,&super::run_log::records()) {return Err("这个光环还没有解锁".into());}
     std::fs::write(path(owner),id.to_string()).map_err(|e|format!("光环保存失败：{e}"))?;
     WORN.store(id,std::sync::atomic::Ordering::Relaxed);
     super::log(format!("Aura chosen: {id}"));Ok(())

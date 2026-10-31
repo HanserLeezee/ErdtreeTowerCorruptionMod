@@ -82,6 +82,10 @@ pub fn affix_names()->&'static [String] {
 }
 /// 护符赐福的护符图标
 pub fn talisman_icon(id:u32)->Option<u32> {DETAILS.get(&(0x20000000|id)).map(|detail|detail.icon)}
+pub fn weapon_type_icon(kind:u8)->Option<u32> {
+    erdtree_tower::rewards::CATALOG.iter().filter(|i|i.kind==erdtree_tower::rewards::ItemKind::Weapon&&i.id/1_000_000==u32::from(kind))
+        .find_map(|i|DETAILS.get(&i.id).map(|d|d.icon))
+}
 /// 调试菜单：按名称或说明搜索可以直接发放的奖励物品（含词条装备）
 pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
     let query=query.trim();if query.is_empty() {return vec![];}

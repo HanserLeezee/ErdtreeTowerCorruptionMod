@@ -168,10 +168,14 @@ static class AffixTextFix {
             else if(existing.Text!=poolNames[i])throw new Exception($"Enemy bar name collision: {PoolNameFirst+i}");
         }
         var barNames=AffixBarNames(input,npcNames.Entries.ToDictionary(e=>e.ID,e=>e.Text)).ToList();
+        var renamedBars=new Dictionary<int,string>();
         foreach(var (id,text) in barNames) {
             var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==id);
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(id,text));added++;}
-            else if(existing.Text!=text)throw new Exception($"Affix bar name collision: {id}");
+            else if(existing.Text!=text) {
+                if(existing.Text?.Replace("涅槃的","不屈的",StringComparison.Ordinal)!=text)throw new Exception($"Affix bar name collision: {id}: '{existing.Text}' -> '{text}'");
+                existing.Text=text;renamedBars.Add(id,text);changed++;
+            }
         }
         npcNames.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));npcFile.Bytes=npcNames.Write();
         bool marker=AddMarker(input,output);
@@ -180,6 +184,10 @@ static class AffixTextFix {
         var dir=Path.Combine(output,"msg/zhocn");Directory.CreateDirectory(dir);var path=Path.Combine(dir,"item_dlc02.msgbnd.dcx");messages.Write(path);
         var written=BND4.Read(path).Files;var check=written.ToDictionary(f=>f.ID,f=>FMG.Read(f.Bytes).Entries.ToDictionary(e=>e.ID,e=>e.Text));
         foreach(var (fmg,entries) in before)foreach(var (id,text) in entries) {
+            if(fmg==npcFile.ID&&renamedBars.TryGetValue(id,out var renamed)) {
+                if(check[fmg][id]!=renamed)throw new Exception($"Affix rename mismatch: {id}");
+                continue;
+            }
             if((fmg is 10 or 20 or 24)&&retired.Contains(id)){if(check[fmg].ContainsKey(id))throw new Exception($"Retired spell text remains: {fmg}/{id}");continue;}
             if(check[fmg][id]!=(fmg==10&&id==TagTestGoods?TagTestGoodsName:(fmg is 11 or 21 or 22 or 25 or 26)?Expected(fmg,id,text):text))throw new Exception($"Unexpected text change: {fmg}/{id}");
             if(fmg==25&&Variant(id)&&check[fmg][id]?.Split('\n').Length>CaptionLines)throw new Exception($"Weapon caption still exceeds {CaptionLines} lines: {id}");

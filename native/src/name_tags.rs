@@ -14,12 +14,12 @@ fn path(owner:(u32,i32))->std::path::PathBuf {super::hub::path(owner,"title")}
 pub fn load(owner:(u32,i32)) {
     let chosen=std::fs::read_to_string(path(owner)).ok().and_then(|s|s.trim().parse::<u8>().ok()).unwrap_or(0);
     let records=super::run_log::records();
-    let worn=erdtree_tower::titles::worn(chosen,&records).map_or(0,|t|t.id);
+    let worn=if super::cosmetic_unlocks::Unlocks::load(owner).title(chosen,&records){chosen}else{0};
     WORN.store(worn,std::sync::atomic::Ordering::Relaxed);
 }
 /// 选用称号（0 为摘下），立即写盘
 pub fn choose(owner:(u32,i32),id:u8)->Result<(),String> {
-    if id!=0&&!erdtree_tower::titles::unlocked(id,&super::run_log::records()) {return Err("这个称号还没有解锁".into());}
+    if id!=0&&!super::cosmetic_unlocks::Unlocks::load(owner).title(id,&super::run_log::records()) {return Err("这个称号还没有解锁".into());}
     std::fs::write(path(owner),id.to_string()).map_err(|e|format!("称号保存失败：{e}"))?;
     WORN.store(id,std::sync::atomic::Ordering::Relaxed);
     super::log(format!("Title chosen: {id}"));Ok(())

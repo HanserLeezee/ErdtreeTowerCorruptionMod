@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+from transmog_build import build_transmog
 
 
 def build_native(project):
@@ -28,6 +29,7 @@ def build_native(project):
     native = target / 'release/erdtree_tower_preview.dll'
     if b'DX12 queue captured from submitted back-buffer PRESENT transition' not in native.read_bytes():
         raise RuntimeError('Built DLL is missing the DX12 back-buffer queue-discovery fix.')
+    shutil.copy2(build_transmog(project), native.with_name('tower_transmog.dll'))
     return native
 
 
@@ -36,6 +38,7 @@ def stage_native(project, destination, checksum=None):
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(native, destination)
+    shutil.copy2(native.with_name('tower_transmog.dll'), destination.with_name('tower_transmog.dll'))
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     if checksum is not None:
         Path(checksum).write_text(digest + '\n', encoding='ascii')

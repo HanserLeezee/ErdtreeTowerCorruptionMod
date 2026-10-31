@@ -10,23 +10,29 @@ fn offset(id:u32)->Result<u32,String> {
     let original=id.checked_sub(3000000).ok_or("事件守卫编号无效")?;
     entity(original)?;Ok(((original-48000000)/10000-1)*300+original%10000)
 }
-fn controls(id:u32)->Result<(u32,u32),String> {let n=offset(id)?;Ok((45003000+n,45002000+n))}
+fn controls(id:u32)->Result<(u32,u32),String> {if let Some(c)=enemies::map_controls(id){return Ok(c);}let n=offset(id)?;Ok((45003000+n,45002000+n))}
 fn positions(id:u32,slot:usize)->Result<[(u32,bool);4],String> {
     if slot>=12{return Err("事件守卫站位超限".into());}
     let n=offset(id)?*4;
     let first=if n<1800 {45012000+n}else{45022000+n-1800};
     Ok(std::array::from_fn(|bit|(first+bit as u32,slot&(1<<bit)!=0)))
 }
-fn engaged(started:bool,elapsed:Duration)->bool {started&&elapsed>=Duration::from_secs(5)}
+fn engaged(started:bool,elapsed:Duration)->bool {started&&elapsed>=super::travel::PREPARATION}
 pub struct Guards {
     specs:Vec<Enemy>,ids:Vec<u32>,bound:Vec<(FieldInsHandle,usize)>,reset:bool,requested:bool,
     clock:Option<Instant>,active:bool,
+    combat:u32,
 }
 impl Guards {
     pub fn new(specs:Vec<Enemy>)->Result<Self,String> {
         if specs.is_empty()||specs.len()>12{return Err("事件守卫数量无效".into());}
         let ids=enemies::map_entities(&specs)?.into_iter().map(entity).collect::<Result<Vec<_>,_>>()?;
-        Ok(Self{specs,ids,bound:vec![],reset:false,requested:false,clock:None,active:false})
+        Ok(Self{specs,ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:COMBAT})
+    }
+    pub fn merchant()->Result<Self,String> {
+        let spec=enemies::debug_encounters().into_iter().flatten().find(|e|e.name=="铃珠猎人").ok_or("缺少铃珠猎人参数")?;
+        let ids=enemies::map_entities(&[spec])?;
+        Ok(Self{specs:vec![spec],ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:enemies::MAP_COMBAT_FLAG})
     }
     pub fn ready(&self)->bool {self.bound.len()==self.ids.len()}
     pub fn prepare(&mut self,world:&WorldChrMan)->Result<(),String> {
@@ -35,7 +41,8 @@ impl Guards {
         if !self.requested {
             for &id in &self.ids {if flag(controls(id)?.1)?{return Ok(());}}
             for (slot,&id) in self.ids.iter().enumerate() {
-                for (f,value) in positions(id,slot)?{set_flag(f,value)?;}
+                if self.combat==COMBAT {for (f,value) in positions(id,slot)?{set_flag(f,value)?;}}
+                else {enemies::position_map_entity(id,slot)?;}
                 set_flag(controls(id)?.0,true)?;
             }
             self.requested=true;return Ok(());
@@ -55,7 +62,7 @@ impl Guards {
         if !self.ready(){return Ok(false);}
         if started {self.clock.get_or_insert_with(Instant::now);}
         if !engaged(started,self.clock.map_or(Duration::ZERO,|t|t.elapsed())){return Ok(false);}
-        if !self.active {set_flag(COMBAT,true)?;self.active=true;super::log("Party event guards engaged after shared ready barrier");}
+        if !self.active {set_flag(self.combat,true)?;self.active=true;super::log("Map challenge engaged after ready barrier");}
         if !host{return Ok(false);}
         let mut dead=0;
         for (&(handle,address),(&id,spec)) in self.bound.iter().zip(self.ids.iter().zip(&self.specs)) {
@@ -66,7 +73,7 @@ impl Guards {
         Ok(dead==self.bound.len())
     }
     pub fn retire(&self) {
-        let _=set_flag(COMBAT,false);
+        let _=set_flag(self.combat,false);
         for &id in &self.ids {if let Ok((request,_))=controls(id){let _=set_flag(request,false);}}
     }
 }
@@ -92,8 +99,8 @@ mod tests {
     #[test]
     fn guards_cannot_fight_before_both_clients_bind_and_countdown_finishes() {
         assert!(!engaged(false,Duration::from_secs(20)));
-        assert!(!engaged(true,Duration::from_millis(4999)));
-        assert!(engaged(true,Duration::from_secs(5)));
+        assert!(!engaged(true,Duration::from_millis(2999)));
+        assert!(engaged(true,Duration::from_secs(3)));
     }
     #[test]
     fn event_rosters_for_all_acts_have_unique_guard_slots_in_the_event_map() {

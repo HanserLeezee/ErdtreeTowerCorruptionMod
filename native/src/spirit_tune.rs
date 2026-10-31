@@ -1,10 +1,8 @@
-// 营地调灵：小红帽（补瓶 NPC）的菜单里选“调灵”后弹出骨灰列表，选一个骨灰升到 max(自身, 持有过的最高等级) + 1（最多 +10），
-// 低级的好骨灰一次追上来。用掉一块强化石（营地发的那块用掉时，营地的一次服务也就用掉了，不能再补瓶）。
-// 列表画在叠加层上（原版对话菜单的选项文字只能是预先写好的文本）；选择交给对话的轮询在游戏任务里执行。
-use std::sync::{Mutex,atomic::{AtomicU8,Ordering}};
-use eldenring::cs::{EquipDataItem,EquipInventoryData,ItemCategory,ItemId,PlayerGameData};
-use hudhook::imgui::{Condition,Key,Ui};
-use erdtree_tower::rewards::{lookup,spirit_level,spirit_tune_target};
+// 营地原生调灵：临时设置追赶目标与单次凭证材料，关闭菜单后恢复参数。
+use std::sync::atomic::{AtomicBool,AtomicU8,Ordering};
+use eldenring::cs::{EquipParamGoods,EquipMtrlSetParam,ItemCategory,PlayerGameData,SoloParamRepository};
+use fromsoftware_shared::FromStatic;
+use erdtree_tower::rewards::{spirit_level,spirit_tune_target};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub struct Offer {pub source:u32,pub target:u32}
@@ -36,100 +34,86 @@ pub fn offers(data:&PlayerGameData)->Vec<Offer> {
         .filter(|id|spirit_level(0x40000000|id).is_some()).collect();
     choices(&owned,peak(data))
 }
-fn name(id:u32)->String {lookup(0x40000000|id).map_or_else(||format!("骨灰 {id}"),|i|i.name.to_owned())}
-fn level(id:u32)->u8 {spirit_level(0x40000000|id).unwrap_or(0)}
-fn base_name(id:u32)->String {name(erdtree_tower::rewards::spirit_base(0x40000000|id)&0x0fffffff)}
-
-/// 调灵：换成目标等级的骨灰，原来在快捷栏、随身包里的位置换成新骨灰，再用掉一块强化石
-pub fn tune(data:&mut PlayerGameData,offer:Offer)->Result<(),String> {
-    let before=super::smith::remaining(data);
-    if before==0||!offers(data).contains(&offer) {return Err("骨灰或强化石已变化，请重新选择".into());}
-    let remove_fn=super::items::checked_function(0x24d1e0,&[0x48,0x89,0x5c,0x24,0x20,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x41,0x56,0x41,0x57])?;
-    let source=ItemId::new(ItemCategory::Goods,offer.source).map_err(|e|e.to_string())?;
-    let target=ItemId::new(ItemCategory::Goods,offer.target).map_err(|e|e.to_string())?;
-    let voucher=ItemId::new(ItemCategory::Goods,super::smith::VOUCHER).map_err(|e|e.to_string())?;
-    let index=data.equipment.equip_inventory_data.items_data.find_item_idx(source).ok_or("骨灰已不在背包里")? as i32;
-    let equipment=&data.equipment;
-    let bound=|slots:&[EquipDataItem],ids:&[eldenring::cs::OptionalItemId]|->Vec<usize> {
-        slots.iter().zip(ids).enumerate().filter(|(_,(slot,id))|slot.index==index||id.as_valid()==Some(source)).map(|(i,_)|i).collect()
-    };
-    let quick=bound(&equipment.equip_item_data.quick_slots,&equipment.equipment_entries.quick_tems);
-    let pouch=bound(&equipment.equip_item_data.pouch_slots,&equipment.equipment_entries.pouch);
-    super::items::give(&[((0x40000000|offer.target) as i32,1,-1)])?;
-    if data.equipment.equip_inventory_data.items_data.get_entry(target).is_none() {return Err("调灵后的骨灰未进入背包，没有消耗任何东西".into());}
-    let remove:unsafe extern "C" fn(*mut EquipInventoryData,u32,i32)->usize=unsafe {std::mem::transmute(remove_fn)};
-    for item in [source,voucher] {
-        let inventory=&mut data.equipment.equip_inventory_data;
-        let index=inventory.items_data.find_item_idx(item).ok_or("调灵材料发生变化")?;
-        unsafe {remove(inventory,index,1);}
-    }
-    let items=&data.equipment.equip_inventory_data.items_data;
-    let (handle,index)=(items.get_entry(target).ok_or("调灵后的骨灰句柄不存在")?.gaitem_handle,items.find_item_idx(target).ok_or("调灵后的骨灰索引不存在")? as i32);
-    let equipment=&mut data.equipment;
-    for &i in &quick {equipment.equip_item_data.quick_slots[i]=EquipDataItem{gaitem_handle:handle,index};equipment.equipment_entries.quick_tems[i]=target.into();}
-    for &i in &pouch {equipment.equip_item_data.pouch_slots[i]=EquipDataItem{gaitem_handle:handle,index};equipment.equipment_entries.pouch[i]=target.into();}
-    if super::smith::remaining(data)+1!=before {return Err("强化石消耗未确认，请停止操作".into());}
-    set_peak(PEAK.load(Ordering::Relaxed).max(level(offer.target)));
-    super::log(format!("Spirit ash tuned: {} -> {} (quick {quick:?}, pouch {pouch:?}), voucher consumed",offer.source,offer.target));
-    Ok(())
+const MATERIAL:u32=700000;
+pub const OPEN_EVENT:i32=136;
+pub const MENU_KIND:i32=23;
+static ACTIVE:AtomicBool=AtomicBool::new(false);
+fn native_fields(id:u32,offers:&[Offer])->[i32;3] {
+    [offers.iter().find(|o|o.source==id).map_or(-1,|o|o.target as i32),MATERIAL as i32,0]
 }
-
-/// 叠加层上的骨灰列表：打开 → 选中（或取消）→ 对话轮询取走结果
-enum Picker {Closed,Open{offers:Vec<Offer>,focus:usize,confirm:bool},Done(Option<Offer>)}
-static PICKER:Mutex<Picker>=Mutex::new(Picker::Closed);
-pub fn open_picker(offers:Vec<Offer>) {if let Ok(mut p)=PICKER.lock(){*p=Picker::Open{offers,focus:0,confirm:false};}}
-pub fn active()->bool {PICKER.lock().is_ok_and(|p|matches!(*p,Picker::Open{..}))}
-/// None：还在选；Some(None)：取消；Some(Some(offer))：选定
-pub fn take_result()->Option<Option<Offer>> {
-    let mut p=PICKER.lock().ok()?;
-    match std::mem::replace(&mut *p,Picker::Closed) {Picker::Done(result)=>Some(result),Picker::Closed=>Some(None),open=>{*p=open;None}}
+fn fields(row:&eldenring::param::EQUIP_PARAM_GOODS_ST)->[i32;3] {[row.reinforce_goods_id(),row.reinforce_material_id(),row.reinforce_price()]}
+fn set_fields(row:&mut eldenring::param::EQUIP_PARAM_GOODS_ST,value:[i32;3]) {
+    row.set_reinforce_goods_id(value[0]);row.set_reinforce_material_id(value[1]);row.set_reinforce_price(value[2]);
 }
-/// 离开营地或对话中断时关掉列表
-pub fn close() {if let Ok(mut p)=PICKER.lock(){if matches!(*p,Picker::Open{..}){*p=Picker::Done(None);}}}
-
-pub fn draw(ui:&Ui) {
-    let Ok(mut picker)=PICKER.lock() else{return};
-    let Picker::Open{offers,focus,confirm}=&mut *picker else{return};
-    let pressed=|keys:&[Key]|keys.iter().any(|k|ui.is_key_pressed(*k));
-    let mut result:Option<Option<Offer>>=None;
-    if *confirm {
-        if pressed(&[Key::Enter,Key::GamepadFaceDown]) {result=Some(Some(offers[*focus]));}
-        else if pressed(&[Key::Escape,Key::GamepadFaceRight]) {*confirm=false;}
-    } else {
-        if pressed(&[Key::UpArrow,Key::W,Key::GamepadDpadUp]) {*focus=(*focus+offers.len()-1)%offers.len();}
-        if pressed(&[Key::DownArrow,Key::S,Key::GamepadDpadDown]) {*focus=(*focus+1)%offers.len();}
-        if pressed(&[Key::Enter,Key::GamepadFaceDown]) {*confirm=true;}
-        else if pressed(&[Key::Escape,Key::GamepadFaceRight]) {result=Some(None);}
-    }
-    let size=ui.io().display_size;let s=(size[1]/1080.0).max(0.7);
-    let gold=[0.92,0.80,0.52,1.0];let dim=[0.72,0.68,0.60,1.0];
-    ui.window("调灵##spirit-tune").position([size[0]*0.5,size[1]*0.5],Condition::Always).position_pivot([0.5,0.5])
-        .size([560.0*s,0.0],Condition::Always).title_bar(false).resizable(false).movable(false).collapsible(false).bg_alpha(0.94)
-        .build(|| {
-            let scale=ui.push_style_var(hudhook::imgui::StyleVar::ItemSpacing([8.0*s,8.0*s]));
-            ui.text_colored(gold,"调灵 · 强化骨灰");
-            ui.text_colored(dim,"选一个骨灰升到「当前骨灰等级 +1」（当前等级取持有过的最高骨灰与武器等价强化中较高的），低级骨灰一次追上来。\n用掉一块强化石；若用的是本次营地发的那块，就不能再补瓶。");
-            ui.separator();
-            for (i,offer) in offers.iter().enumerate() {
-                let label=format!("{}　+{} → +{}##tune{i}",base_name(offer.source),level(offer.source),level(offer.target));
-                if ui.selectable_config(&label).selected(i==*focus).size([0.0,30.0*s]).build() {*focus=i;*confirm=true;}
-                if ui.is_item_hovered()&&!*confirm {*focus=i;}
+struct Patch {id:u32,address:usize,before:[i32;3],after:[i32;3]}
+impl Patch {
+    fn can_restore(&self,address:usize,current:[i32;3])->bool {address==self.address&&current==self.after}
+}
+pub struct Session {rows:Vec<Patch>}
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Ok(params)=unsafe {SoloParamRepository::instance_mut()} {
+            for patch in &self.rows {
+                if let Some(row)=params.get_mut::<EquipParamGoods>(patch.id)
+                    &&patch.can_restore(row as *mut _ as usize,fields(row)) {set_fields(row,patch.before);}
             }
-            ui.separator();
-            if *confirm {
-                let offer=offers[*focus];
-                ui.text_colored(gold,format!("将「{}」从 +{} 调灵到 +{}？",base_name(offer.source),level(offer.source),level(offer.target)));
-                if ui.button_with_size("确认（Enter / A）",[200.0*s,34.0*s]) {result=Some(Some(offer));}
-                ui.same_line();
-                if ui.button_with_size("返回（Esc / B）",[200.0*s,34.0*s]) {*confirm=false;}
-            } else if ui.button_with_size("离开（Esc / B）",[200.0*s,34.0*s]) {result=Some(None);}
-            scale.pop();
-        });
-    if let Some(result)=result {*picker=Picker::Done(result);}
+        }
+        ACTIVE.store(false,Ordering::Release);
+        super::log("Native spirit tuning parameter session restored");
+    }
+}
+/// Only while the native menu is open: the engine previews and commits the same target/material pair.
+pub fn prepare(data:&PlayerGameData)->Result<Session,String> {
+    if super::smith::remaining(data)==0 {return Err("强化石不足".into());}
+    let offers=offers(data);
+    if offers.is_empty(){return Err("没有可调灵的骨灰".into());}
+    let params=unsafe {SoloParamRepository::instance_mut()}.map_err(|_|"骨灰参数未就绪")?;
+    let material=params.get::<EquipMtrlSetParam>(MATERIAL).ok_or("营地强化材料参数缺失")?;
+    if material.material_id01()!=super::smith::VOUCHER as i32||material.material_cate01()!=4||material.item_num01()!=1
+        ||[material.item_num02(),material.item_num03(),material.item_num04(),material.item_num05(),material.item_num06()].iter().any(|n|*n>0) {
+        return Err("营地强化材料必须只消耗一张凭证".into());
+    }
+    let ids:std::collections::BTreeSet<u32>=erdtree_tower::rewards::CATALOG.iter()
+        .filter(|item|item.kind==erdtree_tower::rewards::ItemKind::Spirit)
+        .flat_map(|item|{let base=erdtree_tower::rewards::spirit_base(item.id)&0x0fffffff;(0..=10).map(move |n|base+n)}).collect();
+    for offer in &offers {
+        if !ids.contains(&offer.source)||!ids.contains(&offer.target)||params.get::<EquipParamGoods>(offer.target).is_none() {
+            return Err("调灵目标参数缺失，未打开菜单".into());
+        }
+    }
+    let mut rows=Vec::new();
+    for id in ids {
+        let row=params.get::<EquipParamGoods>(id).ok_or("骨灰等级参数缺失，未打开菜单")?;
+        rows.push(Patch{id,address:row as *const _ as usize,before:fields(row),after:native_fields(id,&offers)});
+    }
+    if ACTIVE.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){return Err("调灵菜单已打开".into());}
+    let session=Session{rows};
+    for patch in &session.rows {set_fields(params.get_mut::<EquipParamGoods>(patch.id).expect("validated spirit row"),patch.after);}
+    super::log(format!("Native spirit tuning: {offers:?}, material={MATERIAL}, runes=0"));
+    Ok(session)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_menu_matches_the_games_buddy_upgrade_entry() {
+        assert_eq!(super::OPEN_EVENT,136);
+        assert_eq!(super::MENU_KIND,eldenring::cs::MenuType::UnkEvent136 as i32);
+    }
+    #[test]
+    fn native_preview_uses_catchup_target_one_voucher_and_no_runes() {
+        let offer=super::Offer{source:200000,target:200007};
+        assert_eq!(super::native_fields(200000,&[offer]),[200007,700000,0]);
+        assert_eq!(super::native_fields(200007,&[offer]),[-1,700000,0]);
+        assert_eq!(super::native_fields(201000,&[offer]),[-1,700000,0]);
+    }
+    #[test]
+    fn native_cleanup_only_restores_the_same_unchanged_parameter_row() {
+        let patch=super::Patch{id:200000,address:100,before:[200001,1,500],after:[200007,700000,0]};
+        assert!(patch.can_restore(100,patch.after));
+        assert!(!patch.can_restore(200,patch.after));
+        assert!(!patch.can_restore(100,[200009,700000,0]));
+    }
     #[test]
     fn choices_skip_maxed_and_already_owned_targets_and_catch_up_low_ashes() {
         let ash=erdtree_tower::rewards::CATALOG.iter().find(|i|i.kind==erdtree_tower::rewards::ItemKind::Spirit).unwrap().id&0x0fffffff;
