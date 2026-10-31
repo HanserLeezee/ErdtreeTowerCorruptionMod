@@ -2075,7 +2075,7 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
             data.rune_count=data.rune_count.saturating_add(amount).min(999_999_999);next.gold=data.rune_count;state.view.runes=data.rune_count;
             format!("卢恩 +{amount}")
         },
-        Command::TorchGive=>{let torch=next.new_torch((next.torch_rolls%4) as u8,0xde_b0)?;super::torch_proto::give(&torch)?;record(&next);state.view.run=Some(next.clone());format!("已获得火把（火把位 {}，法术 {}）",torch.slot,erdtree_tower::torches::SPELLS[usize::from(torch.spell)].name)},
+        Command::TorchGive=>{let torch=next.new_torch((next.torch_rolls%4) as u8,0xde_b0)?;super::torch_proto::give(&torch,&next.torches)?;record(&next);state.view.run=Some(next.clone());format!("已获得火把（火把位 {}，法术 {}）",torch.slot,erdtree_tower::torches::SPELLS[usize::from(torch.spell)].name)},
         Command::Item(id)=>{
             super::items::give_reward(data,id)?;
             format!("已获得 {}",erdtree_tower::rewards::lookup(id).map_or("物品",|i|i.name))

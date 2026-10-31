@@ -56,6 +56,8 @@ unsafe extern "C" fn spawn(manager:*mut c_void,out:*mut i32,data:*const SpawnDat
     unsafe {original(manager,out,data,error)};
 }
 pub fn ready()->bool {ORIGINAL.load(Ordering::Acquire)!=0}
+/// [HansFix] 发射子弹的原函数：星流钩子装上后，函数开头已被改成跳转，要走钩子的跳板调用原函数
+pub fn original_spawn()->Option<usize> {let f=ORIGINAL.load(Ordering::Acquire);(f!=0).then_some(f)}
 pub fn clear() {if let Ok(mut aim)=AIM.lock(){*aim=None;}}
 pub unsafe fn install()->Result<(),String> {
     let target=super::items::checked_function(0x395290,&[0x48,0x89,0x4c,0x24,0x08,0x57,0x48,0x83,0xec,0x30])?;

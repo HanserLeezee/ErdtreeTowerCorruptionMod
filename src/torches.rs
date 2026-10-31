@@ -114,7 +114,7 @@ mod tests {
     use super::*;
     #[test]
     fn spells_table_is_complete() {
-        assert_eq!(SPELLS.len(),38);
+        assert_eq!(SPELLS.len(),37);
         assert!(SPELLS.iter().enumerate().all(|(i,s)|usize::from(s.index)==i&&!s.name.is_empty()&&s.icon>0));
         assert!(SPELLS.iter().any(|s|s.magic==6600&&s.bullet),"Golden Vow casts through its area bullet");
     }

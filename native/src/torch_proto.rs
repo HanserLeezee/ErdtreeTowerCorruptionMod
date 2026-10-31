@@ -20,12 +20,15 @@ struct State {
     last: Option<(i32, i32, bool, bool)>,
     applied: Option<Vec<Torch>>,
     spells_text: bool,
+    fired: bool,
 }
-static STATE: Mutex<State> = Mutex::new(State { held_since: None, last: None, applied: None, spells_text: false });
+static STATE: Mutex<State> = Mutex::new(State { held_since: None, last: None, applied: None, spells_text: false, fired: false });
 
 /// 发一把火把（武器 = 它的火把位，战灰 = 它的法术）
-pub fn give(torch: &Torch) -> Result<(), String> {
-    apply_torches(std::slice::from_ref(torch), false);
+/// all：本局全部火把（含这一把）。先把名字装好再发放，否则拿到时的提示框会显示 ?WeaponName?
+pub fn give(torch: &Torch, all: &[Torch]) -> Result<(), String> {
+    apply_torches(all, true);
+    if let Ok(mut state) = STATE.lock() { state.applied = Some(all.to_vec()); }
     super::random_ashes::give(&[(torch.weapon_id() as i32, 1, torch.gem() as i32)])?;
     super::log(format!("HANSFIX_TORCH granted slot={} weapon={} base={} spell={} scaling={:?} affixes={:?}", torch.slot, torch.weapon_id(), torch.base, torch.spell, torch.scaling, torch.affixes));
     Ok(())
@@ -33,9 +36,6 @@ pub fn give(torch: &Torch) -> Result<(), String> {
 
 fn base_name(base: u32) -> String {
     super::hansfix_text::lookup(11, base).or_else(|| super::hansfix_text::lookup(310, base)).unwrap_or_else(|| "火把".into())
-}
-fn base_caption(base: u32) -> String {
-    super::hansfix_text::lookup(25, base).or_else(|| super::hansfix_text::lookup(312, base)).unwrap_or_default()
 }
 /// 把火把写进它的火把位（参数与文字）。all=true 时按整局的火把重写文字表
 fn apply_torches(list: &[Torch], all: bool) {
@@ -53,10 +53,8 @@ fn apply_torches(list: &[Torch], all: bool) {
     if all {
         let names = list.iter().map(|t| (t.weapon_id(), format!("{}{}", t.prefix(), base_name(t.base)))).collect();
         let captions = list.iter().map(|t| {
-            let spell = torches::SPELLS.get(usize::from(t.spell)).map_or("", |s| s.name);
-            let mut text = base_caption(t.base);
-            text.push_str(&format!("\n\n{}\n{}\n\n举起（防御）10 秒后自动释放战技：{}", t.scaling_line(), t.affix_lines().join("\n"), spell));
-            (t.weapon_id(), text)
+            // 说明只放模组的词条；补正看补正栏，战技看战技栏
+            (t.weapon_id(), format!("{}\n\n可以用来在铁匠处与其他武器合并以提升补正。", t.affix_lines().join("\n")))
         }).collect();
         let ok = super::hansfix_text::install_table(WEAPON_NAME, names) & super::hansfix_text::install_table(WEAPON_CAPTION, captions);
         super::log(format!("HANSFIX_TORCH slots applied torches={} texts={ok}", list.len()));
@@ -64,7 +62,7 @@ fn apply_torches(list: &[Torch], all: bool) {
 }
 fn install_spell_texts() -> bool {
     let spells = &*torches::SPELLS;
-    let caption = |s: &torches::Spell| format!("火把专用的法术战技。\n左手举起火把（防御）满 10 秒时自动释放「{}」，不做动作，无法手动发动。\n可以在火把之间互换。", s.name);
+    let caption = |s: &torches::Spell| format!("举起10秒后，可以释放战技：{}", s.name);
     let ok = [
         super::hansfix_text::install_table(ARTS_NAME, spells.iter().map(|s| (torches::ART_FIRST + u32::from(s.index), s.name.to_owned())).collect()),
         super::hansfix_text::install_table(ARTS_CAPTION, spells.iter().map(|s| (torches::ART_FIRST + u32::from(s.index), caption(s))).collect()),
@@ -112,10 +110,12 @@ pub fn sync(chr: &mut ChrIns, data: &PlayerGameData, run: Option<&erdtree_tower:
         if is_torch(weapon) { super::log(format!("HANSFIX_TORCH left={weapon} gem={gem} ours={ours} guard={guard} l1={l1}")); }
         state.last = Some((weapon, gem, guard, l1));
     }
-    let Some(spell) = spell.filter(|_| ours && (guard || l1)) else { state.held_since = None; return };
+    let Some(spell) = spell.filter(|_| ours && (guard || l1)) else { state.held_since = None; state.fired = false; return };
+    // 一次举起只释放一次：放下后再举起才重新计时（否则一直举着会每 10 秒叠一次特效和音效）
+    if state.fired { return; }
     let since = *state.held_since.get_or_insert_with(Instant::now);
     if since.elapsed() < HOLD { return; }
-    state.held_since = Some(Instant::now());
+    state.fired = true;
     cast(chr, spell);
 }
 
@@ -123,7 +123,7 @@ fn cast(chr: &mut ChrIns, spell: &torches::Spell) {
     let Ok(params) = (unsafe { SoloParamRepository::instance() }) else { return };
     let flash = (torches::FLASH_FIRST + u32::from(spell.index)) as i32;
     if params.get::<SpEffectParam>(flash as u32).is_some() { chr.apply_speffect(flash, false); }
-    let result = if spell.bullet { spawn_bullet(chr, spell.reference as i32) }
+    let result = if spell.bullet { spawn_bullet(chr, spell.reference as i32, spell.magic as i32) }
         else if params.get::<SpEffectParam>(spell.reference).is_some() { chr.apply_speffect(spell.reference as i32, false); Ok(()) }
         else { Err(format!("effect {} missing", spell.reference)) };
     match result {
@@ -136,18 +136,20 @@ fn cast(chr: &mut ChrIns, spell: &torches::Spell) {
 struct SpawnData([u8; 0x110]);
 type Spawn = unsafe extern "C" fn(*mut std::ffi::c_void, *mut i32, *const SpawnData, *mut i32);
 /// 以玩家为原点、面朝方向发射一个法术判定（不播动作）。布局与 star_stream 的 SpawnData / fromsoftware-rs 的 BulletSpawnData 一致
-fn spawn_bullet(chr: &ChrIns, bullet: i32) -> Result<(), String> {
+fn spawn_bullet(chr: &ChrIns, bullet: i32, magic: i32) -> Result<(), String> {
     use eldenring::cs::{Bullet, CSBulletManager};
     let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "参数未就绪")?;
     if params.get::<Bullet>(bullet as u32).is_none() { return Err(format!("bullet {bullet} missing")); }
     if size_of::<eldenring::cs::BulletSpawnData>() != size_of::<SpawnData>() { return Err("spawn layout mismatch".into()); }
-    let function = super::items::checked_function(0x3a2cb0, &[0x40, 0x53, 0x55, 0x56, 0x57, 0x48, 0x81, 0xec, 0x98, 0x07, 0x00, 0x00])?;
+    // 星流钩子已经把这个函数开头改成了跳转：有跳板就走跳板，没有再按特征码校验原函数
+    let function = match super::star_stream::original_spawn() {Some(f) => f, None => super::items::checked_function(0x3a2cb0, &[0x40, 0x53, 0x55, 0x56, 0x57, 0x48, 0x81, 0xec, 0x98, 0x07, 0x00, 0x00])?};
     let manager = unsafe { CSBulletManager::instance_mut() }.map_err(|_| "bullet manager not ready")?;
     let mut data = SpawnData([0; 0x110]);
     let owner = unsafe { std::ptr::read_unaligned((&chr.field_ins_handle as *const eldenring::cs::FieldInsHandle).cast::<u64>()) };
     let put_i32 = |data: &mut SpawnData, at: usize, v: i32| data.0[at..at + 4].copy_from_slice(&v.to_le_bytes());
     data.0[0..8].copy_from_slice(&owner.to_le_bytes());
-    put_i32(&mut data, 0x08, -1); put_i32(&mut data, 0x0c, -1);
+    // 带上法术编号：游戏按“这个玩家放出了这个法术”来处理（法术补正、效果、联机同步与原版施法释放时一致）
+    put_i32(&mut data, 0x08, -1); put_i32(&mut data, 0x0c, magic);
     put_i32(&mut data, 0x14, bullet);
     put_i32(&mut data, 0x18, -1); put_i32(&mut data, 0x1c, -1);
     data.0[0x20..0x28].fill(0xff);
