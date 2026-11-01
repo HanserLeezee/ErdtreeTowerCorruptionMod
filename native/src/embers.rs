@@ -9,6 +9,13 @@ const EXECUTION:i32=FIRST;
 const BLOOD:i32=FIRST+10;
 const FROST:i32=FIRST+11;
 const REVENGE:i32=FIRST+20;
+/// 圣杯余响：喝圣杯瓶后的增益（造成的伤害提高、受到的伤害降低），持续时间由运行时控制
+const ECHO:i32=FIRST+15;
+/// 法师余烬：施法时减伤、施法时霸体（韧性伤害 ×0）、专注消耗降低（常驻）、专注充足时增伤
+const BARRIER:i32=FIRST+16;
+const MEDITATION:i32=FIRST+17;
+const GLINTSTONE:i32=FIRST+18;
+const FULL_MOON:i32=FIRST+19;
 const FLASH:i32=FIRST+40;
 /// 灵唤铃的号令：挂在召唤物身上
 const SPIRIT_COMMAND:i32=FIRST+50;
@@ -62,7 +69,7 @@ fn observe_chain(chr:&ChrIns,level:u32) {
     if let Ok(mut trace)=CHAIN_TRACE.lock(){*trace=ChainTrace{level,resident:CRITICAL_HOOK_READY.load(Ordering::Acquire),marker:CRITICAL_PENDING.load(Ordering::Acquire),
         rate:row.map(|r|r.physics_attack_rate()),critical_only:row.is_some_and(|r|r.state_info()==367&&r.throw_attack_param_change()),effects:active.len()};}
 }
-fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,CHAIN_RESIDENT].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
+fn player_ids()->impl Iterator<Item=i32> {[EXECUTION,REVENGE,ECHO,BARRIER,MEDITATION,GLINTSTONE,FULL_MOON,CHAIN_RESIDENT].into_iter().chain((1..=embers::FRENZY_STACKS).map(frenzy_effect))}
 /// 叠层余烬不设上限：每种两行轮换（灵魂收容挂在召唤物身上，其余挂在玩家身上）。
 /// 层数变了就把新倍率写进没挂着的那一行、换上它，再摘掉旧的那一行；不改正在生效的那一行
 fn slots(ember:Ember)->Option<[i32;2]> {
@@ -122,6 +129,13 @@ pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight) {
     if CHAIN_OWNER.swap(owner,Ordering::AcqRel)!=owner{CRITICAL_PENDING.store(false,Ordering::Release);}
     if embers.contains(&Ember::Execution) {want.push(EXECUTION);}
     if fight.revenge_active() {want.push(REVENGE);}
+    if fight.echo_active() {want.push(ECHO);}
+    if embers.contains(&Ember::Glintstone) {want.push(GLINTSTONE);}
+    if fight.casting() {
+        if embers.contains(&Ember::Barrier) {want.push(BARRIER);}
+        if embers.contains(&Ember::Meditation) {want.push(MEDITATION);}
+    }
+    if fight.full_moon {want.push(FULL_MOON);}
     if fight.frenzy>0 {want.push(frenzy_effect(fight.frenzy));}
     let present:Vec<_>=chr.special_effect.entries().map(|e|e.param_id).collect();
     let stacks=run.map(|r|r.ember_stacks).unwrap_or_default();
@@ -148,7 +162,13 @@ fn own_handles(world:&WorldChrMan)->Vec<FieldInsHandle> {
 #[derive(Default)]
 pub struct Fight {
     key:Option<(u64,u8,usize)>,foes:Vec<Foe>,player_hp:Option<i32>,flasks:Option<u8>,
-    lifesteal:i64,rose:bool,dragon_ready:Option<Instant>,revenge_until:Option<Instant>,pub frenzy:u8,feasts:u8,missing:bool,
+    lifesteal:i64,rose:bool,dragon_ready:Option<Instant>,revenge_until:Option<Instant>,echo_until:Option<Instant>,pub frenzy:u8,
+    /// 施法时：按住施法键期间与松开后 CAST_LINGER_MS 内；cast_seen 只用于每场战斗记一次日志
+    cast_until:Option<Instant>,cast_seen:bool,
+    /// 蕾娜拉的满月：专注不低于 MOON_FP_PERCENT%
+    full_moon:bool,
+    /// 黑刀刺客的身法：退还翻滚与致命一击扣掉的精力
+    footwork:Footwork,feasts:u8,missing:bool,
     /// 上一帧在场的召唤物位置（灵骸迸裂在它消失时引爆）
     spirit:Option<[f32;3]>,
     /// 上一帧玩家身上有处刑之链的致命一击标记
@@ -161,6 +181,8 @@ pub struct Fight {
 impl Fight {
     pub fn active(&self)->bool {self.key.is_some()}
     pub fn revenge_active(&self)->bool {self.revenge_until.is_some_and(|until|Instant::now()<until)}
+    pub fn echo_active(&self)->bool {self.echo_until.is_some_and(|until|Instant::now()<until)}
+    pub fn casting(&self)->bool {self.cast_until.is_some_and(|until|Instant::now()<until)}
     /// foes：(句柄, 血条等级 enemies::bar_rank, 名单位置)；authority：房主或单人（敌人侧效果直接执行，否则交给房主）；
     /// party：联机（命中与击倒只算本机玩家与召唤物的）；keeper：灵魂收容当前层数
     pub fn tick(&mut self,world:&mut WorldChrMan,key:(u64,u8,usize),held:&[Ember],foes:&[(FieldInsHandle,u8,u8)],authority:bool,party:bool,flasks:Option<u8>,keeper:u32)->Events {
@@ -183,6 +205,28 @@ impl Fight {
         }
         let data=&player.chr_ins.modules.data;
         let (hp,max_hp,stamina,max_stamina)=(data.hp,data.max_hp,data.stamina,data.max_stamina);
+        // 法师余烬：施法键（主手、副手，含武器上的施法）按住即算施法，松开后再保持一会儿，出招动作放完前都算
+        if has(Ember::Barrier)||has(Ember::Meditation) {
+            let input=&player.chr_ins.modules.action_request.action_requests;
+            if input.magic_r()||input.magic_l()||input.magic_r2()||input.magic_l2() {
+                self.cast_until=Some(now+Duration::from_millis(embers::CAST_LINGER_MS));
+                if !self.cast_seen {self.cast_seen=true;super::log("TOWER_EMBER cast detected");}
+            }
+        }
+        // 黑刀刺客的身法：刚按下闪避键、短按松开（长按是冲刺）、刚进入致命一击时，退还这次动作扣掉的精力
+        let mut refund=0;
+        if has(Ember::Footwork) {
+            let request=&player.chr_ins.modules.action_request;
+            let (pressed,released)=(&request.new_action_presses,&request.released_actions);
+            if pressed.sp_move() {self.footwork.held_since=Some(now);}
+            let tap=released.sp_move()&&self.footwork.held_since.take().is_some_and(|t|now.duration_since(t)<FOOTWORK_TAP);
+            let dodge=pressed.sp_move()||tap||pressed.rolling()||pressed.backstep()||pressed.emergencystep();
+            let throwing=unsafe{std::ptr::addr_of!(player.chr_ins.modules.throw.throw_node.throw_state).cast::<u32>().read()}==3;
+            let critical=throwing&&!self.footwork.throwing;self.footwork.throwing=throwing;
+            refund=self.footwork.observe(stamina,dodge||critical,now);
+            if refund>0&&!self.footwork.logged {self.footwork.logged=true;super::log(format!("TOWER_EMBER footwork refund {refund} critical={critical}"));}
+        }
+        self.full_moon=has(Ember::FullMoon)&&data.max_fp>0&&i64::from(data.fp)*100>=i64::from(data.max_fp)*i64::from(embers::MOON_FP_PERCENT);
         let p=player.chr_ins.modules.physics.position;let here=[p.0,p.1,p.2];
         let taken=self.player_hp.map_or(0,|before|(before-hp).max(0));self.player_hp=Some(hp);
         // 敌人：命中与倒下。单人时都算自己的；联机时按敌人的 last_hit_by 只算本机玩家与召唤物的（队友的不算进自己的余烬）
@@ -247,8 +291,12 @@ impl Fight {
         }
         let rise=has(Ember::Rise)&&!self.rose&&i64::from(hp)*100<i64::from(max_hp)*i64::from(embers::RISE_BELOW_PERCENT);
         let dragon=has(Ember::DragonHeart)&&stamina<=0&&max_stamina>0&&self.dragon_ready.is_none_or(|t|now>=t);
-        if heal>0||rise||dragon {
+        if heal>0||rise||dragon||refund>0 {
             let data=&mut world.main_player.as_mut().unwrap().chr_ins.modules.data;
+            if refund>0 {
+                data.stamina=(i64::from(data.stamina.max(0))+i64::from(refund)).min(i64::from(data.max_stamina)) as i32;
+                self.footwork.last=Some(data.stamina);
+            }
             if rise {
                 data.hp=data.hp.max((i64::from(data.max_hp)*i64::from(embers::RISE_TO_PERCENT)/100) as i32);self.rose=true;
                 super::log(format!("TOWER_EMBER rise hp={}/{}",data.hp,data.max_hp));
@@ -285,7 +333,8 @@ impl Fight {
             for (index,foe) in foes.iter().enumerate() {if foe.alive&&distance(foe.pos,origin)<=radius {strikes.push((index,Strike::Wound{slot:foe.slot,ember}));}}
         };
         if has(Ember::Deathflame) {for &dead in &deaths {wound(self.foes[dead].pos,embers::DEATHFLAME_RADIUS,Ember::Deathflame,&self.foes);}}
-        if has(Ember::Echo)&&drank {wound(here,embers::ECHO_RADIUS,Ember::Echo,&self.foes);}
+        // 圣杯余响：喝圣杯瓶后一段时间内的增益（挂在玩家身上，由 sync 按 echo_until 挂上 / 摘掉；再喝一口重新计时）
+        if has(Ember::Echo)&&drank {self.echo_until=Some(Instant::now()+Duration::from_secs(embers::ECHO_SECONDS));}
         if has(Ember::SpiritBurst) && let Some(origin)=vanished {wound(origin,embers::SPIRIT_BURST_RADIUS,Ember::SpiritBurst,&self.foes);super::log("TOWER_EMBER spirit burst");}
         if has(Ember::Thorns)&&taken>0 {
             let nearest=self.foes.iter().enumerate().filter(|(_,f)|f.alive).min_by(|(_,a),(_,b)|distance(a.pos,here).total_cmp(&distance(b.pos,here)));
@@ -335,6 +384,42 @@ impl Fight {
             self.strike(world,index,request.strike);
         }
     }
+}
+/// 黑刀刺客的身法：动作开始后 FOOTWORK_ARM 内的第一次精力扣减退还；扣精力可能比识别早一两帧，识别前 FOOTWORK_RECENT 内的扣减也算
+const FOOTWORK_ARM:Duration=Duration::from_millis(600);
+const FOOTWORK_RECENT:Duration=Duration::from_millis(150);
+/// 闪避键按住不到这么久就松开算翻滚，更久是冲刺
+const FOOTWORK_TAP:Duration=Duration::from_millis(500);
+#[derive(Default)]
+struct Footwork {last:Option<i32>,recent:Option<(i32,Instant)>,armed:Option<Instant>,held_since:Option<Instant>,throwing:bool,logged:bool}
+impl Footwork {
+    /// stamina：本帧精力；trigger：本帧开始翻滚或致命一击。返回要退还的精力（每次动作只退一次）
+    fn observe(&mut self,stamina:i32,trigger:bool,now:Instant)->i32 {
+        let drop=self.last.map_or(0,|before|(before-stamina).max(0));self.last=Some(stamina);
+        if drop>0 {self.recent=Some((drop,now));}
+        if trigger {
+            if let Some((amount,at))=self.recent.take()&&now.duration_since(at)<=FOOTWORK_RECENT {self.armed=None;return amount;}
+            self.armed=Some(now+FOOTWORK_ARM);
+        }
+        if drop>0&&self.armed.is_some_and(|until|now<until) {self.armed=None;self.recent=None;return drop;}
+        0
+    }
+}
+#[test]
+fn footwork_refunds_one_drop_per_dodge_or_critical() {
+    let t=Instant::now();let ms=|n:u64|t+Duration::from_millis(n);
+    let mut f=Footwork::default();
+    assert_eq!(f.observe(100,false,ms(0)),0);
+    assert_eq!(f.observe(100,true,ms(16)),0,"dodge pressed, nothing spent yet");
+    assert_eq!(f.observe(80,false,ms(33)),20,"the roll's cost comes back");
+    f.last=Some(100);
+    assert_eq!(f.observe(70,false,ms(50)),0,"the next attack is paid");
+    f.last=Some(70);
+    assert_eq!(f.observe(50,false,ms(400)),0,"no dodge, no refund");
+    assert_eq!(f.observe(50,true,ms(480)),20,"spent a frame before the critical was seen");
+    f.last=Some(70);
+    assert_eq!(f.observe(70,true,ms(1000)),0);
+    assert_eq!(f.observe(60,false,ms(1700)),0,"armed window expired");
 }
 #[derive(Default)]
 struct CriticalEdge {counted:bool,clear_frames:u8}

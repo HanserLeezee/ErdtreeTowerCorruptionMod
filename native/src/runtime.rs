@@ -1244,6 +1244,8 @@ fn tick_locked() {
             }
         }}
     }
+    // 商店的铃珠猎人不走战斗流程，单独接上 Boss 血条
+    if let Some(hunter)=state.room.as_ref().and_then(|room|room.hunter.as_ref()) {bars.extend(hunter.bars(world));}
     super::boss_bars::sync(super::boss_bars::select(bars));
     if !game.warp_requested {member_combat(&mut state,world);}
     // [fix] Diagnostic switch: ERDTREE_TOWER_NO_ATTENDANT=1 skips the arena-side NPC entirely, to test
@@ -1347,7 +1349,10 @@ fn tick_locked() {
     let client_fighting=state.party.as_ref().is_some_and(|p|!p.host()&&!p.victory&&!p.defeated)
         &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
     // 联机的守卫战（所有人都没有 Pending）也拍快照，胜利时补骨灰要用
-    let ash_fighting=ash_tracking_active(state.travel.is_some(),state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting||state.party.as_ref().is_some_and(|p|p.event.combat_active()));
+    // 召唤师「群灵」也覆盖房间里的挑战：铃珠猎人、粪金龟狩猎、史东薇尔突围与泥头车生存（这些不走普通战斗流程，单独算进来）
+    let room_challenge=state.room.as_ref().is_some_and(|room|room.hunter.is_some()||room.scarabs.active())
+        ||state.view.run.as_ref().is_some_and(|run|run.regional_event.stormveil==Some(erdtree_tower::stormveil::Progress::Running));
+    let ash_fighting=ash_tracking_active(state.travel.is_some(),state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting||state.party.as_ref().is_some_and(|p|p.event.combat_active())||room_challenge);
     if ash_fighting&&!state.ash_tracking {
         match super::loadout::ash_snapshot(player_data) {
             Ok(before)=>{
@@ -2545,6 +2550,8 @@ fn tick_merchant(state:&mut Runtime,world:&WorldChrMan,room:&mut super::rooms::R
     }
     room.view.message=if started {"铃珠猎人已出现：击败后获得随机铃珠。"}else{"商人已倒下，正在等待全队加载铃珠猎人……"}.into();
     if hunter.poll(world,started,host)? {
+        // 召唤师「群灵」：击败铃珠猎人时召唤物还活着，补回这次用掉的骨灰
+        if let Some(run)=state.view.run.as_ref()&&keep_summoned_ash(world,run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
         if let Some(link)=state.party.as_mut(){link.merchant_phase(3)?;sync_merchant_reward(state)?;}
         else {
             let mut next=state.view.run.clone().unwrap();let kind=next.defeat_hunter()?;record_checked(&next)?;state.view.run=Some(next);
@@ -3038,7 +3045,11 @@ fn tick_scarabs(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms
         room.scarabs.rewarded(slot);
         super::log(format!("Scarab hunt reward: slot={slot}, item={}",item.name));
     }
-    if room.scarabs.done() {room.scarabs=Default::default();}
+    if room.scarabs.done() {
+        // 召唤师「群灵」：狩猎结束时召唤物还活着，补回这次用掉的骨灰
+        if let Some(run)=state.view.run.as_ref()&&keep_summoned_ash(world,run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
+        room.scarabs=Default::default();
+    }
     let active=room.scarabs.active();
     set_flag(45010942,active)?;set_flag(45010995,!active)?;
     set_flag(45010966,room.scarabs.ready())?;
@@ -3332,7 +3343,7 @@ fn first_used_ash(recorded:Option<u32>,before:&[(u32,u32)],candidates:[i32;2])->
     if recorded.is_some() {return None;}
     candidates.into_iter().filter(|raw|*raw>0).map(|raw|raw as u32&0x0fffffff).find(|id|before.iter().any(|(item,_)|item==id))
 }
-fn keep_summoned_ash(world:&mut WorldChrMan,run:&erdtree_tower::Run,summon_seen:Option<Instant>,before:&[(u32,u32)],used:Option<u32>)->bool {
+fn keep_summoned_ash(world:&WorldChrMan,run:&erdtree_tower::Run,summon_seen:Option<Instant>,before:&[(u32,u32)],used:Option<u32>)->bool {
     if !run.summoner() {return false;}
     let alive=world.summon_buddy_manager.player_has_alive_summon||summon_seen.is_some_and(|t|t.elapsed()<Duration::from_secs(2));
     if !alive {super::log("Spirit ash not kept: no living summon at victory");return false;}
@@ -3432,7 +3443,10 @@ fn tick_chariot(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
         if let Some(v)=state.view.room.as_mut(){v.loading=false;v.message=match clock {ChariotClock::Warmup(_)=>format!("战车将在 {remaining} 秒后出现"),ChariotClock::Loading(_)=>"正在加载战车……".into(),ChariotClock::Surviving(_)=>format!("泥头车生存：剩余 {remaining} 秒")};}
         let complete=if let Some(link)=state.party.as_mut(){link.event.storm_finish=finished;link.event.storm_decision==Some(Decision::Complete)}else{finished};
         if !complete{return Ok(());}
-        let mut next=state.view.run.clone().ok_or("旅程未加载")?;next.stormveil_decide(Decision::Complete)?;record_checked(&next)?;state.view.run=Some(next);
+        let mut next=state.view.run.clone().ok_or("旅程未加载")?;next.stormveil_decide(Decision::Complete)?;record_checked(&next)?;
+        // 召唤师「群灵」：撑满时间时召唤物还活着，补回这次用掉的骨灰
+        if keep_summoned_ash(world,&next,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
+        state.view.run=Some(next);
         super::log("Chariot survival complete; personal legendary chest unlocked");
     }
     set_flag(45007881,false)?;
@@ -3501,6 +3515,8 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
     super::elite::validate()?;
     next.stormveil_decide(Decision::Complete)?;next.leave_regional_event()?;
     record_checked(&next)?;
+    // 召唤师「群灵」：抵达葛瑞克门前时召唤物还活着，补回这次用掉的骨灰
+    if keep_summoned_ash(world,&next,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
     super::run_screen::trial_rewards(state.view.run.as_ref().unwrap(),&next);
     state.view.run=Some(next);
     super::native_talk::set_flag(route.flag,false)?;
