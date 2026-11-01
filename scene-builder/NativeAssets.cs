@@ -144,6 +144,7 @@ static class NativeAssets {
         Save("EquipParamGoods",goods);Save("ShopLineupParam",shops);Save("ItemLotParam_map",lots);Save("ActionButtonParam",actions);
         var saleWeapons=Read("EquipParamWeapon");WeaponSaleAssets.Apply(saleWeapons);Save("EquipParamWeapon",saleWeapons);
         SmithAssets.Build(name=>Read(name),Save,messages);
+        RetryItemAssets.Build(name=>Read(name),Save,messages);
         RequirementsAssets.Build(name=>Read(name,name=="Magic"?"MagicParam":name),Save);
         SpiritAssets.Build(name=>Read(name),Save);
         ContractAssets.Build(Read("SpEffectParam","SpEffect"),Save);
@@ -215,6 +216,7 @@ static class NativeAssets {
             verifiedParams[name]=p;return p;
         }
         SmithAssets.Verify(Read);
+        RetryItemAssets.Verify(Read("EquipParamGoods"));
         PassiveAssets.Verify(Read("SpEffectParam"),Read("EquipParamGoods"));
         var epicIds=File.ReadAllLines(Path.Combine(output,"epic-weapons.txt")).Select(int.Parse).ToArray();
         var catalogIds=File.ReadAllLines(Path.Combine(output,"reward-catalog.txt")).Select(l=>l.Split('|')).Where(p=>p[0]=="weapon").Select(p=>int.Parse(p[1])).ToHashSet();

@@ -61,6 +61,8 @@ static class AffixTextFix {
         if(stale>0)throw new Exception($"{stale} details still list attribute-point affixes");
         Console.WriteLine($"Checked {remap.Count} affix text remaps against the reward details");
     }
+    /// 敌人显示名改名（旧名 → 新名）：enemy-pools.txt 里改了名字的敌人，写文字时把已有的那一条换成新名
+    static readonly Dictionary<string,string> PoolRenames=new(){{"小姓","随从"}};
     public const int PoolNameFirst=9610000,BarNameFirst=9700000,BarNameStride=200,BossNameFirst=9600000,BarMarker=9620099;
     // 新增 8 种 Boss 词条后的组合：接在最早的 111 个组合之后，编号区间与标记见 src/boss_affixes.rs
     public const int LegacyCombos=111,BarNameSecond=9722200,BarNameSecondStride=144,BarMarkerV2=9620098,BarTagTest=9799999;
@@ -162,13 +164,17 @@ static class AffixTextFix {
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(id,name));added++;}
             else if(existing.Text!=name)throw new Exception($"Boss name collision: {id}");
         }
+        var renamedBars=new Dictionary<int,string>();
         for(int i=0;i<poolNames.Count;i++) {
             var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==PoolNameFirst+i);
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(PoolNameFirst+i,poolNames[i]));added++;}
-            else if(existing.Text!=poolNames[i])throw new Exception($"Enemy bar name collision: {PoolNameFirst+i}");
+            else if(existing.Text!=poolNames[i]) {
+                // 只允许 PoolRenames 里登记过的改名（编号不变，只换显示名）；其余不一致仍视为编号错位
+                if(!PoolRenames.TryGetValue(existing.Text??"",out var renamed)||renamed!=poolNames[i])throw new Exception($"Enemy bar name collision: {PoolNameFirst+i}");
+                existing.Text=poolNames[i];renamedBars.Add(PoolNameFirst+i,poolNames[i]);changed++;
+            }
         }
         var barNames=AffixBarNames(input,npcNames.Entries.ToDictionary(e=>e.ID,e=>e.Text)).ToList();
-        var renamedBars=new Dictionary<int,string>();
         foreach(var (id,text) in barNames) {
             var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==id);
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(id,text));added++;}

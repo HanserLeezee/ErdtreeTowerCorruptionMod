@@ -22,6 +22,7 @@ use hudhook::{
 
 mod blessings;
 mod pad;
+mod retry_item;
 mod options;
 mod stats;
 mod enemies;

@@ -303,6 +303,10 @@ struct Runtime {
     victory_cleanup:Option<(u64,Vec<u32>,Instant,bool)>,
     /// 本局结束（死亡或通关）时这场战斗的敌人：先留在场上，复活或 15 秒后再撤，不在死亡瞬间消失
     lingering:Option<(Pending,Instant)>,
+    /// 这次死亡已经用徘徊赐福处理过（回到路线图重打本层）：角色复活前别的死亡检查不再结束旅程或再扣一次
+    death_retry:bool,
+    /// 徘徊赐福实物道具：背包数量跟随旅程剩余次数
+    retry_item:super::retry_item::Sync,
     action_guard: super::input::ActionGuard,
     last_blessing_sync: Option<Instant>,
     room: Option<super::rooms::Room>,
@@ -368,6 +372,8 @@ fn fresh_runtime()->Runtime {
         reward_portal:Default::default(),
         victory_cleanup:None,
         lingering:None,
+        death_retry:false,
+        retry_item:Default::default(),
         action_guard: Default::default(),
         last_blessing_sync: None,
         room: None,
@@ -848,6 +854,11 @@ fn finish_victory_cleanup(state:&mut Runtime,world:&mut WorldChrMan) {
 }
 fn stray_sweep_due(waited:Duration)->bool {waited>=Duration::from_secs(8)}
 /// 本局结束后留在场上的敌人：玩家活着时（复活回到大赐福，或通关）5 秒后撤下，最多留 15 秒
+/// 当前是不是单人旅程（每帧由 tick 更新）：界面据此决定显示不显示徘徊赐福
+static SOLO:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(true);
+pub fn solo()->bool {SOLO.load(std::sync::atomic::Ordering::Relaxed)}
+/// 徘徊赐福生效时的提示
+fn lingering_message(left:u8)->String {format!("徘徊赐福生效：复活后从路线图重打本层（剩余 {left} 个）。")}
 fn lingering_due(alive:bool,waited:Duration)->bool {alive&&waited>=Duration::from_secs(5)||waited>=Duration::from_secs(15)}
 #[cfg(test)]
 mod victory_cleanup_tests {
@@ -1043,6 +1054,7 @@ fn tick_locked() {
     if let Some(action)=action {state.command=Some(action);state.view.busy=true;}
     let mut music=super::bgm::Frame::default();
     state.pad_capture.update(super::input::active());
+    SOLO.store(state.party.is_none(),std::sync::atomic::Ordering::Relaxed);
     let Ok(game) = (unsafe { GameMan::instance_mut() }) else {
         super::boss_bars::sync(Vec::new());
         PLAYER_READY.store(false,std::sync::atomic::Ordering::Relaxed);
@@ -1404,8 +1416,17 @@ fn tick_locked() {
             Err(error)=>{state.hub_failed=Some((identity,Instant::now()));report(&mut state,format!("旅程存档加载失败，未重置角色：{error}"));return;},
         }
     }
-    if state.party.is_none() && state.hub.as_ref().is_some_and(|h|!h.active) && player.chr_ins.chr_flags1c5.death_flag() {
-        if let Some(run)=&mut state.view.run {if !matches!(run.phase,Phase::Won|Phase::Dead){run.end_on_death();record(run);}}
+    // 别处没处理的死亡：单人还有徘徊赐福就回到路线图重打本层，否则结束旅程。
+    // 战斗进行中、胜利后等传送门、准备出发时的死亡由各自的流程处理；同一次死亡只处理一次（death_retry）
+    let fighting=state.pending.as_ref().is_some_and(|p|!p.completed)||state.reward_wait.is_some()
+        ||state.travel.as_ref().is_some_and(|(travel,_,_,_)|travel.is_preparing());
+    if state.party.is_none() && !state.death_retry && !fighting && state.hub.as_ref().is_some_and(|h|!h.active) && player.chr_ins.chr_flags1c5.death_flag() {
+        let mut retried=None;
+        if let Some(run)=&mut state.view.run {if !matches!(run.phase,Phase::Won|Phase::Dead){
+            if run.retry_floor() {retried=Some(run.retries);} else {run.end_on_death();}
+            record(run);
+        }}
+        if let Some(left)=retried {state.death_retry=true;report(&mut state,lingering_message(left));}
     }
     if state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won))
         && state.hub.as_ref().is_some_and(|h|!h.active) {
@@ -1511,6 +1532,7 @@ fn tick_locked() {
     }
     let block = i32::from(player.current_block_id);
     let player_dead = hp <= 0 || player.chr_ins.chr_flags1c5.death_flag();
+    if !player_dead {state.death_retry=false;}
     let was_ready = state.view.ready;
     state.view.ready =
         class.is_some() && local_world && !player_dead && max_hp > 0 && max_hp <= 1_000_000 && !state.view.shared_event;
@@ -1673,15 +1695,17 @@ fn tick_locked() {
             .is_some_and(|(travel, _, _, _)| travel.is_preparing())
     {
         let (travel, _, _, _) = state.travel.take().unwrap();
+        let mut retried=None;
         if let Some(run) = &mut state.view.run {
             if run.enter(travel.node).is_ok() {
-                let _ = run.observe_hp(0);
+                if run.retry_floor() {retried=Some(run.retries);} else {let _ = run.observe_hp(0);}
                 record(run);
             }
         }
         state.view.travelling = false;
         state.view.busy = false;
-        report(&mut state, "准备期间角色死亡，本局结束。");
+        if let Some(left)=retried {state.death_retry=true;report(&mut state,lingering_message(left));}
+        else {report(&mut state, "准备期间角色死亡，本局结束。");}
         return;
     }
     let arena=state.view.run.as_ref().map_or_else(||super::arenas::for_act(1),|r|super::arenas::for_run(r,state.party.is_some()));
@@ -1774,6 +1798,13 @@ fn tick_locked() {
             ResultState::PlayerDied => {
                 let _ = super::native_talk::set_flag(45020970, false);
                 let _ = super::native_talk::set_flag(45020971, false);
+                // 单人还有徘徊赐福：回到路线图重打本层（这场胜利不算）
+                if state.party.is_none()&&next.retry_floor() {
+                    if let Some(pending)=state.pending.take() {state.lingering=Some((pending,Instant::now()));}
+                    state.flasks=None;state.death_retry=true;
+                    let left=next.retries;record(&next);state.view.run=Some(next);state.view.busy=false;
+                    report(&mut state,lingering_message(left));return;
+                }
                 let _ = next.observe_hp(0);
             }
             ResultState::PortalReady => {
@@ -1816,6 +1847,11 @@ fn tick_locked() {
         return;
     }
 
+    // 徘徊赐福实物道具：背包里的数量对齐旅程剩余次数（单人进行中才有，结束或联机时收回）
+    if !loading && !player_dead {
+        let runtime=&mut *state;
+        runtime.retry_item.tick(player_data,runtime.view.run.as_ref(),runtime.party.is_none());
+    }
     if !loading
         && !player_dead
         && state
@@ -1985,9 +2021,11 @@ fn tick_locked() {
     pending.completed = true;
     let fought=if let Phase::Combat{id}=pending.next_run.phase {Some(id)} else {None};
     let names:Vec<&'static str>=pending.foes.iter().map(|f|f.spec.name).collect();
+    // 单人还有徘徊赐福：不结束旅程，回到路线图重打本层（这场战斗仍记为失败）
+    let retried=matches!(outcome,Outcome::PlayerDied)&&!party_mode&&pending.next_run.phase!=Phase::Dead&&pending.next_run.retry_floor();
     let result = match outcome {
         Outcome::Victory => Ok(()),
-        Outcome::PlayerDied if pending.next_run.phase == Phase::Dead => Ok(()),
+        Outcome::PlayerDied if retried||pending.next_run.phase == Phase::Dead => Ok(()),
         Outcome::PlayerDied => pending.next_run.observe_hp(0),
         _ => Ok(()),
     };
@@ -2018,6 +2056,14 @@ fn tick_locked() {
             state.reward_portal=Default::default();
             state.view.busy = true;
             report(&mut state, format!("敌人已击败，传送门即将出现。{healed}"));
+        }
+        (Outcome::PlayerDied, Ok(())) if retried => {
+            // 敌人照原版留在场上，角色复活后由 lingering 撤下；本场的圣杯瓶记录作废
+            let _=super::native_talk::set_flag(45007990,false);
+            if let Some(pending)=state.pending.take() {state.lingering=Some((pending,Instant::now()));}
+            state.flasks=None;state.event_start=None;state.death_retry=true;
+            let left=next.retries;record(&next);state.view.run=Some(next);
+            report(&mut state,lingering_message(left));
         }
         (Outcome::PlayerDied, Ok(())) => {
             record(&next);
@@ -2518,15 +2564,19 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
     let mut room = state.room.take().unwrap();
     if dead && state.party.is_none() && !room.view.loading && !game.warp_requested {
         room.retire(world);
+        let mut retried=None;
         if let Some(run) = &mut state.view.run {
-            run.hp = 0;
-            run.phase = Phase::Dead;
+            if run.retry_floor() {retried=Some(run.retries);}
+            else {run.hp = 0;run.phase = Phase::Dead;}
             record(run);
         }
         state.command = None;
         state.view.room = None;
         state.view.busy = false;
-        report(state, "角色死亡，本局结束。");
+        match retried {
+            Some(left)=>{state.death_retry=true;report(state,lingering_message(left));},
+            None=>report(state, "角色死亡，本局结束。"),
+        }
         return;
     }
     let mut transferred=false;

@@ -13,6 +13,8 @@ modes=modes.Append("arena-build").ToArray();
 modes=modes.Append("affix-stack-patch").ToArray();
 modes=modes.Append("smith-stone-patch").ToArray();
 modes=modes.Append("smith-stone-text").ToArray();
+modes=modes.Append("retry-item-patch").ToArray();
+modes=modes.Append("retry-item-text").ToArray();
 modes=modes.Append("arena-candidates").ToArray();
 modes=modes.Append("stormveil-no-runes-patch").ToArray();
 modes=modes.Append("stormveil-sidewall-patch").ToArray();
@@ -40,6 +42,8 @@ if(args.Contains("talisman-affix-patch")){TalismanAssets.Build(cache,output);ret
 if(args.Contains("affix-stack-patch")){AffixStackAssets.Patch(cache,output);return;}
 if(args.Contains("smith-stone-patch")){SmithAssets.PatchStone(cache,output);return;}
 if(args.Contains("smith-stone-text")){SmithAssets.PatchStoneText(cache,output);return;}
+if(args.Contains("retry-item-patch")){RetryItemAssets.Patch(cache,output);return;}
+if(args.Contains("retry-item-text")){RetryItemAssets.PatchText(cache,output);return;}
 if(args.Contains("talisman-affix-verify")){TalismanAssets.Verify(cache);return;}
 if(args.Contains("unrestricted-ashes-patch")){UnrestrictedAshAssets.Patch(cache,output);ProtectedAshAssets.Build(game,cache,output);return;}
 if(args.Contains("whetblade-menu-patch")){WhetbladeAssets.Patch(cache,output);return;}

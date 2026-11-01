@@ -293,7 +293,20 @@ fn sidebar(ui:&Ui,run:&Run,view:&View,vitals:&str,origin:[f32;2],extent:[f32;2],
     }
     {let draw=ui.get_window_draw_list();style::coin(&draw,at(28.0,y+9.0),8.0*scale,scale);}
     text(42.0,y,"卢恩",MUTED,14.0,0.0);text(inner-20.0,y-2.0,&view.runes.to_string(),GOLD,16.0,1.0);
-    let y=y+34.0;
+    let mut y=y+34.0;
+    // 徘徊赐福（单人）：死亡时回到本层重打；实心菱形是剩下的
+    if crate::runtime::solo() {
+        text(20.0,y,"徘徊赐福",MUTED,14.0,0.0);
+        let draw=ui.get_window_draw_list();
+        for i in 0..erdtree_tower::RETRIES.max(run.retries) {
+            let c=at(inner-26.0-i as f32*20.0,y+10.0);let r=6.5*scale;
+            let points=vec![[c[0],c[1]-r],[c[0]+r,c[1]],[c[0],c[1]+r],[c[0]-r,c[1]]];
+            if i<run.retries {draw.add_polyline(points,style::rgba(GOLD,1.0)).filled(true).build();}
+            else {let mut closed=points.clone();closed.push(points[0]);draw.add_polyline(closed,style::rgba(MUTED,0.6)).thickness(1.2*scale).build();}
+        }
+        drop(draw);
+        y+=30.0;
+    }
     crate::law_ui::ornament(&ui.get_window_draw_list(),at(inner*0.5,y),(inner*0.5-18.0)*scale,scale);
     // ── 图例：两列；鼠标移到某一项上，地图上同类型的节点放大高亮（LEGEND_HOVER，路线图同一帧读取）──
     let y=y+14.0;
