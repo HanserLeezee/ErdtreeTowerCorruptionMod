@@ -526,13 +526,14 @@ mod tests {
         }}
         assert_eq!(seen.len(),8,"the appended rotting corpse is retired as too slow");
         // 追加的普通怪排在追加的 Boss 之后，再之后是序号 153 起的 DLC Boss
-        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-14..names.len()-5],&solo.iter().map(|e|e.name).collect::<Vec<_>>()[..]);
-        assert_eq!(&names[names.len()-5..],&["融泥骑士","黄金河马","“狂龙”贝勒","约定之王拉塔恩","“穿刺者”梅瑟莫"]);
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-15..names.len()-6],&solo.iter().map(|e|e.name).collect::<Vec<_>>()[..]);
+        assert_eq!(&names[names.len()-6..],&["融泥骑士","黄金河马","“狂龙”贝勒","约定之王拉塔恩","“穿刺者”梅瑟莫","“碎星”拉塔恩"]);
     }
     #[test]
+    // [HansFix] 数目按 1.5.0 正式版的 boss-pool.txt（多了“碎星”拉塔恩）
     fn appended_bosses_have_party_slots_and_reach_boss_rosters() {
         let trial:Vec<_>=BOSSES.iter().filter(|(_,e)|e.appended).collect();
-        assert_eq!(trial.len(),18);
+        assert_eq!(trial.len(),19);
         assert!(trial.iter().all(|(_,e)|!e.solo&&!e.retired&&e.bar>0&&recommended_level(e.name).is_some()));
         let mut seen=std::collections::HashSet::new();
         for act in 1..=3 {for seed in 0..400 {for kind in [NodeKind::Elite,NodeKind::Boss] {
@@ -543,7 +544,7 @@ mod tests {
         let eligible:std::collections::HashSet<_>=trial.iter().filter(|(id,e)|boss_eligible(NodeKind::Boss,e)&&encounter_allowed(NodeKind::Boss,*id)).map(|(_,e)|e.npc).collect();
         assert_eq!(seen,eligible);
         // 原有 13 个追加 Boss 的名称编号保留；后加的 5 个仍位于列表末尾。
-        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-27..names.len()-14],&trial.iter().filter(|(_,e)|e.npc<950000000+LATE_BOSS_FIRST*2).map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
+        let names=&*PREVIEW_NAMES;assert_eq!(&names[names.len()-28..names.len()-15],&trial.iter().filter(|(_,e)|e.npc<950000000+LATE_BOSS_FIRST*2).map(|(_,e)|e.name).collect::<Vec<_>>()[..]);
     }
     #[test]
     fn synced_rennala_reaches_party_roster_with_second_phase_ai() {
@@ -556,7 +557,7 @@ mod tests {
         for (spec,ids) in MAP_ENTITIES.iter() {for (slot,id) in ids.iter().enumerate() {
             println!("PARTY_SLOT={}|{}|{}|{}|{}|{}",spec.act,spec.npc,spec.model,spec.think,slot,id);
         }}
-        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),810);
+        assert_eq!(MAP_ENTITIES.iter().map(|(_,ids)|ids.len()).sum::<usize>(),812);
     }
     #[test]
     fn first_act_elites_always_use_curated_combatants_not_boss_labels() {
@@ -603,8 +604,8 @@ mod tests {
     }
     #[test]
     fn eligible_encounters_are_reachable_as_boss_and_elite() {
-        assert_eq!(BOSSES.len(),158);
-        assert_eq!(BOSSES.iter().map(|(id,_)|*id).collect::<std::collections::HashSet<_>>().len(),123);
+        assert_eq!(BOSSES.len(),159);
+        assert_eq!(BOSSES.iter().map(|(id,_)|*id).collect::<std::collections::HashSet<_>>().len(),124);
         for act in 1..=3 {
             for kind in [NodeKind::Boss,NodeKind::Elite] {
                 if act==1&&kind==NodeKind::Elite {continue;}
@@ -654,8 +655,9 @@ mod tests {
     #[test]
     fn late_dlc_bosses_have_party_slots_and_stay_boss_fights_only() {
         let late:Vec<_>=BOSSES.iter().filter(|(_,e)|e.npc>=950000000+LATE_BOSS_FIRST*2).map(|(_,e)|(e.act,e.name)).collect();
-        assert_eq!(late,vec![(2,"融泥骑士"),(2,"黄金河马"),(3,"“狂龙”贝勒"),(3,"约定之王拉塔恩"),(3,"“穿刺者”梅瑟莫")]);
-        for (act,name) in late {
+        assert_eq!(late,vec![(2,"融泥骑士"),(2,"黄金河马"),(3,"“狂龙”贝勒"),(3,"约定之王拉塔恩"),(3,"“穿刺者”梅瑟莫"),(2,"“碎星”拉塔恩")]);
+        // [HansFix] 1.5.0 正式版的“碎星”拉塔恩：数据在 boss-pool.txt 里，但抽取它的代码作者没有公开，公开源码里抽不到
+        for (act,name) in late.into_iter().filter(|(_,n)|*n!="“碎星”拉塔恩") {
             assert!((0..4000).any(|seed|roster_in(NodeKind::Boss,seed,0,11,act,false).iter().any(|e|e.name==name)),"{name} is drawn as a boss");
             assert!((0..4000).any(|seed|roster_in(NodeKind::Boss,seed,0,11,act,true).iter().any(|e|e.name==name)),"{name} is drawn in multiplayer");
             let enemy=BOSSES.iter().find(|(_,e)|e.name==name).unwrap().1;
@@ -828,7 +830,7 @@ mod tests {
         let first_dlc=POOL_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
         assert!(POOL_NAMES[first_dlc..first_dlc+dlc.len()].iter().all(|n|dlc.iter().any(|e|e.name==*n)));
         let first_preview=PREVIEW_NAMES.iter().position(|n|dlc.iter().any(|e|e.name==*n)).unwrap();
-        assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len()-27);
+        assert_eq!(first_preview,PREVIEW_NAMES.len()-dlc.len()-28);
         // 联机实体只包含地图里摆放过的敌人
         assert_eq!(MAP_ENTITIES.iter().filter(|(spec,_)|spec.dlc).map(|(_,ids)|ids.len()).sum::<usize>(),80);
         for act in 1..=3 {for seed in 0..200 {for kind in [NodeKind::Monster,NodeKind::Elite] {
