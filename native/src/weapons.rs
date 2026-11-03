@@ -135,6 +135,24 @@ fn swap_right(data: &mut PlayerGameData, slot: usize, old: i32, next: u32, verb:
     Ok(())
 }
 
+/// [HansFix] 从背包里移除一把（没装备的）武器及其战灰：which 判断武器编号
+pub fn remove_weapon(data: &mut PlayerGameData, which: impl Fn(u32) -> bool) -> Result<(), String> {
+    let function = super::items::checked_function(0x24d1e0, &[0x48, 0x89, 0x5c, 0x24, 0x20, 0x89, 0x54, 0x24, 0x10, 0x55, 0x56, 0x57, 0x41, 0x56, 0x41, 0x57])?;
+    let manager = unsafe { CSGaitemImp::instance() }.map_err(|_| "武器实例未就绪")?;
+    let equipped = data.equipment.chr_asm.gaitem_handles;
+    let items = &data.equipment.equip_inventory_data.items_data;
+    let entry = items.normal_entries().iter().filter_map(|e| e.as_option())
+        .find(|e| e.item_id.category() == ItemCategory::Weapon && which(e.item_id.param_id()) && !equipped.contains(&e.gaitem_handle))
+        .ok_or("背包里没有这把武器（装备中的请先卸下）")?;
+    let weapon = entry.gaitem_handle;
+    let gem = if (weapon.index() as usize) < manager.gaitems.len() {
+        manager.gaitem_ins_by_handle(&weapon).and_then(|w| w.as_subclass::<CSWepGaitemIns>()).map(|w| w.gem_slot_table.gem_slots[0].gaitem_handle)
+    } else { None };
+    let gem = gem.filter(|g| g.is_indexed() && (g.index() as usize) < manager.gaitems.len()).unwrap_or(weapon); // 没有战灰：只移除武器本身
+    remove_original(data, weapon, gem, function);
+    Ok(())
+}
+
 fn remove_original(data: &mut PlayerGameData, weapon: GaitemHandle, gem: GaitemHandle, function: usize) {
     if data.equipment.chr_asm.gaitem_handles.contains(&weapon) {
         return super::log("Weapon upgrade kept original: still equipped in another slot");

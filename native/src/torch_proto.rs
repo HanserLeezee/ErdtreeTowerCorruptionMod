@@ -25,8 +25,33 @@ struct State {
     applied: Option<Vec<Torch>>,
     spells_text: bool,
     fired: bool,
+    talk_text: bool,
+    talk_try: Option<Instant>,
+    /// 并入过火把的武器：武器行原来的五项补正（第一次改写前记下）与已经写入的并入记录
+    originals: Vec<(u32, [f32; 5])>,
+    merges: Option<Vec<torches::WeaponMerge>>,
 }
-static STATE: Mutex<State> = Mutex::new(State { held_since: None, last: None, applied: None, spells_text: false, fired: false });
+static STATE: Mutex<State> = Mutex::new(State { held_since: None, last: None, applied: None, spells_text: false, fired: false, talk_text: false, talk_try: None, originals: Vec::new(), merges: None });
+static TALK_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 铁匠菜单里的“火把工坊”文字装好了没有（没装好就不显示这一项）
+pub fn talk_ready() -> bool { TALK_READY.load(std::sync::atomic::Ordering::Relaxed) }
+/// 并入过火把的武器：武器行的补正 = 原值 + 并入的火把补正；换了旅程（或撤销）时恢复原值
+fn apply_merges(state: &mut State, merges: &[torches::WeaponMerge]) {
+    let Ok(params) = (unsafe { SoloParamRepository::instance_mut() }) else { return };
+    let mut touched: Vec<u32> = state.originals.iter().map(|(id, _)| *id).collect();
+    for m in merges { if !touched.contains(&m.weapon) { touched.push(m.weapon); } }
+    for id in touched {
+        let Some(row) = params.get_mut::<EquipParamWeapon>(id) else { continue };
+        let original = match state.originals.iter().find(|(o, _)| *o == id) {
+            Some((_, v)) => *v,
+            None => { let v = [row.correct_strength(), row.correct_agility(), row.correct_magic(), row.correct_faith(), row.correct_luck()]; state.originals.push((id, v)); v }
+        };
+        let mut v = original;
+        for m in merges.iter().filter(|m| m.weapon == id) { for (i, add) in m.values().into_iter().enumerate() { v[i] += add; } }
+        row.set_correct_strength(v[0]); row.set_correct_agility(v[1]); row.set_correct_magic(v[2]); row.set_correct_faith(v[3]); row.set_correct_luck(v[4]);
+    }
+    super::log(format!("HANSFIX_TORCH weapon merges applied={}", merges.len()));
+}
 
 /// 发一把火把（武器 = 它的火把位，战灰 = 它的法术）
 /// all：本局全部火把（含这一把）。先把名字装好再发放，否则拿到时的提示框会显示 ?WeaponName?
@@ -117,6 +142,15 @@ fn is_torch(weapon: i32) -> bool {
 pub fn sync(chr: &mut ChrIns, data: &PlayerGameData, run: Option<&erdtree_tower::Run>) {
     let Ok(mut state) = STATE.lock() else { return };
     if !state.spells_text { state.spells_text = install_spell_texts(); }
+    // 文字表还没载入时找不到：每 2 秒试一次，不要每帧扫全部文本表
+    if !state.talk_text && state.talk_try.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
+        state.talk_try = Some(Instant::now());
+        // 铁匠菜单的文字（“强化护符”9500041 所在的那张表）
+        state.talk_text = super::hansfix_text::find_table(9500041).is_some_and(|table| super::hansfix_text::add_entries(table, vec![(super::torch_workshop::TALK_OPTION as u32, "火把工坊".into())]));
+        TALK_READY.store(state.talk_text, std::sync::atomic::Ordering::Relaxed);
+    }
+    let merges = run.map(|r| r.weapon_merges.clone()).unwrap_or_default();
+    if state.merges.as_ref() != Some(&merges) { apply_merges(&mut state, &merges); state.merges = Some(merges); }
     let list = run.map(current).unwrap_or_default();
     if state.applied.as_ref() != Some(&list) { apply_torches(&list, true); state.applied = Some(list); }
     let (weapon, gem) = left_weapon(data).unwrap_or((-1, -1));

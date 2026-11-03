@@ -27,6 +27,7 @@ mod options;
 mod hansfix;
 mod hansfix_text;
 mod torch_proto;
+mod torch_workshop;
 mod stats;
 mod enemies;
 mod chariot;
@@ -193,6 +194,7 @@ struct TowerPreview {
     diagnostics:diagnostics::Changes,
     rewards: reward_ui::Panel,
     debug: debug_menu::Menu,
+    workshop: torch_workshop::Panel,
     visible: bool,
     run: Option<Run>,
     last_archetype: Option<u8>,
@@ -205,6 +207,7 @@ impl TowerPreview {
             diagnostics:Default::default(),
             rewards: reward_ui::Panel::default(),
             debug: Default::default(),
+            workshop: Default::default(),
             visible: true,
             run: Some(Run::new(42, Class::Vagabond)),
             last_archetype: None,
@@ -365,6 +368,9 @@ impl ImguiRenderLoop for TowerPreview {
         let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
         if ui.is_key_pressed_no_repeat(options::key(Hotkey::Debug)) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
+        // [HansFix] 火把工坊（营地铁匠）
+        if view.as_ref().is_none_or(|v|v.run.is_none()) {torch_workshop::close();}
+        self.workshop.draw(ui);
         if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
             let draw=ui.get_foreground_draw_list();
             let line=|text:&str,y:f32,color:hudhook::imgui::ImColor32| {

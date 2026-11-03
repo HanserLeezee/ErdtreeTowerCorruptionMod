@@ -153,6 +153,26 @@ pub fn lookup(index:u32,id:u32)->Option<String> {
     let (_,slot)=table.slots(id..id+1).into_iter().next()?;
     table.text(slot).map(|(t,_,_)|t).filter(|t|!t.is_empty())
 }
+/// [HansFix] 找到含有某个编号（且文字不为空）的文本表；内存里的表号与文件里的编号不同，按内容找
+pub fn find_table(id:u32)->Option<u32> {
+    let repo=repository()?;let count=read_u32(repo+0x14)?.min(0x1000);
+    (0..count).find(|&index|fmg(repo,index).and_then(|t|{let (_,slot)=t.slots(id..id+1).into_iter().next()?;t.text(slot)}).is_some_and(|(t,_,_)|!t.is_empty()))
+}
+/// [HansFix] 在一张已有内容的文本表里加几条：读出整张表，连同新条目整张替换（同编号以新内容为准）。
+/// 已经都在、内容一致时什么也不做
+pub fn add_entries(index:u32,extra:Vec<(u32,String)>)->bool {
+    let Some(repo)=repository() else{return false};
+    let Some(table)=fmg(repo,index) else{return false};
+    let mut entries:Vec<(u32,String)>=table.slots(0..u32::MAX).into_iter().filter_map(|(id,slot)|table.text(slot).map(|(t,_,_)|(id,t))).collect();
+    if extra.iter().all(|e|entries.contains(e)) {return true;}
+    if entries.len()<16 {return false;}
+    entries.retain(|(id,_)|!extra.iter().any(|(e,_)|e==id));
+    let count=entries.len();
+    entries.extend(extra);
+    let ok=install_table(index,entries);
+    crate::log(format!("HANSFIX_TEXT table={index} kept={count} ok={ok}"));
+    ok
+}
 /// [HansFix] 给游戏新增文本条目：用我们自己的内容整张替换一张原本为空的文本表（DLC2 的那几张都是空表），
 /// 例如给火把位、法术战技补上名字。多次调用以最后一次为准；旧表留在内存里不释放（游戏可能还拿着指针）。
 pub fn install_table(index:u32,mut entries:Vec<(u32,String)>)->bool {

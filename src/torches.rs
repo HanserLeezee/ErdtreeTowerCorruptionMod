@@ -67,6 +67,25 @@ impl Torch {
         self.affixes.iter().filter_map(|&e|crate::descent::affix(e).map(|(kind,tier)|crate::descent::describe(kind,tier,1))).collect()
     }
 }
+/// 补正数值对应的字母档位（与游戏的划分相同：E <25，D <60，C <90，B <140，A <175，S 以上）
+pub fn letter_of(value:f32)->u8 {
+    if value<=0.0 {0} else if value<25.0 {1} else if value<60.0 {2} else if value<90.0 {3} else if value<140.0 {4} else if value<175.0 {5} else {6}
+}
+/// 两组补正相加（数值相加，再按总和定字母）
+pub fn add_scaling(a:[u8;5],b:[u8;5])->[u8;5] {
+    std::array::from_fn(|i|letter_of(VALUES[usize::from(a[i].min(6))]+VALUES[usize::from(b[i].min(6))]))
+}
+/// 并入过火把的武器：武器（去掉强化等级的编号）与并入的火把补正档位
+#[derive(Clone,Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub struct WeaponMerge {pub weapon:u32,pub scaling:[u8;5]}
+impl WeaponMerge {pub fn values(&self)->[f32;5] {self.scaling.map(|l|VALUES[usize::from(l.min(6))])}}
+/// 名字里带火的武器可以在铁匠处拆成火把：火字旁的字（含“火”“炎”本身），另加“灵”“灭”；四点底（灬）不算
+pub const FIRE_CHARS:&str="火炎灯灶灿炀炉炊炒炕炖炜炝炫炬炭炮炯炳炷炸炼炽烁烂烃烘烙烛烟烤烦烧烨烩烫烬烯烽焊焐焕焖焗焙焜焰煅煌煜煤煨煸熄熔熘熠燃燎燔燠燥燧爆爝灼灵灭";
+pub fn fire_named(name:&str)->bool {name.chars().any(|c|FIRE_CHARS.contains(c))}
+/// 拆成几把火把：重量 <10 一把，10~<15 两把，15 及以上三把；颜面盾四把
+pub fn dismantle_count(name:&str,weight:f32)->u8 {
+    if name.contains("颜面盾") {4} else if weight>=15.0 {3} else if weight>=10.0 {2} else {1}
+}
 pub fn slot_of(weapon:u32)->Option<u16> {
     let id=weapon/100*100;
     (SLOT_FIRST..SLOT_FIRST+u32::from(SLOTS)*100).contains(&id).then(||((id-SLOT_FIRST)/100) as u16)
@@ -144,6 +163,43 @@ impl crate::Run {
         }
         result
     }
+    /// 火把 + 火把：两把合成次数相同（火把 / 灼烧的火把）才能合，保留 keep 的词条与法术战技，补正相加；
+    /// other 用掉。返回合成后的火把
+    pub fn merge_torches(&mut self,keep:u16,other:u16)->crate::RuleResult<Torch> {
+        if keep==other {return Err("请选择两把不同的火把".into());}
+        let a=self.torches.iter().position(|t|t.slot==keep).ok_or("火把不存在")?;
+        let b=self.torches.iter().position(|t|t.slot==other).ok_or("火把不存在")?;
+        if self.torches[a].merges!=self.torches[b].merges {return Err("只能合并同一阶的火把（火把 + 火把，灼烧的火把 + 灼烧的火把）".into());}
+        if self.torches[a].merges>=2 {return Err("黑焰的火把不能再合并".into());}
+        let scaling=add_scaling(self.torches[a].scaling,self.torches[b].scaling);
+        let torch=&mut self.torches[a];torch.merges+=1;torch.scaling=scaling;
+        let merged=torch.clone();
+        self.torches.retain(|t|t.slot!=other);
+        Ok(merged)
+    }
+    /// 火把并入武器：武器得到火把的补正（数值相加），火把用掉；每把武器只能并入一次
+    pub fn merge_into_weapon(&mut self,torch:u16,weapon:u32)->crate::RuleResult<WeaponMerge> {
+        let weapon=weapon/100*100;
+        if slot_of(weapon).is_some()||BASES.contains(&weapon) {return Err("火把之间请用“合并火把”".into());}
+        if (50_000_000..60_000_000).contains(&weapon) {return Err("箭矢不能并入火把".into());}
+        if self.weapon_merges.iter().any(|m|m.weapon==weapon) {return Err("这把武器已经并入过火把".into());}
+        let index=self.torches.iter().position(|t|t.slot==torch).ok_or("火把不存在")?;
+        let merge=WeaponMerge{weapon,scaling:self.torches[index].scaling};
+        self.torches.remove(index);self.weapon_merges.push(merge.clone());
+        Ok(merge)
+    }
+    /// 拆解名字带火的武器：按重量得到 1~4 把火把，品质随机但不低于原武器
+    pub fn dismantle(&mut self,name:&str,weight:f32,quality:u8)->crate::RuleResult<Vec<Torch>> {
+        if !fire_named(name) {return Err("只有名字带火的武器可以拆成火把".into());}
+        let count=dismantle_count(name,weight);
+        let mut result=Vec::new();
+        for n in 0..count {
+            let roll=crate::mix(self.reward_seed()^0xd15_a7^u64::from(self.torch_rolls).wrapping_mul(31)^u64::from(n));
+            let rolled=match roll%100 {0..40=>0,40..70=>1,70..90=>2,_=>3};
+            result.push(self.new_torch(rolled.max(quality.min(3)),0xd15^u64::from(n))?);
+        }
+        Ok(result)
+    }
     pub fn torch(&self,weapon:u32)->Option<&Torch> {let slot=slot_of(weapon)?;self.torches.iter().find(|t|t.slot==slot)}
 }
 
@@ -175,6 +231,53 @@ mod tests {
         }
         let slots:std::collections::HashSet<_>=run.torches.iter().map(|t|t.slot).collect();assert_eq!(slots.len(),40);
         assert_eq!(slot_of(24000000),None);
+        assert_eq!(crate::Run::decode(&run.encode().unwrap()).unwrap(),run);
+    }
+}
+
+#[cfg(test)]
+mod smith_tests {
+    use super::*;
+    #[test]
+    fn letters_follow_the_summed_values() {
+        assert_eq!(letter_of(0.0),0);assert_eq!(letter_of(15.0),1);assert_eq!(letter_of(40.0),2);assert_eq!(letter_of(75.0),3);
+        assert_eq!(letter_of(115.0),4);assert_eq!(letter_of(155.0),5);assert_eq!(letter_of(190.0),6);
+        for l in 1..=6 {assert_eq!(letter_of(VALUES[l]),l as u8,"each letter's own value maps back to it");}
+        // E + E = 30 → D；C + C = 150 → A；S + 任何 → S
+        assert_eq!(add_scaling([1,3,6,0,0],[1,3,1,0,2]),[2,5,6,0,2]);
+    }
+    #[test]
+    fn torch_merges_need_matching_tiers_and_keep_the_chosen_skill() {
+        let mut run=crate::Run::new(3,crate::Class::Hero);
+        let a=run.new_torch(1,1).unwrap();let b=run.new_torch(1,2).unwrap();let c=run.new_torch(1,3).unwrap();
+        let merged=run.merge_torches(b.slot,a.slot).unwrap();
+        assert_eq!((merged.slot,merged.spell,&merged.affixes,merged.merges),(b.slot,b.spell,&b.affixes,1));
+        assert_eq!(merged.scaling,add_scaling(a.scaling,b.scaling));assert_eq!(merged.prefix(),"灼烧的");
+        assert!(run.torch(a.weapon_id()).is_none(),"the other torch is used up");
+        assert!(run.merge_torches(b.slot,c.slot).is_err(),"a scorched torch only merges with another scorched torch");
+        let d=run.new_torch(1,4).unwrap();let e=run.new_torch(1,5).unwrap();
+        run.merge_torches(d.slot,e.slot).unwrap();
+        let black=run.merge_torches(b.slot,d.slot).unwrap();assert_eq!((black.merges,black.prefix()),(2,"黑焰的"));
+        let f=run.new_torch(1,6).unwrap();let g=run.new_torch(1,7).unwrap();run.merge_torches(f.slot,g.slot).unwrap();
+        let h=run.new_torch(1,8).unwrap();let i=run.new_torch(1,9).unwrap();run.merge_torches(h.slot,i.slot).unwrap();
+        run.merge_torches(f.slot,h.slot).unwrap();
+        assert!(run.merge_torches(b.slot,f.slot).is_err(),"black-flame torches are final");
+        assert!(run.merge_torches(c.slot,c.slot).is_err());
+    }
+    #[test]
+    fn a_weapon_takes_one_torch_and_dismantling_follows_weight() {
+        let mut run=crate::Run::new(4,crate::Class::Hero);
+        let a=run.new_torch(0,1).unwrap();let b=run.new_torch(0,2).unwrap();
+        let merge=run.merge_into_weapon(a.slot,2000005).unwrap();assert_eq!((merge.weapon,merge.scaling),(2000000,a.scaling));
+        assert!(run.merge_into_weapon(b.slot,2000003).is_err(),"once per weapon");
+        assert!(run.merge_into_weapon(b.slot,b.weapon_id()).is_err()&&run.merge_into_weapon(b.slot,24000000).is_err(),"torches merge with torches");
+        assert!(run.merge_into_weapon(b.slot,50000000).is_err(),"ammo is not a weapon");
+        assert_eq!(run.torches.len(),1);
+        for (name,weight,count) in [("火焰巨剑",9.9,1),("火焰巨剑",10.0,2),("熔炉大锤",15.0,3),("颜面盾",8.0,4)] {assert_eq!(dismantle_count(name,weight),count);}
+        assert!(fire_named("灵火斧")&&fire_named("灭火者")&&fire_named("烛台剑"));
+        assert!(!fire_named("熊爪")&&!fire_named("照耀长剑")&&!fire_named("长剑"),"four-dot bottoms are not fire");
+        let got=run.dismantle("熔炉大锤",16.0,2).unwrap();assert_eq!(got.len(),3);assert!(got.iter().all(|t|t.quality>=2));
+        assert!(run.dismantle("长剑",3.0,0).is_err());
         assert_eq!(crate::Run::decode(&run.encode().unwrap()).unwrap(),run);
     }
 }

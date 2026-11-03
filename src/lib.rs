@@ -285,6 +285,9 @@ pub struct Run {
     pub torches: Vec<torches::Torch>,
     #[serde(default,skip_serializing_if="is_zero")]
     pub torch_rolls: u32,
+    /// [HansFix] 在铁匠处并入过火把的武器（每把武器只能并入一次）
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub weapon_merges: Vec<torches::WeaponMerge>,
     #[serde(default="first_act")]
     pub act:u8,
     pub seed: u64,
@@ -932,6 +935,7 @@ impl Run {
             fallen: None,
             torches: Vec::new(),
             torch_rolls: 0,
+            weapon_merges: Vec::new(),
             act:1,
             seed,
             initial_seed: Some(seed),

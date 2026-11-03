@@ -1935,6 +1935,14 @@ fn tick_locked() {
             } else {"调试取消：在服务房间里不能改旅程，请离开房间后再操作".to_owned()};
             super::log(format!("DEBUG_MENU {message}"));report(&mut state,message);
         }
+        // [HansFix] 火把工坊：清点背包、执行面板里的合并与拆解
+        if super::torch_workshop::open()&&let (Some(run),Some(player))=(state.view.run.as_mut(),world.main_player.as_mut()) {
+            if let Some(result)=super::torch_workshop::tick(run,unsafe {player.player_game_data.as_mut()}) {
+                if result.is_ok() {record(run);}
+                let message=match result {Ok(m)=>m,Err(e)=>format!("火把工坊：{e}")};
+                super::log(format!("HANSFIX_WORKSHOP {message}"));report(&mut state,message);
+            }
+        }
         tick_room(&mut state, world, game, player_dead);
         return;
     }

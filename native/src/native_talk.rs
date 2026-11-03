@@ -199,6 +199,8 @@ impl NativeTalk {
                     for (i,message) in [9500001,9500041,9500042].into_iter().enumerate() {
                         self.event(19,&[i as i32+1,message,-1])?;
                     }
+                    // [HansFix] 火把工坊：合并火把、火把并入武器、拆解带火的武器
+                    if super::hansfix::wander()&&super::torch_proto::talk_ready() {self.event(19,&[super::torch_workshop::TALK_CHOICE,super::torch_workshop::TALK_OPTION,-1])?;}
                     self.event(19,&[99,9500003,-1])?;
                 } else if self.service==5 {
                     for (i,message) in [9500040,9500042,9500043,9500045,9500046,9500071,9500100,9500101,9500108].into_iter().enumerate() {self.event(19,&[i as i32+1,message,-1])?;}
@@ -228,6 +230,9 @@ impl NativeTalk {
                 }
                 if self.service == 3 || self.service == 4 {
                     self.choice=Some(choice); self.state=0; return Ok(());
+                }
+                if self.service==1&&choice==super::torch_workshop::TALK_CHOICE {
+                    super::torch_workshop::show();self.state=0;return Ok(());
                 }
                 if self.service==1 {
                     // 强化与护符升阶各用一块强化石；营地的一次服务用掉之后，身上还有强化石也能继续用
