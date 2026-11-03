@@ -353,7 +353,10 @@ pub struct Run {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ShopStock {pub node:usize,pub items:Vec<[i32;4]>}
+pub struct ShopStock {pub node:usize,pub items:Vec<[i32;4]>,
+    /// [HansFix] 堕落商店里摆着的火把（买下后离店时记入 Run::torches）
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub torches:Vec<torches::Torch>}
 
 fn first_act()->u8 {1}
 fn no_law(law:&law::Law)->bool {law.is_empty()}

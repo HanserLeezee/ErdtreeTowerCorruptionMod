@@ -67,6 +67,16 @@ pub fn shop_weapon(params:&mut SoloParamRepository,slot:u32,weapon:u32)->Result<
     Ok((SHOP_FIRST+slot) as i32)
 }
 
+/// [HansFix] 商店里的火把：自定义武器行 = 火把位 + 它的法术战灰
+pub fn shop_custom(params:&mut SoloParamRepository,slot:u32,weapon:i32,gem:i32)->Result<i32,String> {
+    if slot>=super::native_shop::MAX_STOCK{return Err("无效商店槽位".into());}
+    if params.get::<EquipParamGem>(gem as u32).is_none(){return Err("火把战灰参数缺失".into());}
+    let row=params.get_mut::<EquipParamCustomWeapon>(SHOP_FIRST+slot).ok_or("随机战灰商店参数缺失，请完整更新模组")?;
+    row.set_base_wep_id(weapon/100*100);row.set_reinforce_lv((weapon%100) as u8);row.set_gem_id(gem);
+    super::log(format!("HANSFIX_TORCH shop offer: slot={slot} weapon={weapon} gem={gem}"));
+    Ok((SHOP_FIRST+slot) as i32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

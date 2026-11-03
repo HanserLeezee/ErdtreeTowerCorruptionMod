@@ -260,6 +260,13 @@ pub fn keep_fallen_purchases(run:&mut erdtree_tower::Run,data:&eldenring::cs::Pl
         if run.claimed_items.contains(&item)||run.shop_curse(id,item).is_none()||crate::loot::count(data,item)==0 {continue;}
         run.keep_shop_gear(id,item)?;crate::log(format!("HANSFIX_SHOP kept fallen gear {item}"));
     }
+    // 买下的火把记入本局；没买的放回，火把位空出来
+    let torches=run.shop_stock.as_ref().filter(|s|s.node==id).map(|s|s.torches.clone()).unwrap_or_default();
+    for torch in torches {
+        if run.torches.iter().any(|t|t.slot==torch.slot)||crate::loot::count(data,torch.weapon_id())==0 {continue;}
+        crate::log(format!("HANSFIX_TORCH bought slot={} spell={}",torch.slot,torch.spell));
+        run.torches.push(torch);
+    }
     Ok(())
 }
 

@@ -23,6 +23,10 @@ pub const LETTERS:[&str;7]=["","E","D","C","B","A","S"];
 /// 字母档位换成 +0 时的补正数值（取各档中间值）
 pub const VALUES:[f32;7]=[0.0,15.0,40.0,75.0,115.0,155.0,190.0];
 /// 火把的词条池（与装备词条同一套效果行：9850000 + 种类×10 + 品质）
+/// 堕落商店：每件可替换的商品换成火把的概率（%），火把的品质与基础售价
+pub const SHOP_REPLACE:u64=10;
+pub const SHOP_QUALITY:u8=2;
+pub const SHOP_PRICE:i32=5000;
 pub const AFFIX_KINDS:[u32;10]=[4,7,16,17,5,1,19,11,8,10];
 
 pub struct Spell {pub index:u8,pub magic:u32,pub name:&'static str,pub icon:u32,pub reference:u32,pub bullet:bool,pub sfx:i32}
@@ -104,7 +108,7 @@ pub fn roll(seed:u64,slot:u16,quality:u8,dlc:bool)->Torch {
 impl crate::Run {
     /// 新拿到一把火把：占用最小的空闲火把位，返回它
     pub fn new_torch(&mut self,quality:u8,salt:u64)->crate::RuleResult<Torch> {
-        let slot=(0..SLOTS).find(|s|!self.torches.iter().any(|t|t.slot==*s)).ok_or("火把位已用完")?;
+        let slot=self.free_torch_slots(&[]).next().ok_or("火把位已用完")?;
         self.torch_rolls=self.torch_rolls.wrapping_add(1);
         let seed=crate::mix(self.reward_seed()^salt^u64::from(self.torch_rolls).wrapping_mul(0x9e37_79b9_7f4a_7c15));
         let torch=roll(seed,slot,quality,crate::dlc::mode()==crate::dlc::Mode::Full);
@@ -117,6 +121,28 @@ impl crate::Run {
         torch.spell=spell%SPELLS.len() as u8;
         if let Some(t)=self.torches.iter_mut().find(|t|t.slot==torch.slot) {t.spell=torch.spell;}
         Ok(torch)
+    }
+    /// 空闲的火把位：本局的火把、商店里摆着的火把与 extra 都不占
+    pub fn free_torch_slots<'a>(&'a self,extra:&'a [Torch])->impl Iterator<Item=u16>+'a {
+        let shop=self.shop_stock.as_ref().map_or(&[][..],|s|&s.torches[..]);
+        (0..SLOTS).filter(move|s|!self.torches.iter().chain(shop).chain(extra).any(|t|t.slot==*s))
+    }
+    /// 堕落商店的火把：必定有 1 把（room 为真时追加在货单末尾，否则替换一件可替换的商品），
+    /// 其余每件可替换的商品（replaceable）各有 10% 换成随机火把。返回（替换第几件 / None=追加，火把）
+    pub fn shop_torches(&self,node:usize,replaceable:&[bool],room:bool)->Vec<(Option<usize>,Torch)> {
+        let seed=crate::mix(self.reward_seed()^0x7043_5e11^(node as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)^u64::from(self.torch_rolls).wrapping_mul(0xbf58_476d_1ce4_e5b9));
+        let dlc=crate::dlc::mode()==crate::dlc::Mode::Full;
+        let mut picks:Vec<Option<usize>>=Vec::new();
+        if room {picks.push(None);}
+        for (i,&ok) in replaceable.iter().enumerate() {if ok&&crate::mix(seed^0x10^i as u64)%100<SHOP_REPLACE {picks.push(Some(i));}}
+        if !room&&picks.is_empty() {if let Some(i)=replaceable.iter().position(|&ok|ok) {picks.push(Some(i));}}
+        let mut result:Vec<(Option<usize>,Torch)>=Vec::new();
+        for (n,pick) in picks.into_iter().enumerate() {
+            let held:Vec<Torch>=result.iter().map(|(_,t)|t.clone()).collect();
+            let Some(slot)=self.free_torch_slots(&held).next() else{break};
+            result.push((pick,roll(crate::mix(seed^0x7_0c4^n as u64),slot,SHOP_QUALITY,dlc)));
+        }
+        result
     }
     pub fn torch(&self,weapon:u32)->Option<&Torch> {let slot=slot_of(weapon)?;self.torches.iter().find(|t|t.slot==slot)}
 }
@@ -150,6 +176,35 @@ mod tests {
         let slots:std::collections::HashSet<_>=run.torches.iter().map(|t|t.slot).collect();assert_eq!(slots.len(),40);
         assert_eq!(slot_of(24000000),None);
         assert_eq!(crate::Run::decode(&run.encode().unwrap()).unwrap(),run);
+    }
+}
+
+#[cfg(test)]
+mod shop_tests {
+    #[test]
+    fn fallen_shops_always_hold_one_torch_and_replace_about_a_tenth_of_the_rest() {
+        let (mut replaced,mut eligible)=(0,0);
+        for seed in 0..400u64 {
+            let mut run=crate::Run::new(seed,crate::Class::Hero);
+            run.new_torch(1,0).unwrap();
+            let replaceable:Vec<bool>=(0..30).map(|i|i%3!=0).collect();
+            let plan=run.shop_torches(5,&replaceable,true);
+            assert_eq!(plan.iter().filter(|(i,_)|i.is_none()).count(),1,"exactly one extra torch");
+            assert!(plan.iter().all(|(i,_)|i.is_none_or(|i|replaceable[i])),"only replaceable goods turn into torches");
+            let slots:std::collections::HashSet<_>=plan.iter().map(|(_,t)|t.slot).collect();
+            assert_eq!(slots.len(),plan.len());assert!(!slots.contains(&run.torches[0].slot),"never reuse an owned torch slot");
+            replaced+=plan.len()-1;eligible+=20;
+            assert_eq!(run.shop_torches(5,&replaceable,true),plan,"same shop, same torches");
+            let full=run.shop_torches(5,&replaceable,false);
+            assert!(full.iter().all(|(i,_)|i.is_some())&&!full.is_empty(),"a full shop still gets a torch by replacement");
+            // 摆在商店里的火把占着火把位：同时拿到的新火把不会撞位
+            run.shop_stock=Some(crate::ShopStock{node:5,items:vec![],torches:plan.iter().map(|(_,t)|t.clone()).collect()});
+            let fresh=run.new_torch(0,1).unwrap();assert!(!slots.contains(&fresh.slot));
+            let stock=run.shop_stock.clone().unwrap();assert_eq!(serde_json::from_str::<crate::ShopStock>(&serde_json::to_string(&stock).unwrap()).unwrap(),stock);
+        }
+        // 没有火把的货单照旧序列化（不多出字段），旧存档也能读
+        assert_eq!(serde_json::to_string(&crate::ShopStock{node:1,items:vec![[0,1,2,3]],torches:vec![]}).unwrap(),r#"{"node":1,"items":[[0,1,2,3]]}"#);
+        let rate=replaced as f64/eligible as f64;assert!((0.07..0.13).contains(&rate),"{rate}");
     }
 }
 

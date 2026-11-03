@@ -504,6 +504,7 @@ fn affix_stock(run:&Run,visit:usize,red:Option<usize>,result:&mut [Stock]) {
 pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) -> Result<erdtree_tower::ShopStock, String> {
     let params = unsafe { SoloParamRepository::instance_mut() }.map_err(|_| "商店参数未加载")?;
     let saved=run.shop_stock.as_ref().filter(|saved|!refresh&&saved.node==node&&(STOCK_COUNT as usize..=MAX_STOCK as usize).contains(&saved.items.len()));
+    let mut shop_torches=Vec::new();
     let mut stock=if let Some(saved)=saved {saved.items.iter().map(|[kind,id,price,quantity]|Stock{kind:*kind as u8,id:*id,price:*price,quantity:*quantity as i16}).collect()}else{
         let tools=super::loot::casting_tools(data);
         let mut live=run.clone();
@@ -529,8 +530,21 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
         for item in &mut stock {item.price=final_price(run,item.price);}
         // [HansFix] 堕落商店：整体价格上涨 25%
         if crate::hansfix::wander()&&run.red_shop(node) {for item in &mut stock {item.price=erdtree_tower::descent::shop_price(item.price);}}
+        // [HansFix] 堕落商店的火把：必定 1 把，另外防具、护符、战灰、法术每件 10% 换成火把（不占武器的格数）
+        if crate::hansfix::wander()&&run.red_shop(node) {
+            let replaceable:Vec<bool>=stock.iter().map(|s|s.quantity==1&&(matches!(s.kind,1|2|4)||is_spell(s))).collect();
+            let price=erdtree_tower::descent::shop_price(final_price(run,erdtree_tower::torches::SHOP_PRICE));
+            for (index,torch) in run.shop_torches(node,&replaceable,stock.len()<MAX_STOCK as usize) {
+                let item=Stock{kind:0,id:torch.weapon_id() as i32,price,quantity:1};
+                match index {Some(i)=>stock[i]=item,None=>stock.push(item)}
+                shop_torches.push(torch);
+            }
+        }
         stock
     };
+    let shop_torches=if saved.is_some() {saved.map(|s|s.torches.clone()).unwrap_or_default()} else {shop_torches};
+    // 火把位的参数与名字要在核对商品、摆上货架之前写好
+    if !shop_torches.is_empty() {super::torch_proto::stage(&run.torches,&shop_torches);}
     withdraw_goods(&mut stock);
     withdraw_owned_whetblades(&mut stock,run);
     refresh_special_prices(&mut stock,run);
@@ -559,9 +573,12 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     }
     if refresh {if let Ok(mut fresh)=FRESH.lock(){*fresh=Some((run.seed,node));}}
     let peak=super::smith::inventory_peak(data,params);
-    let granted:Vec<_>=stock.iter().map(|item|if item.kind==0 {super::smith::acquisition_id(item.id as u32,peak,params).map(|id|id as i32)}else{Ok(item.id)}).collect::<Result<_,String>>()?;
+    let torch_of=|item:&Stock|(item.kind==0).then(||shop_torches.iter().find(|t|t.weapon_id()==item.id as u32)).flatten();
+    let granted:Vec<_>=stock.iter().map(|item|if item.kind==0&&torch_of(item).is_none() {super::smith::acquisition_id(item.id as u32,peak,params).map(|id|id as i32)}else{Ok(item.id)}).collect::<Result<_,String>>()?;
     let mut shop_items=Vec::with_capacity(stock.len());
     for (i,item) in stock.iter().enumerate() {
+        // [HansFix] 火把连同它的法术战灰一起卖
+        if let Some(torch)=torch_of(item) {shop_items.push((super::random_ashes::shop_custom(params,i as u32,torch.weapon_id() as i32,torch.gem() as i32)?,5));continue;}
         let custom=item.kind==0&&item.quantity==1&&super::random_ashes::eligible(granted[i] as u32);
         shop_items.push(if custom {(super::random_ashes::shop_weapon(params,i as u32,granted[i] as u32)?,5)}else{(granted[i],item.kind)});
     }
@@ -583,7 +600,7 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     }
     for i in stock.len() as u32..MAX_STOCK {params.get_mut::<ShopLineupParam>(GOODS+i).unwrap().set_equip_id(-1);}
     super::log(format!("Native rune shop stock: {stock:?}"));
-    Ok(erdtree_tower::ShopStock{node,items:stock.iter().map(|s|[i32::from(s.kind),s.id,s.price,i32::from(s.quantity)]).collect()})
+    Ok(erdtree_tower::ShopStock{node,items:stock.iter().map(|s|[i32::from(s.kind),s.id,s.price,i32::from(s.quantity)]).collect(),torches:shop_torches})
 }
 pub fn reset_arrived_stock(count:usize)->Result<(),String> {
     if count>MAX_STOCK as usize{return Err("商店库存数量超限".into());}
@@ -606,6 +623,8 @@ pub fn refresh_weapon_levels(data:&PlayerGameData)->Result<(),String> {
         if row.equip_type()==5&&row.equip_id()>=super::random_ashes::SHOP_FIRST as i32&&row.equip_id()<(super::random_ashes::SHOP_FIRST+MAX_STOCK) as i32 {
             let custom=params.get::<EquipParamCustomWeapon>(row.equip_id() as u32).ok_or("随机战灰商品参数缺失")?;
             let weapon=custom.base_wep_id() as u32+u32::from(custom.reinforce_lv());
+            // [HansFix] 火把按原样卖，不跟着背包强化等级走
+            if erdtree_tower::torches::slot_of(weapon).is_some() {continue;}
             let next=super::smith::acquisition_id(weapon,peak,params)?;
             custom_updates.push((row.equip_id() as u32,next));continue;
         }

@@ -38,6 +38,20 @@ pub fn give(torch: &Torch, all: &[Torch]) -> Result<(), String> {
     Ok(())
 }
 
+/// 商店摆出火把前：把本局火把与货架上的火把一起写进火把位
+pub fn stage(owned: &[Torch], shop: &[Torch]) {
+    let list: Vec<Torch> = owned.iter().chain(shop).cloned().collect();
+    apply_torches(&list, true);
+    if let Ok(mut state) = STATE.lock() { state.applied = Some(list); }
+}
+/// 本局的火把，加上正待在商店里时货架上的火把（离店后货架上的火把位就空出来了）
+fn current(run: &erdtree_tower::Run) -> Vec<Torch> {
+    let mut list = run.torches.clone();
+    if let (erdtree_tower::Phase::Node { id }, Some(stock)) = (&run.phase, &run.shop_stock) {
+        if stock.node == *id { list.extend(stock.torches.iter().filter(|t| !run.torches.iter().any(|o| o.slot == t.slot)).cloned()); }
+    }
+    list
+}
 fn base_name(base: u32) -> String {
     super::hansfix_text::lookup(11, base).or_else(|| super::hansfix_text::lookup(310, base)).unwrap_or_else(|| "火把".into())
 }
@@ -103,7 +117,7 @@ fn is_torch(weapon: i32) -> bool {
 pub fn sync(chr: &mut ChrIns, data: &PlayerGameData, run: Option<&erdtree_tower::Run>) {
     let Ok(mut state) = STATE.lock() else { return };
     if !state.spells_text { state.spells_text = install_spell_texts(); }
-    let list = run.map(|r| r.torches.clone()).unwrap_or_default();
+    let list = run.map(current).unwrap_or_default();
     if state.applied.as_ref() != Some(&list) { apply_torches(&list, true); state.applied = Some(list); }
     let (weapon, gem) = left_weapon(data).unwrap_or((-1, -1));
     let spell = (gem >= 0).then(|| torches::spell_of_gem(gem as u32)).flatten();
