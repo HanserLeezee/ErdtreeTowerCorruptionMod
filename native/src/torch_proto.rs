@@ -138,6 +138,54 @@ fn is_torch(weapon: i32) -> bool {
     weapon >= 0 && (torches::slot_of(weapon as u32).is_some() || torches::BASES.contains(&id))
 }
 
+static RAISED: Mutex<Option<u8>> = Mutex::new(None);
+/// 灼烧的火把：举起时 30 米内的敌人火焰抗性减弱（与被油脂壶砸中相同的效果）
+const OIL: i32 = 420;
+/// 黑焰的火把：举起时 30 米内的玩家武器附上黑焰（黑焰刀刃的武器效果），放下后再留 3 秒
+const BLACK_FLAME: i32 = 1626000;
+const AURA_RANGE: f32 = 30.0;
+const BLACK_LINGER: Duration = Duration::from_secs(3);
+struct Auras { oiled: Vec<eldenring::cs::FieldInsHandle>, flamed: Vec<eldenring::cs::FieldInsHandle>, black_at: Option<Instant> }
+static AURAS: Mutex<Auras> = Mutex::new(Auras { oiled: Vec::new(), flamed: Vec::new(), black_at: None });
+fn distance(a: (f32, f32, f32), b: (f32, f32, f32)) -> f32 { ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2) + (a.2 - b.2).powi(2)).sqrt() }
+/// 战斗中每帧：按举着的火把给附近的敌人 / 玩家挂上或撤下光环效果
+pub fn auras(world: &mut eldenring::cs::WorldChrMan, foes: &[eldenring::cs::FieldInsHandle]) {
+    let tier = RAISED.lock().ok().and_then(|r| *r);
+    let Ok(mut state) = AURAS.lock() else { return };
+    let Some(player) = world.main_player.as_ref() else { return };
+    let (me, origin) = (player.chr_ins.field_ins_handle, player.chr_ins.modules.physics.position);
+    let origin = (origin.0, origin.1, origin.2);
+    let near = |p: &eldenring::cs::ChrIns| { let q = p.modules.physics.position; p.modules.data.hp > 0 && distance(origin, (q.0, q.1, q.2)) <= AURA_RANGE };
+    // 灼烧：敌人
+    let mut oiled = Vec::new();
+    for handle in foes {
+        let Some(chr) = world.chr_ins_by_handle_mut(handle) else { continue };
+        let has = chr.special_effect.entries().any(|e| e.param_id == OIL);
+        if tier == Some(1) && near(chr) {
+            if !has { chr.apply_speffect(OIL, false); }
+            oiled.push(*handle);
+        } else if has && state.oiled.contains(handle) { chr.remove_speffect(OIL); }
+    }
+    if oiled.len() != state.oiled.len() { super::log(format!("HANSFIX_TORCH scorch aura enemies={}", oiled.len())); }
+    state.oiled = oiled;
+    // 黑焰：玩家（自己与 30 米内的队友），放下后再留 3 秒
+    if tier == Some(2) { state.black_at = Some(Instant::now()); }
+    let lit = state.black_at.is_some_and(|t| t.elapsed() < BLACK_LINGER);
+    let mut players: Vec<eldenring::cs::FieldInsHandle> = vec![me];
+    players.extend(world.player_chr_set.characters().map(|p| p.chr_ins.field_ins_handle).filter(|h| *h != me));
+    let mut flamed = Vec::new();
+    for handle in players {
+        let Some(chr) = world.chr_ins_by_handle_mut(&handle) else { continue };
+        let has = chr.special_effect.entries().any(|e| e.param_id == BLACK_FLAME);
+        if lit && near(chr) {
+            if !has { chr.apply_speffect(BLACK_FLAME, false); }
+            flamed.push(handle);
+        } else if has && state.flamed.contains(&handle) { chr.remove_speffect(BLACK_FLAME); }
+    }
+    if flamed.len() != state.flamed.len() { super::log(format!("HANSFIX_TORCH black flame aura players={}", flamed.len())); }
+    state.flamed = flamed;
+}
+
 /// 每帧
 pub fn sync(chr: &mut ChrIns, data: &PlayerGameData, run: Option<&erdtree_tower::Run>) {
     let Ok(mut state) = STATE.lock() else { return };
@@ -154,6 +202,14 @@ pub fn sync(chr: &mut ChrIns, data: &PlayerGameData, run: Option<&erdtree_tower:
     let list = run.map(current).unwrap_or_default();
     if state.applied.as_ref() != Some(&list) { apply_torches(&list, true); state.applied = Some(list); }
     let (weapon, gem) = left_weapon(data).unwrap_or((-1, -1));
+    // 光环：举着的是哪一阶的火把（灼烧 1、黑焰 2）
+    {
+        let requests = &chr.modules.action_request.action_requests;
+        let up = requests.guard() || requests.l1();
+        let tier = (weapon >= 0).then(|| torches::slot_of(weapon as u32)).flatten()
+            .and_then(|slot| run.and_then(|r| r.torches.iter().find(|t| t.slot == slot)).map(|t| t.merges)).filter(|_| up);
+        if let Ok(mut raised) = RAISED.lock() { *raised = tier; }
+    }
     let spell = (gem >= 0).then(|| torches::spell_of_gem(gem as u32)).flatten();
     let ours = is_torch(weapon) && spell.is_some();
     let requests = &chr.modules.action_request.action_requests;

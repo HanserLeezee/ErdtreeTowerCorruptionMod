@@ -2025,6 +2025,7 @@ fn tick_locked() {
             runtime.boss_fight.tick(world,&handles,authority,runtime.party.is_some(),flasks,team.as_deref());
             runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
             runtime.hansfix_descent.tick(world,(run.seed,run.act,id),run.descent_level(id),&handles,authority);
+            super::torch_proto::auras(world,&handles);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             // Boss 房的 Boss 卡在 1 点生命太久：视为转阶段锁血，直接放行
             if run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Boss) {
