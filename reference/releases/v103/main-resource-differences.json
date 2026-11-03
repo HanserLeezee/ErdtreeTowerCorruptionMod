@@ -1,0 +1,50 @@
+[
+  {
+    "path": "scene-assets/affix-details.tsv",
+    "releaseSha256": "402f882850e0bf3ff87a7d5fa8d8036afd714f8ffc07a1d6cccd8d47b7faeec0",
+    "sha256": "72fed8c10495458cdadac512b876402d8cd2e1358d627b5560c6dd6afe35b9ed",
+    "reason": "Preserve post-v103 main affix base-value descriptions."
+  },
+  {
+    "path": "scene-assets/affix-v2-details.tsv",
+    "releaseSha256": "33cc1de3f22ec144e96f43fe8f0b6455ed230c0b141d5546ba7d933d0dbc808c",
+    "sha256": "bbe5b33d3d11bb6807ff1ac15fbdd8718b530792f410a02b0041cd9640aa3285",
+    "reason": "Preserve post-v103 main affix base-value descriptions."
+  },
+  {
+    "path": "scene-assets/menu/hi/01_common.sblytbnd.dcx",
+    "releaseSha256": "b976be74aae94bf12b0c27151b160020ffcef7d3d2862946ecbc55b1e86b64e4",
+    "sha256": "009fae15da4560c45eb28ad7218576de2c5cf378bec6a11573a54a7f3875b9b2",
+    "reason": "Add native ember icon atlas/layout to the unchanged v103 UI assets."
+  },
+  {
+    "path": "scene-assets/menu/hi/01_common.tpf.dcx",
+    "releaseSha256": "f1c17a0f8655aae4b388e520fc9ac97407aa233f450e74d3acc034794e0f015a",
+    "sha256": "6202d6f792781430f83b598c754f21d45fedd1f6c000c0b0f658368f43b3b706",
+    "reason": "Add native ember icon atlas/layout to the unchanged v103 UI assets."
+  },
+  {
+    "path": "scene-assets/menu/low/01_common.sblytbnd.dcx",
+    "releaseSha256": "c8205df8c98d3e83b42e22713a98c16c2f247c2572d9274887fae632058db007",
+    "sha256": "94c79afef5d5efc546fffd866bc7978e0779ae504ac22fe4441bf80f6b143a46",
+    "reason": "Add native ember icon atlas/layout to the unchanged v103 UI assets."
+  },
+  {
+    "path": "scene-assets/menu/low/01_common.tpf.dcx",
+    "releaseSha256": "e9b0b7d018d41cea80bc7e21f7a901a6172a7402b19c75ccea9786bdc9f33b25",
+    "sha256": "d10bbd49221e33c5cf51c31eb90417157128e04b6f88bff01a9ab0b427988c3e",
+    "reason": "Add native ember icon atlas/layout to the unchanged v103 UI assets."
+  },
+  {
+    "path": "scene-assets/msg/zhocn/item_dlc02.msgbnd.dcx",
+    "releaseSha256": "2f32bb1bd4cf0bc27633019aebfe4b393cd1e865ddf8b9d6857a5160a9f9bddf",
+    "sha256": "733afda43547fca83a5bc19b606aea6292d22d85d56883baf1820aca7b9d96b2",
+    "reason": "Add 26 native ember display names to the unchanged v103 message binder."
+  },
+  {
+    "path": "scene-assets/regulation.bin",
+    "releaseSha256": "0bf2dcd0d245e32a797f4b3633cf3a338af3d85208ab6cfa987e83255608fa15",
+    "sha256": "5470f8ba8dc1c891fc4faf97c935e1cd813fdf9f5e2b53ab346395be737e2c54",
+    "reason": "Preserve main weapon reinforcement, affix/oath/enchant updates and 26 native ember display goods; field-level three-way merge, zero conflicts."
+  }
+]

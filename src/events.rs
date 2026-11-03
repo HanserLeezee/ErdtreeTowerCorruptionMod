@@ -8,8 +8,8 @@ pub struct Story {
 }
 pub const DICE:usize=0;pub const MYSTERY:usize=1;pub const REFORGE:usize=2;
 pub const DICE_STAKES:[u32;2]=[1000,3000];
-pub const BOX_PRICES:[u32;2]=[2000,5000];
-pub const REFORGE_PRICES:[u32;2]=[2000,6000];
+pub const BOX_PRICES:[u32;2]=[1000,2500];
+pub const REFORGE_PRICES:[u32;2]=[1000,3000];
 pub const STORIES: [Story; 3] = [
     Story {
         title: "骰子赌徒",
@@ -20,16 +20,16 @@ pub const STORIES: [Story; 3] = [
         title: "盲盒商人",
         text: "商人拍了拍蒙着黑布的木箱：‘里面是一件武器或防具，品质全凭运气。贵一些的箱子，运气也会好一些。’",
         choices: [
-            "支付 2000 卢恩\n随机一件武器或防具\n\n稀有 65%\n史诗 30%\n传说 5%",
-            "支付 5000 卢恩\n随机一件武器或防具\n\n稀有 15%\n史诗 55%\n传说 30%",
+            "支付 1000 卢恩\n随机一件武器或防具\n\n稀有 65%\n史诗 30%\n传说 5%",
+            "支付 2500 卢恩\n随机一件武器或防具\n\n稀有 15%\n史诗 55%\n传说 30%",
         ],
     },
     Story {
         title: "词条重铸台",
         text: "一座仍有余温的熔炉。铭文写着：‘将词条交还火焰，火焰会还你另一种形状。’",
         choices: [
-            "支付 2000 卢恩\n重铸右手的词条武器\n换成同一把武器的另一种词条组合\n强化等级与战灰保留\n\n1/5 的概率品质 +1",
-            "支付 6000 卢恩\n精炼右手的词条武器\n换成另一种词条组合，品质必定 +1\n强化等级与战灰保留\n\n传说品质的武器不能精炼",
+            "支付 1000 卢恩\n重铸右手的词条武器\n换成同一把武器的另一种词条组合\n强化等级与战灰保留\n\n1/5 的概率品质 +1",
+            "支付 3000 卢恩\n精炼右手的词条武器\n换成另一种词条组合，品质必定 +1\n强化等级与战灰保留\n\n传说品质的武器不能精炼",
         ],
     },
 ];
@@ -223,10 +223,10 @@ mod gamble_tests {
             let Some(id)=run.nodes.iter().position(|n|n.kind==NodeKind::Event) else{continue};
             run.debug_jump(id).unwrap();run.enter(id).unwrap();run.gold=6000;
             match run.story_index().unwrap_or(usize::MAX) {
-                MYSTERY=>{let mut r=run.clone();let effect=r.resolve_story(1).unwrap();assert_eq!(r.gold,1000);assert!(r.claimed_items.contains(&effect.item.unwrap()));},
+                MYSTERY=>{let mut r=run.clone();let effect=r.resolve_story(1).unwrap();assert_eq!(r.gold,3500);assert!(r.claimed_items.contains(&effect.item.unwrap()));},
                 REFORGE=>{
                     let mut r=run.clone();let effect=r.resolve_story(0).unwrap();assert!(effect.reforge&&!effect.reforge_upgrade);assert_eq!(r.gold,6000-REFORGE_PRICES[0]);
-                    let mut refine=run.clone();let effect=refine.resolve_story(1).unwrap();assert!(effect.reforge_upgrade);assert_eq!(refine.gold,0);
+                    let mut refine=run.clone();let effect=refine.resolve_story(1).unwrap();assert!(effect.reforge_upgrade);assert_eq!(refine.gold,3000);
                     assert!(run.clone().resolve_story(2).is_err());
                 },
                 _=>{},

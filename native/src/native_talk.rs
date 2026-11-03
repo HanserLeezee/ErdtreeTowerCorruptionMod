@@ -72,7 +72,7 @@ impl EventMenu {
         }
         if self.stormveil {return (!self.used&&!self.busy&&(1..=2).contains(&choice)).then_some(EventRequest::Stormveil(choice==1));}
         if self.descent {return (choice==1&&!self.used&&!self.busy).then_some(EventRequest::Descent);}
-        if self.recovery {return (!self.used&&!self.busy&&(1..=2).contains(&choice)).then(||EventRequest::Recovery((choice-1) as usize));}
+        if self.recovery {return (!self.used&&!self.busy&&(1..=3).contains(&choice)).then(||EventRequest::Recovery((choice-1) as usize));}
         if self.scarabs {return (choice==1&&self.ready&&!self.busy&&self.attempts<3).then_some(EventRequest::Scarabs);}
         (self.altar&&!self.locked&&!self.used&&!self.busy&&(1..=3).contains(&choice)).then(||EventRequest::Altar((choice-1) as usize))
     }
@@ -156,7 +156,7 @@ impl NativeTalk {
                     if self.event_menu.used {return self.dialog(9500093);}
                     if self.event_menu.busy {return Ok(());}
                     self.event(110,&[])?;self.event(20,&[])?;
-                    self.event(19,&[1,9500091,-1])?;self.event(19,&[2,9500092,-1])?;self.event(19,&[99,9500003,-1])?;
+                    self.event(19,&[1,9500091,-1])?;self.event(19,&[2,9500092,-1])?;self.event(19,&[3,9500158,-1])?;self.event(19,&[99,9500003,-1])?;
                     self.event(10,&[1])?;self.state=1;return Ok(());
                 }
                 if self.service==6 && self.event_menu.scarabs {
@@ -454,7 +454,7 @@ mod tests {
         let spring=EventMenu{recovery:true,..Default::default()};
         assert_eq!(spring.request(1),Some(EventRequest::Recovery(0)));
         assert_eq!(spring.request(2),Some(EventRequest::Recovery(1)));
-        assert_eq!(spring.request(3),None);assert_eq!(spring.request(99),None);
+        assert_eq!(spring.request(3),Some(EventRequest::Recovery(2)));assert_eq!(spring.request(99),None);
         assert_eq!(EventMenu{used:true,..spring}.request(1),None);
         assert_eq!(EventMenu{busy:true,..spring}.request(2),None);
         assert_eq!(altar.request(1),Some(EventRequest::Altar(0)));

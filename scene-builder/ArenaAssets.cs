@@ -77,6 +77,7 @@ static class ArenaAssets {
 
     public static void Build(string game,string input,string output) {
         if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging output required");
+        PortalVisualAssets.Build(game,input,output);
         var template=MSBE.Read(Path.Combine(input,"map/mapstudio/m45_02_00_00.msb.dcx"));
         var templateEvents=EMEVD.Read(Path.Combine(input,"event/m45_02_00_00.emevd.dcx"));
         using var archives=new Archives(game);
@@ -176,6 +177,7 @@ static class ArenaAssets {
             resources.Add($"{relative}|{bytes.Length}|{hash:x16}");
         }
         File.WriteAllLines(Path.Combine(output,"arenas-resources.txt"),resources.OrderBy(r=>r,StringComparer.Ordinal));
+        PortalVisualAssets.Manifest(output);
         Console.WriteLine($"{built.Count-1} arenas built; copy map/, event/ and arenas-built.txt into scene-assets");
     }
     static void Verify(MSBE map,EMEVD events,MSBE template,string key) {

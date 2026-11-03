@@ -2,6 +2,15 @@ use erdtree_tower::{music::{self,Pool},Class,Run};
 use std::collections::HashSet;
 
 #[test]
+fn every_built_arena_supports_level_music() {
+    for line in include_str!("../scene-assets/arenas-built.txt").lines().filter(|l|!l.starts_with('#')&&!l.is_empty()) {
+        let map=line.split('|').nth(1).unwrap();
+        let bytes:Vec<u8>=map[1..].split('_').map(|n|n.parse().unwrap()).collect();
+        assert!(music::supported(i32::from_be_bytes(bytes.try_into().unwrap())),"{map}");
+    }
+}
+
+#[test]
 fn soundtrack_has_unique_audible_mappings_in_all_four_pools() {
     assert_eq!(music::CATALOG.len(),100);
     let mut ids=HashSet::new();let mut names=HashSet::new();let mut flags=HashSet::new();

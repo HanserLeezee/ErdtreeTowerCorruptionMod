@@ -25,7 +25,7 @@ fn service(hub:bool,kind:NodeKind,index:usize)->u32 {
     if hub {if index==2 {5}else{3+index as u32}} else if kind==NodeKind::Shop {if index==0 {2}else{5}} else if kind!=NodeKind::Camp||index==2 {5} else {index as u32}
 }
 fn npc_data(model:i32,role:u32)->(i32,i32,i32) {
-    match model {2180=>(21801034,21800000,-1),3451=>(34510179,34519000,-1),0 if role==4||role==5=>(523180079,523180000,23180),0=>(523200079,523200000,23200),_=>(model*10000,model*10000,-1)}
+    match model {2180=>(21800000,21800000,-1),3451=>(34510179,34519000,-1),0 if role==4||role==5=>(523180079,523180000,23180),0=>(523200079,523200000,23200),_=>(model*10000,model*10000,-1)}
 }
 fn loaded(status:ChrLoadStatus)->bool {matches!(status,ChrLoadStatus::Active|ChrLoadStatus::ReadyForActivation)}
 fn map_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadStatus,hp:i32)->bool {
@@ -34,21 +34,22 @@ fn map_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadS
 }
 fn player_model(model:i32)->u8 {u8::from(model==0)}
 fn conditional_services(block:i32,kind:NodeKind)->Vec<(u32,i32,i32,u32)> {
+    if block==0x2d010000&&kind==NodeKind::Event{return super::event_hosts::service(0);}
     if block==0x2d000000 && kind==NodeKind::Camp {
-        return vec![(45001800,0,523200079,0),(45001801,3451,34510179,1),(45001802,2180,21801034,5)];
+        return vec![(45001800,0,523200079,0),(45001801,3451,34510179,1),(45001802,2180,21800000,5)];
     }
     static SERVICES:std::sync::LazyLock<Vec<(i32,NodeKind,(u32,i32,i32,u32))>>=std::sync::LazyLock::new(||include_str!("../../scene-assets/party-services.txt").lines().filter_map(|line| {
         let p:Vec<_>=line.split('|').collect();
         let map:Vec<u8>=p[0][1..].split('_').map(|v|v.parse().unwrap()).collect();
         let kind=match p[1]{"Shop"=>NodeKind::Shop,"Chest"=>NodeKind::Chest,"Event"=>NodeKind::Event,"Monster"=>NodeKind::Monster,_=>return None};
         let role=p[7].parse().unwrap();
-        Some((i32::from_be_bytes([map[0],map[1],map[2],map[3]]),kind,(p[2].parse().unwrap(),if role==5{2180}else{p[3].parse().unwrap()},if role==5{21801034}else{p[4].parse().unwrap()},role)))
+        Some((i32::from_be_bytes([map[0],map[1],map[2],map[3]]),kind,(p[2].parse().unwrap(),if role==5{2180}else{p[3].parse().unwrap()},if role==5{21800000}else{p[4].parse().unwrap()},role)))
     }).collect());
     let block=if super::arenas::is_built(block) {0x2d020000}else{block};
     SERVICES.iter().filter(|(b,k,_)|*b==block&&*k==kind).map(|(_,_,service)|*service).collect()
 }
 fn camp_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadStatus,hp:i32)->bool {
-    let expected=match slot {0=>(0,523200079),1=>(3451,34510179),2=>(2180,21801034),_=>return false};
+    let expected=match slot {0=>(0,523200079),1=>(3451,34510179),2=>(2180,21800000),_=>return false};
     entity==45001800+slot as u32&&(model,param)==expected&&loaded(status)&&hp>0
 }
 
@@ -65,6 +66,7 @@ pub struct Room {
     pub shop_refresh_pending:bool,
     pub hunter:Option<super::map_guards::Guards>,
     hub: bool,
+    event_host:usize,
     pub node: usize,
     pub kind: NodeKind,
     pub block: i32,
@@ -112,6 +114,7 @@ impl Room {
         self.talks.iter_mut().find_map(|talk|talk.take_refill())
     }
     pub fn event_menu(&mut self,run:&erdtree_tower::Run,party_ready:bool,party_busy:bool,solo:bool) {
+        self.event_host=super::event_hosts::index(run.event_draw(self.node));
         let progress=&run.regional_event;
         let menu=super::native_talk::EventMenu{gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
             altar:run.altar(self.node),used:progress.opened!=0||progress.stormveil.is_some_and(|s|s!=erdtree_tower::stormveil::Progress::Choosing),
@@ -134,6 +137,9 @@ impl Room {
     fn create(node:usize,kind:NodeKind,hp:i32,fp:i32,attendant:Option<super::arenas::Arena>,hub:bool)->Result<Self,String> {
         let (block, entry, title) = if hub {(super::hub::BLOCK,11102691,"大赐福")} else if let Some(arena)=attendant {(arena.block,arena.entry,"场边引导者")} else {destination(kind).ok_or("此节点没有房间")?};
         let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "NPC 参数未就绪")?;
+        if kind==NodeKind::Event&&super::event_hosts::HOSTS.iter().any(|h|!params.get::<NpcParam>(h.npc as u32).is_some_and(|p|p.name_id()==h.name_id)) {
+            return Err("事件 NPC 名称参数缺失，请更新配套 regulation.bin".into());
+        }
         let models=if hub {vec![0,0]}else{npcs(kind).into_iter().map(|(model,_)|model).collect()};
         for (index,model) in models.into_iter().enumerate() {
             let (npc,think,_)=npc_data(model,service(hub,kind,index));
@@ -170,7 +176,7 @@ impl Room {
             merchant_down:false,shop_refresh_pending:false,hunter:None,merchant_hit_logged:false,
             scarabs:Default::default(),
             chest_attempt:None,
-            hub,
+            hub,event_host:0,
             node,
             kind,
             block,
@@ -221,7 +227,7 @@ impl Room {
         if !self.restored {
             let player = world.main_player.as_mut().unwrap();
             super::ailments::clear(&mut player.chr_ins)?;
-            player.chr_ins.modules.data.hp = player.chr_ins.modules.data.hp.min(self.saved_hp);
+            super::travel::restore_arrival_hp(&mut player.chr_ins,self.saved_hp,"service room arrival");
             player.chr_ins.modules.data.fp = player.chr_ins.modules.data.fp.min(self.saved_fp);
             self.restored = true;
             super::log(format!(
@@ -250,10 +256,15 @@ impl Room {
             }
         }
         if self.handles.len()<specs.len() && !grounded {return Ok(());}
-        let conditional=conditional_services(self.block,self.kind);
+        let conditional=if self.kind==NodeKind::Event {super::event_hosts::service(self.event_host)}else{conditional_services(self.block,self.kind)};
+        if self.kind==NodeKind::Event {
+            super::native_talk::set_flag(45011871,false)?;
+            for host in super::event_hosts::HOSTS.iter().filter(|h|h.entity!=conditional[0].0) {super::native_talk::set_flag(host.flag,false)?;}
+        }
         for &(id,_,_,_) in &conditional {
-            super::native_talk::set_flag(id+70,true)?;
-            if !super::native_talk::flag(id+70)? {return Err("服务 NPC 显示标记不可用".into());}
+            let flag=super::event_hosts::visibility_flag(id);
+            super::native_talk::set_flag(flag,true)?;
+            if !super::native_talk::flag(flag)? {return Err(format!("服务 NPC {id} 显示标记 {flag} 不可用"));}
         }
         if self.map_backed() && self.handles.len()<specs.len() {
             let slot=self.handles.len();
@@ -428,7 +439,8 @@ impl Room {
             if self.kind==NodeKind::Chest { flags.virtual_memory_flag.set_flag(45010939,false); }
             if self.kind==NodeKind::Event { flags.virtual_memory_flag.set_flag(45010940,false); }
         }
-        for (id,_,_,_) in conditional_services(self.block,self.kind) {let _=super::native_talk::set_flag(id+70,false);}
+        for (id,_,_,_) in conditional_services(self.block,self.kind) {let _=super::native_talk::set_flag(super::event_hosts::visibility_flag(id),false);}
+        if self.kind==NodeKind::Event {for host in super::event_hosts::HOSTS.iter(){let _=super::native_talk::set_flag(host.flag,false);}}
         for &(handle, address) in self.handles.iter().filter(|_|!self.map_backed()) {
             if let Some(chr) = world.chr_ins_by_handle_mut(&handle)
                 && std::ptr::from_ref(chr) as usize == address
@@ -463,7 +475,7 @@ fn npcs(kind: NodeKind) -> Vec<(i32, [f32; 3])> {
         NodeKind::Camp => vec![(0, [-5.0, 0.15, 5.0]), (3451, [5.0, 0.05, 1.0]), (2180,[5.0,0.15,6.0])],
         NodeKind::Shop => vec![(3200, [0.0, 0.1, 0.0]),(2180,[-12.0,0.1,8.0])],
         NodeKind::Chest|NodeKind::Monster => vec![(2180,[-16.0,0.1,10.0])],
-        NodeKind::Event => vec![(2170,[-7.0,0.1,2.0])],
+        NodeKind::Event => vec![(0,[0.0,0.1,0.0])],
         _ => vec![],
     }
 }
@@ -500,8 +512,9 @@ mod tests {
             let mut ids=std::collections::HashSet::new();
             for (slot,&(id,model,param,role)) in entries.iter().enumerate() {
                 assert!(ids.insert(id));assert_eq!(model,specs[slot].0);
-                assert_eq!(role,service(false,kind,slot));assert_eq!(param,npc_data(model,role).0);
-                assert!([45001,45011,45021].contains(&((id+70)/1000)));
+                assert_eq!(role,service(false,kind,slot));
+                assert_eq!(param,if kind==NodeKind::Event {super::super::event_hosts::HOSTS[0].npc}else{npc_data(model,role).0});
+                assert!([45001,45011,45021].contains(&(super::super::event_hosts::visibility_flag(id)/1000)));
             }
         }
         assert!(conditional_services(0x0b0a0000,NodeKind::Shop).is_empty());
@@ -511,7 +524,7 @@ mod tests {
     }
     #[test]
     fn camp_bindings_require_matching_role_entity_and_live_character() {
-        for (slot,model,param) in [(0,0,523200079),(1,3451,34510179),(2,2180,21801034)] {
+        for (slot,model,param) in [(0,0,523200079),(1,3451,34510179),(2,2180,21800000)] {
             let id=45001800+slot as u32;
             assert!(camp_service_matches(slot,id,model,param,ChrLoadStatus::Active,1));
             assert!(!camp_service_matches(slot,id+1,model,param,ChrLoadStatus::Active,1));
@@ -557,7 +570,7 @@ mod tests {
         assert!(loaded(ChrLoadStatus::ReadyForActivation));
         for kind in [NodeKind::Camp,NodeKind::Shop,NodeKind::Chest,NodeKind::Monster] {
             for (i,(model,_)) in npcs(kind).into_iter().enumerate() {
-                if service(false,kind,i)==5 {assert_eq!(npc_data(model,5),(21801034,21800000,-1));}
+                if service(false,kind,i)==5 {assert_eq!(npc_data(model,5),(21800000,21800000,-1));}
             }
         }
         assert!(npcs(NodeKind::Monster)[0].1[0].abs()>=15.0);

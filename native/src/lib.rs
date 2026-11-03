@@ -24,6 +24,8 @@ mod blessings;
 mod pad;
 mod retry_item;
 mod options;
+mod radahn_probe;
+mod radahn_entity;
 mod stats;
 mod enemies;
 mod chariot;
@@ -76,6 +78,8 @@ mod ember_notice;
 mod smith;
 mod whetblades;
 mod parkour_barrier;
+mod hub_boundary;
+mod event_hosts;
 mod spirits;
 mod bloodstain;
 mod run_screen;
@@ -396,7 +400,7 @@ impl ImguiRenderLoop for TowerPreview {
             if view.room.is_some()||view.shared_event {
                 return;
             }
-            if view.travelling {
+            if view.travelling||view.run.as_ref().is_some_and(|r|r.retry_node.is_some()) {
                 input::CAPTURE.store(false, Ordering::Relaxed);
                 return;
             }
@@ -506,6 +510,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
         if let Err(error)=unsafe {smith::install()} {log(format!("Smith reinforcement unavailable: {error}"));}
         if let Err(error)=unsafe {spirits::install()} {log(format!("Spirit use trace unavailable: {error}"));}
         if let Err(error)=unsafe {star_stream::install()} {log(format!("Star stream unavailable: {error}"));}
+        if let Err(error)=unsafe {radahn_entity::install()} {log(format!("Radahn event binding unavailable: {error}"));}
         if let Err(error)=unsafe {embers::install_critical_trace()} {log(format!("Critical stack detection unavailable: {error}"));}
         if let Err(error) = wait_for_system_init(&program, Duration::from_secs(60)) {
             log(format!("Game system initialization failed: {error}"));

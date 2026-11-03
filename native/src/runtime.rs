@@ -5,7 +5,7 @@ use std::{
 
 use eldenring::{
     cs::{
-        BlockId, CSDebugChrCreatorInitData, ChrDebugSpawnRequest, ChrLoadStatus, EventWorldType,
+        BlockId, CSDebugChrCreatorInitData, ChrDebugSpawnRequest, ChrInsExt, ChrLoadStatus, EventWorldType,
         FieldInsHandle, GameMan, NpcParam, NpcThinkParam, SoloParamRepository, WorldChrMan,
     },
     position::HavokPosition,
@@ -120,7 +120,9 @@ struct Foe {
     entity_address: Option<usize>,
     /// 双王共命：在这里（尸体的位置）重新生成
     respawn: Option<[f32;3]>,
+    spawn_gap:erdtree_tower::encounter::SpawnGap,
 }
+type MemberSpawnGaps=((u64,u64,u8,usize),Vec<erdtree_tower::encounter::SpawnGap>);
 struct Pending {
     entity_base:Option<i32>,
     networked:bool,
@@ -210,7 +212,7 @@ fn tick_party_scarabs(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->
             if link.event.aborted {
                 let player=world.main_player.as_mut().ok_or("角色尚未加载")?;
                 let data=unsafe {player.player_game_data.as_mut()};
-                let refunded=data.rune_count.checked_add(1000).ok_or("退款超过卢恩上限")?;
+                let refunded=data.rune_count.checked_add(erdtree_tower::regional_events::SCARAB_PRICE).ok_or("退款超过卢恩上限")?;
                 write_award_journal(&award_path()?,run)?;
                 let mut next=run.clone();next.regional_event.attempts-=1;next.gold=refunded;
                 data.rune_count=refunded;state.view.runes=refunded;record_checked(&next)?;*run=next;
@@ -243,6 +245,7 @@ fn tick_party_scarabs(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->
 }
 
 struct Runtime {
+    radahn_probe:Option<super::radahn_probe::Probe>,
     ember_notice:super::ember_notice::Notice,
     load_trace:super::diagnostics::LoadTrace,
     drawing:erdtree_tower::map_drawing::Sync,
@@ -304,8 +307,10 @@ struct Runtime {
     victory_cleanup:Option<(u64,Vec<u32>,Instant,bool)>,
     /// 本局结束（死亡或通关）时这场战斗的敌人：先留在场上，复活或 15 秒后再撤，不在死亡瞬间消失
     lingering:Option<(Pending,Instant)>,
-    /// 这次死亡已经用徘徊赐福处理过（回到路线图重打本层）：角色复活前别的死亡检查不再结束旅程或再扣一次
+    /// 同一次死亡只扣一次赐福，等待原生复活后自动返回原房间。
     death_retry:bool,
+    retry_ready_since:Option<Instant>,
+    member_spawn_gaps:Option<MemberSpawnGaps>,
     /// 徘徊赐福实物道具：背包数量跟随旅程剩余次数
     retry_item:super::retry_item::Sync,
     action_guard: super::input::ActionGuard,
@@ -315,6 +320,7 @@ struct Runtime {
     descent: Option<(Instant,i32,i32,bool)>,
     stormveil: Option<(Instant,i32,i32,bool)>,
     stormveil_barrier:super::parkour_barrier::Barrier,
+    hub_boundary:super::hub_boundary::Boundary,
     chariot_clock:Option<ChariotClock>,
     chariot_chase:super::chariot::Chase,
 }
@@ -323,6 +329,7 @@ fn fresh_runtime()->Runtime {
     super::seamless_revival::cancel();
     let (party,party_error)=match super::party::Link::load(){Ok(p)=>(p,None),Err(e)=>(None,Some(e))};
     Runtime {
+        radahn_probe:None,
         drawing:Default::default(),drawing_owner:None,
         rest_end:Default::default(),
         diagnostics:Default::default(),
@@ -375,6 +382,8 @@ fn fresh_runtime()->Runtime {
         victory_cleanup:None,
         lingering:None,
         death_retry:false,
+        retry_ready_since:None,
+        member_spawn_gaps:None,
         retry_item:Default::default(),
         action_guard: Default::default(),
         last_blessing_sync: None,
@@ -383,6 +392,7 @@ fn fresh_runtime()->Runtime {
         descent: None,
         stormveil: None,
         stormveil_barrier:Default::default(),
+        hub_boundary:Default::default(),
         chariot_clock:None,
         chariot_chase:Default::default(),
     }
@@ -780,7 +790,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
                 let roster=super::enemies::node_roster(run,id);
                 let ids=super::enemies::map_entities(&roster)?;
                 // 精英成双：与房主同一规则，前面的精英还没倒下（或没到半血）时，后面的精英先不放出来，也不等它
-                let held=member_held(world,run,id,&roster,&ids);
+                let held=member_held(&mut state.member_spawn_gaps,(link.config.session,link.epoch,run.act,id),world,run,id,&roster,&ids);
                 let mut ready=vec![false;roster.len()];
                 for (slot,&entity) in ids.iter().enumerate() {
                     if held[slot] {continue;}
@@ -860,7 +870,67 @@ fn stray_sweep_due(waited:Duration)->bool {waited>=Duration::from_secs(8)}
 static SOLO:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(true);
 pub fn solo()->bool {SOLO.load(std::sync::atomic::Ordering::Relaxed)}
 /// 徘徊赐福生效时的提示
-fn lingering_message(left:u8)->String {format!("徘徊赐福生效：复活后从路线图重打本层（剩余 {left} 个）。")}
+fn lingering_message(left:u8)->String {format!("徘徊赐福生效：复活后自动返回原房间重试（剩余 {left} 个）。")}
+
+fn retry_run(run:&Run,destination:Option<usize>,solo:bool,handled:bool)->Option<Run> {
+    if !solo||handled||run.retry_node.is_some(){return None;}
+    let mut next=run.clone();
+    if next.phase==Phase::Map {next.enter(destination?).ok()?;}
+    next.retry_floor().then_some(next)
+}
+
+fn retry_departure(since:&mut Option<Instant>,now:Instant,ready:bool)->bool {
+    if !ready {*since=None;return false;}
+    now.saturating_duration_since(*since.get_or_insert(now))>=Duration::from_millis(500)
+}
+
+fn begin_death_retry(state:&mut Runtime,world:&mut WorldChrMan,next:Run) {
+    if let Some(pending)=state.pending.take() {
+        if !pending.completed {
+            let fought=if let Phase::Combat{id}=pending.next_run.phase {Some(id)}else{None};
+            let names:Vec<_>=pending.foes.iter().map(|f|f.spec.name).collect();
+            append_history(&next,fought,false,&names);
+        }
+        state.lingering=Some((pending,Instant::now()));
+    }
+    if let Some(room)=state.room.take(){room.retire(world);}
+    for flag in [45020970,45020971,45020972,45007990,45007992,10007990,30097990,35007990] {
+        if let Err(error)=super::native_talk::set_flag(flag,false){super::log(error);}
+    }
+    if let Err(error)=clear_chariot(){super::log(error);}
+    state.travel=None;state.reward_wait=None;state.reward_portal=Default::default();
+    state.flasks=None;state.event_start=None;state.descent=None;state.stormveil=None;state.chariot_clock=None;
+    state.boss_fight=Default::default();state.law_fight=Default::default();state.ember_fight=Default::default();state.bout.end(world);
+    state.view.boss_affixes=None;state.view.boss_affix_list.clear();state.view.boss_alert=None;state.view.law_clock=None;
+    state.command=None;state.view.room=None;state.view.enemy_hp=None;
+    state.view.ready=false;state.view.busy=true;state.view.travelling=true;
+    state.death_retry=true;state.retry_ready_since=None;
+    let left=next.retries;record(&next);state.view.run=Some(next);
+    report(state,lingering_message(left));
+}
+
+fn return_to_retry_room(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->bool {
+    let Some(node)=state.view.run.as_ref().and_then(|r|r.retry_node) else {state.retry_ready_since=None;return false;};
+    if state.party.is_some()||state.travel.is_some()||state.pending.is_some()||state.room.is_some(){return false;}
+    state.command=None;state.view.busy=true;state.view.travelling=true;
+    let ready=!game.warp_requested&&world.main_player.as_ref().is_some_and(|p|
+        i32::from(p.current_block_id)>=0&&p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()
+        &&p.chr_ins.modules.physics.standing_on_solid_ground&&!p.chr_ins.modules.physics.is_falling&&!p.chr_ins.chr_flags1c5.is_invincible());
+    if !retry_departure(&mut state.retry_ready_since,Instant::now(),ready){return true;}
+    state.retry_ready_since=None;
+    let result=(||->Result<(),String>{
+        let run=state.view.run.as_ref().unwrap();let player=world.main_player.as_mut().ok_or("角色尚未复活")?;
+        let data=unsafe {player.player_game_data.as_mut()};
+        let mut flasks=super::flasks::Flasks::bind_bonus(data,run.class,run.flask_bonus,run.law.flask_cut())?;
+        flasks.restore(data,run.flasks)?;state.flasks=Some(flasks);
+        let vitals=&mut player.chr_ins.modules.data;
+        vitals.hp=((i64::from(vitals.max_hp)*i64::from(run.hp)/i64::from(run.max_hp)) as i32).max(1);
+        state.retry_item.tick(data,Some(run),true);
+        request_travel(state,world,game,node)
+    })();
+    match result {Ok(())=>super::log(format!("TOWER_RETRY automatic return node={node}")),Err(error)=>report(state,format!("正在重试原房间：{error}"))}
+    true
+}
 fn lingering_due(alive:bool,waited:Duration)->bool {alive&&waited>=Duration::from_secs(5)||waited>=Duration::from_secs(15)}
 #[cfg(test)]
 mod victory_cleanup_tests {
@@ -879,6 +949,16 @@ mod victory_cleanup_tests {
         assert!(super::lingering_due(false,D::from_secs(15)),"never kept forever");
     }
 }
+fn trial_revival_destination(choice:Option<erdtree_tower::regional_events::Trial>)->Option<super::party_death::Position> {
+    use erdtree_tower::regional_events::Trial;
+    let (block,xyz)=match choice? {
+        Trial::Descent=>(0x23000000,[125.644,-408.535,-61.213]),
+        Trial::Stormveil=>{let route=parkour_route(false);(route.block,route.goal)},
+        Trial::Chariot=>(0x2d010000,[0.0,0.2,0.0]),
+        Trial::Skip=>return None,
+    };
+    Some(super::party_death::Position{block,xyz})
+}
 fn tick_revival(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result<(),String> {
     if !super::seamless_revival::available(){super::seamless_revival::cancel();return Ok(());}
     use super::party_death::{Action as Recovery,Position};
@@ -892,7 +972,8 @@ fn tick_revival(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     if state.party_death_wave!=wave {
         state.party_death_wave=wave;state.party_death=Default::default();super::seamless_revival::cancel();
     }
-    let victory=link.is_some_and(|p|p.victory||p.event.victory()||p.event.merchant_phase==3);
+    let trial_destination=link.filter(|p|p.event.trial_victory()).and_then(|p|trial_revival_destination(p.event.trial_decision));
+    let victory=link.is_some_and(|p|p.victory||p.event.victory()||p.event.merchant_phase==3||p.event.trial_victory());
     if epoch.is_some()&&victory {super::seamless_revival::tick(world,game);}
     let player=world.main_player.as_ref().map(|p|{
         let pos=&p.chr_ins.modules.physics.position;
@@ -901,8 +982,11 @@ fn tick_revival(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     let recovered=world.main_player.as_ref().is_some_and(|p|super::seamless_revival::finished(super::seamless_revival::owned_address(p)));
     match state.party_death.observe_confirmed(epoch,player,victory,game.warp_requested,recovered) {
         Recovery::RequestRevival(origin)=>{
+            let origin=trial_destination.filter(|p|p.block==origin.block).unwrap_or(origin);
+            state.party_death.redirect(origin);
             if let Some(p)=world.main_player.as_ref().filter(|p|i32::from(p.current_block_id)==origin.block) {
-                super::seamless_revival::request(p,origin)?;
+                if trial_destination.is_some(){super::seamless_revival::request_at_safe_goal(p,origin)?;}
+                else {super::seamless_revival::request(p,origin)?;}
                 super::log(format!("PARTY_REVIVE requested epoch={epoch:?} origin={origin:?}"));
             }
         },
@@ -1084,6 +1168,7 @@ fn tick_locked() {
         return;
     };
     PLAYER_READY.store(world.main_player.is_some()&&game.save_slot>=0,std::sync::atomic::Ordering::Relaxed);
+    state.hub_boundary.tick(world,game.warp_requested||game.save_slot<0);
     let chase_enabled=!game.warp_requested&&matches!(state.chariot_clock,Some(ChariotClock::Surviving(_)))
         &&state.view.run.as_ref().is_some_and(|r|r.regional_event.chariot&&r.regional_event.stormveil==Some(erdtree_tower::stormveil::Progress::Running));
     let Runtime{chariot_chase,party,..}=&mut *state;
@@ -1184,7 +1269,8 @@ fn tick_locked() {
         let result=debug_boss_command(&mut state,world,game,command);
         if let Err(error)=result {super::log(format!("BOSS_TEST rejected: {error}"));report(&mut state,error);}
     }
-    if QUICK_END.load(std::sync::atomic::Ordering::Relaxed){sync_action_guard(&mut state,world);return;}
+    if QUICK_END.load(std::sync::atomic::Ordering::Relaxed){state.radahn_probe=None;sync_action_guard(&mut state,world);return;}
+    tick_radahn_probe(&mut state,world);
     if let Some(player)=world.main_player.as_ref() {
         let current=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot);
         if (game.event_world_type==EventWorldType::Local||super::seamless::active())&&game.save_slot>=0&&owner_changed(state.hub.as_ref().map(|h|h.owner),current) {
@@ -1257,7 +1343,8 @@ fn tick_locked() {
     // whether it is what triggers the arena-arrival crash. The fog gate and fight do not need it.
     let attendant_allowed=!attendant_disabled()&&state.room.is_none()&&!game.warp_requested
         &&world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp>0&&if super::arenas::for_block(i32::from(p.current_block_id)).is_some_and(|a|a.uses_circle()) {
-            state.reward_wait.is_some()&&super::native_talk::flag(45020970).unwrap_or(false)
+            (p.chr_ins.modules.physics.standing_on_solid_ground||state.attendant.is_some())
+                &&(state.travel.is_some()||state.pending.is_some()||state.reward_wait.is_some()||member_live(&state))
         }else{
             (state.travel.is_some()&&state.view.run.as_ref().is_some_and(|r|super::arenas::for_run(r,state.party.is_some()).block==i32::from(p.current_block_id))&&super::native_talk::flag(45007993).unwrap_or(false))
             ||state.pending.as_ref().is_some_and(|fight|fight.block==i32::from(p.current_block_id)&&fight.foes.iter().all(|f|f.entity_address.is_some()))
@@ -1428,17 +1515,24 @@ fn tick_locked() {
             Err(error)=>{state.hub_failed=Some((identity,Instant::now()));report(&mut state,format!("旅程存档加载失败，未重置角色：{error}"));return;},
         }
     }
-    // 别处没处理的死亡：单人还有徘徊赐福就回到路线图重打本层，否则结束旅程。
-    // 战斗进行中、胜利后等传送门、准备出发时的死亡由各自的流程处理；同一次死亡只处理一次（death_retry）
+    let dead=player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag();
+    if dead&&state.party.is_none()&&state.hub.as_ref().is_some_and(|h|!h.active) {
+        let run=state.reward_wait.as_ref().map(|(_,run)|run)
+            .or_else(||state.pending.as_ref().filter(|p|!p.completed).map(|p|&p.next_run)).or(state.view.run.as_ref());
+        let retry=run.and_then(|r|retry_run(r,state.travel.as_ref().map(|(t,..)|t.node),true,state.death_retry));
+        if let Some(next)=retry {begin_death_retry(&mut state,world,next);return;}
+        if state.death_retry||state.view.run.as_ref().is_some_and(|r|r.retry_node.is_some()) {
+            state.command=None;state.view.ready=false;state.view.busy=true;state.view.travelling=true;return;
+        }
+    }
+    // 没有可用赐福时，仍按原有死亡结算流程处理。
     let fighting=state.pending.as_ref().is_some_and(|p|!p.completed)||state.reward_wait.is_some()
         ||state.travel.as_ref().is_some_and(|(travel,_,_,_)|travel.is_preparing());
-    if state.party.is_none() && !state.death_retry && !fighting && state.hub.as_ref().is_some_and(|h|!h.active) && player.chr_ins.chr_flags1c5.death_flag() {
-        let mut retried=None;
+    if state.party.is_none() && !fighting && state.hub.as_ref().is_some_and(|h|!h.active) && dead {
         if let Some(run)=&mut state.view.run {if !matches!(run.phase,Phase::Won|Phase::Dead){
-            if run.retry_floor() {retried=Some(run.retries);} else {run.end_on_death();}
+            run.end_on_death();
             record(run);
         }}
-        if let Some(left)=retried {state.death_retry=true;report(&mut state,lingering_message(left));}
     }
     if state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won))
         && state.hub.as_ref().is_some_and(|h|!h.active) {
@@ -1514,6 +1608,8 @@ fn tick_locked() {
         report(&mut state,"等待队友确认爬塔会话");
         return;
     }
+    if !world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp<=0||p.chr_ins.chr_flags1c5.death_flag()) {state.death_retry=false;}
+    if return_to_retry_room(&mut state,world,game){return;}
     if state.identity.is_none() && state.view.run.as_ref().is_some_and(|run|!run.blessings.is_empty()&&run.delivered_talismans.is_empty()) {
         if let Some(player)=world.main_player.as_mut(){super::blessings::Blessings::clear_run(&mut player.chr_ins);}
     }
@@ -1544,7 +1640,6 @@ fn tick_locked() {
     }
     let block = i32::from(player.current_block_id);
     let player_dead = hp <= 0 || player.chr_ins.chr_flags1c5.death_flag();
-    if !player_dead {state.death_retry=false;}
     let was_ready = state.view.ready;
     state.view.ready =
         class.is_some() && local_world && !player_dead && max_hp > 0 && max_hp <= 1_000_000 && !state.view.shared_event;
@@ -1707,17 +1802,15 @@ fn tick_locked() {
             .is_some_and(|(travel, _, _, _)| travel.is_preparing())
     {
         let (travel, _, _, _) = state.travel.take().unwrap();
-        let mut retried=None;
         if let Some(run) = &mut state.view.run {
             if run.enter(travel.node).is_ok() {
-                if run.retry_floor() {retried=Some(run.retries);} else {let _ = run.observe_hp(0);}
+                let _ = run.observe_hp(0);
                 record(run);
             }
         }
         state.view.travelling = false;
         state.view.busy = false;
-        if let Some(left)=retried {state.death_retry=true;report(&mut state,lingering_message(left));}
-        else {report(&mut state, "准备期间角色死亡，本局结束。");}
+        report(&mut state, "准备期间角色死亡，本局结束。");
         return;
     }
     let arena=state.view.run.as_ref().map_or_else(||super::arenas::for_act(1),|r|super::arenas::for_run(r,state.party.is_some()));
@@ -1747,8 +1840,9 @@ fn tick_locked() {
             let (_,_,saved_hp,saved_fp)=state.travel.as_ref().unwrap();
             if let Some(player)=world.main_player.as_mut() {
                 if let Err(error)=super::ailments::clear(&mut player.chr_ins){report(&mut state,error);return;}
+                super::travel::restore_arrival_hp(&mut player.chr_ins,*saved_hp,"combat arrival");
                 let data=&mut player.chr_ins.modules.data;
-                data.hp=data.hp.min(*saved_hp);data.fp=data.fp.min(*saved_fp);
+                data.fp=data.fp.min(*saved_fp);
             }
             state.travel.as_mut().unwrap().0.resources_restored=true;
         }
@@ -1760,8 +1854,8 @@ fn tick_locked() {
                 if !travel.resources_restored {
                     if let Some(player) = world.main_player.as_mut() {
                         if let Err(error)=super::ailments::clear(&mut player.chr_ins){report(&mut state,error);return;}
+                        super::travel::restore_arrival_hp(&mut player.chr_ins,*saved_hp,"combat preparation");
                         let data = &mut player.chr_ins.modules.data;
-                        data.hp = data.hp.min(*saved_hp);
                         data.fp = data.fp.min(*saved_fp);
                     }
                     travel.resources_restored = true;
@@ -1810,13 +1904,6 @@ fn tick_locked() {
             ResultState::PlayerDied => {
                 let _ = super::native_talk::set_flag(45020970, false);
                 let _ = super::native_talk::set_flag(45020971, false);
-                // 单人还有徘徊赐福：回到路线图重打本层（这场胜利不算）
-                if state.party.is_none()&&next.retry_floor() {
-                    if let Some(pending)=state.pending.take() {state.lingering=Some((pending,Instant::now()));}
-                    state.flasks=None;state.death_retry=true;
-                    let left=next.retries;record(&next);state.view.run=Some(next);state.view.busy=false;
-                    report(&mut state,lingering_message(left));return;
-                }
                 let _ = next.observe_hp(0);
             }
             ResultState::PortalReady => {
@@ -2033,11 +2120,9 @@ fn tick_locked() {
     pending.completed = true;
     let fought=if let Phase::Combat{id}=pending.next_run.phase {Some(id)} else {None};
     let names:Vec<&'static str>=pending.foes.iter().map(|f|f.spec.name).collect();
-    // 单人还有徘徊赐福：不结束旅程，回到路线图重打本层（这场战斗仍记为失败）
-    let retried=matches!(outcome,Outcome::PlayerDied)&&!party_mode&&pending.next_run.phase!=Phase::Dead&&pending.next_run.retry_floor();
     let result = match outcome {
         Outcome::Victory => Ok(()),
-        Outcome::PlayerDied if retried||pending.next_run.phase == Phase::Dead => Ok(()),
+        Outcome::PlayerDied if pending.next_run.phase == Phase::Dead => Ok(()),
         Outcome::PlayerDied => pending.next_run.observe_hp(0),
         _ => Ok(()),
     };
@@ -2068,14 +2153,6 @@ fn tick_locked() {
             state.reward_portal=Default::default();
             state.view.busy = true;
             report(&mut state, format!("敌人已击败，传送门即将出现。{healed}"));
-        }
-        (Outcome::PlayerDied, Ok(())) if retried => {
-            // 敌人照原版留在场上，角色复活后由 lingering 撤下；本场的圣杯瓶记录作废
-            let _=super::native_talk::set_flag(45007990,false);
-            if let Some(pending)=state.pending.take() {state.lingering=Some((pending,Instant::now()));}
-            state.flasks=None;state.event_start=None;state.death_retry=true;
-            let left=next.retries;record(&next);state.view.run=Some(next);
-            report(&mut state,lingering_message(left));
         }
         (Outcome::PlayerDied, Ok(())) => {
             record(&next);
@@ -2147,6 +2224,22 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
     Ok(message)
 }
 
+fn tick_radahn_probe(state:&mut Runtime,world:&mut WorldChrMan) {
+    let bound=state.pending.as_ref().filter(|p|!p.completed&&!p.networked)
+        .and_then(|p|p.foes.iter().find(|f|f.spec.model==4730))
+        .and_then(|f|f.fight.handle()).and_then(|h|world.chr_ins_by_handle(&h));
+    super::radahn_entity::sync(world,bound,state.party.is_some());
+    if state.radahn_probe.is_none(){return;}
+    if state.party.is_some()||!state.view.run.as_ref().is_some_and(|run|run.debug&&run.boss_test.is_some())
+        ||state.pending.as_ref().is_some_and(|pending|pending.completed)
+        ||world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp<=0) {
+        state.radahn_probe=None;return;
+    }
+    let handle=state.pending.as_ref().filter(|p|!p.networked).and_then(|p|p.foes.iter().find(|foe|foe.spec.model==4730)).and_then(|foe|foe.fight.handle());
+    let player=world.main_player.as_ref().map(|p|{let pos=&p.chr_ins.modules.physics.position;[pos.0,pos.1,pos.2]});
+    if let Some(chr)=handle.and_then(|h|world.chr_ins_by_handle_mut(&h)) {state.radahn_probe.as_mut().unwrap().tick(chr,player);}
+}
+
 fn prepare_boss_test(state:&Runtime,world:&WorldChrMan,game:&GameMan,test:erdtree_tower::debug::BossTest)->Result<(Run,usize),String> {
     if game.warp_requested||state.travel.is_some()||state.reward_wait.is_some()||state.pending.as_ref().is_some_and(|p|!p.completed){return Err("请结束战斗、传送与领奖后再测试".into());}
     let player=world.main_player.as_ref().ok_or("角色未就绪")?;
@@ -2163,6 +2256,7 @@ fn prepare_boss_test(state:&Runtime,world:&WorldChrMan,game:&GameMan,test:erdtre
 
 fn begin_boss_test(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,test:erdtree_tower::debug::BossTest)->Result<(),String> {
     let (next,node)=prepare_boss_test(state,world,game,test)?;
+    state.radahn_probe=None;
     record_checked(&next)?;
     if let Some(room)=state.room.take(){room.retire(world);}
     if let Some(room)=state.attendant.take(){room.retire(world);}
@@ -2207,7 +2301,16 @@ fn debug_boss_command(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMa
     match command {
         super::debug_menu::Command::EndBossTest=>{
             if !state.view.run.as_ref().is_some_and(|r|r.debug&&r.boss_test.is_some()){return Err("当前不是 Boss 测试旅程".into());}
+            state.radahn_probe=None;
             super::log("BOSS_TEST exit requested");QUICK_END.store(true,std::sync::atomic::Ordering::Relaxed);super::debug_menu::close();Ok(())
+        },
+        super::debug_menu::Command::RadahnTest=>{
+            if state.party.is_some(){return Err("陨石复现仅限单人".into());}
+            let encounter=super::radahn_probe::encounter().ok_or("未找到碎星拉塔恩测试条目")?;
+            begin_boss_test(state,world,game,erdtree_tower::debug::BossTest{encounter,act:2})?;
+            state.radahn_probe=Some(super::radahn_probe::Probe::new());
+            super::log("RADAHN_TEST armed: lower to 40% after spawn; player protected; one-shot disabled");
+            Ok(())
         },
         super::debug_menu::Command::BossTest(encounter)=>{
             let group=super::enemies::boss_test_roster(encounter,state.party.is_some(),erdtree_tower::dlc::enemies_allowed())?;
@@ -2354,11 +2457,18 @@ fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {
     if !events.strikes.is_empty() && let Some(link)=state.party.as_mut() {link.push_strikes(&events.strikes);}
 }
 /// 联机成员：按与房主相同的苦难律法「精英成双」规则，名单里哪些位置还要等前面的精英（按本机看到的敌人状态）
-fn member_held(world:&WorldChrMan,run:&Run,id:usize,roster:&[super::enemies::Enemy],ids:&[u32])->Vec<bool> {
+fn member_gaps(delays:&mut Option<MemberSpawnGaps>,key:(u64,u64,u8,usize),count:usize)->&mut [erdtree_tower::encounter::SpawnGap] {
+    let (scope,gaps)=delays.get_or_insert_with(||(key,Vec::new()));
+    if *scope!=key {*scope=key;gaps.clear();}
+    gaps.resize_with(count,Default::default);gaps
+}
+fn member_held(delays:&mut Option<MemberSpawnGaps>,key:(u64,u64,u8,usize),world:&WorldChrMan,run:&Run,id:usize,roster:&[super::enemies::Enemy],ids:&[u32])->Vec<bool> {
     use erdtree_tower::encounter::{Outcome as Spawn,Pacing,Role};
     let elite=run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Elite);
     let pacing=if elite {run.law.elite_pacing()}else{Pacing::Together};
     let roles:Vec<_>=roster.iter().map(super::enemies::role).collect();
+    let gaps=member_gaps(delays,key,roster.len());
+    let now=spawn_clock();
     // 每个位置：(已倒下, 生命, 最大生命)；还没放出来的为 None
     let state:Vec<Option<(bool,i32,i32)>>=roster.iter().zip(ids).map(|(spec,&entity)|{
         world.chr_sets.iter().flatten().flat_map(|set|set.characters())
@@ -2372,7 +2482,8 @@ fn member_held(world:&WorldChrMan,run:&Run,id:usize,roster:&[super::enemies::Ene
             Some((false,hp,max))=>(Spawn::Waiting,Some((hp,max))),
             None=>(Spawn::Waiting,None),
         }).collect();
-        !erdtree_tower::encounter::may_spawn_paced(true,false,pacing.waits(&earlier),&roles,i,&[])
+        let eligible=erdtree_tower::encounter::may_spawn_paced(true,false,pacing.waits(&earlier),&roles,i,&[]);
+        !gaps[i].allows(now,eligible)
     }).collect()
 }
 fn enemy_loaded(status: ChrLoadStatus) -> bool {
@@ -2531,6 +2642,13 @@ fn sync_merchant_reward(state:&mut Runtime)->Result<(),String> {
 fn tick_merchant(state:&mut Runtime,world:&WorldChrMan,room:&mut super::rooms::Room)->Result<bool,String> {
     let Some(run)=state.view.run.as_ref() else{return Ok(false);};
     let host=state.party.as_ref().is_none_or(|p|p.host());
+    if !run.bells.down(run.act,room.node)&&room.merchant_dead(world)
+        &&!erdtree_tower::merchant::hunter_appears(run.seed,run.act,room.node) {
+        room.merchant_down=true;room.suspend_dialogues()?;
+        room.view.message="商人已倒下，本次未出现铃珠猎人，可通过传送门继续。".into();
+        super::log(format!("MERCHANT_HUNT skipped act={} node={} chance=30%",run.act,room.node));
+        return Ok(false);
+    }
     if !run.bells.down(run.act,room.node)&&room.merchant_dead(world)&&host {
         if state.party.as_ref().is_some_and(|p|!p.gate.merchant_present()) {
             room.merchant_down=true;room.suspend_dialogues()?;
@@ -2541,7 +2659,7 @@ fn tick_merchant(state:&mut Runtime,world:&WorldChrMan,room:&mut super::rooms::R
         super::log(format!("MERCHANT_HUNT start act={} node={} party={}",next.act,room.node,state.party.is_some()));state.view.run=Some(next);
     }
     let run=state.view.run.as_ref().unwrap();
-    room.merchant_down=run.bells.down(run.act,room.node);
+    room.merchant_down|=run.bells.down(run.act,room.node);
     if run.bells.challenge.is_none(){if let Some(hunter)=room.hunter.take(){hunter.retire();}return Ok(false);}
     room.suspend_dialogues()?;
     super::native_talk::set_flag(room.base()+993,false)?;
@@ -2578,26 +2696,21 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
     let mut room = state.room.take().unwrap();
     if dead && state.party.is_none() && !room.view.loading && !game.warp_requested {
         room.retire(world);
-        let mut retried=None;
         if let Some(run) = &mut state.view.run {
-            if run.retry_floor() {retried=Some(run.retries);}
-            else {run.hp = 0;run.phase = Phase::Dead;}
+            run.end_on_death();
             record(run);
         }
         state.command = None;
         state.view.room = None;
         state.view.busy = false;
-        match retried {
-            Some(left)=>{state.death_retry=true;report(state,lingering_message(left));},
-            None=>report(state, "角色死亡，本局结束。"),
-        }
+        report(state, "角色死亡，本局结束。");
         return;
     }
     let mut transferred=false;
     let result = (|| -> Result<bool, String> {
         if state.view.shared_event {return Ok(false);}
         if room.kind==erdtree_tower::NodeKind::Shop {
-            room.merchant_down=state.view.run.as_ref().is_some_and(|r|r.bells.down(r.act,room.node));
+            room.merchant_down|=state.view.run.as_ref().is_some_and(|r|r.bells.down(r.act,room.node));
         }
         if room.kind==erdtree_tower::NodeKind::Event {
             if let Some(run)=state.view.run.as_ref(){room.event_menu(run,state.party.is_some(),state.party.as_ref().is_some_and(|p|p.event.request.is_some()),state.party.is_none());}
@@ -2858,15 +2971,18 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         set_flag(45010965,false)?;set_flag(45010960,false)?;
         set_flag(45010941,true)?;set_flag(45010940,true)?;
         set_flag(45010942,false)?;set_flag(45010995,true)?;
-        room.view.message="月光泉：免费回满生命或专注。".into();
+        room.view.message="月光泉：回满生命、回满专注或领取 800 卢恩，三选一。".into();
         if let Some(super::native_talk::EventRequest::Recovery(choice))=room.take_event_request() {
             let player=world.main_player.as_mut().ok_or("角色尚未加载")?;
             if player.chr_ins.modules.data.hp<=0 {return Err("角色已死亡".into());}
-            let mut next=run.clone();next.recover_at_spring(choice)?;record_checked(&next)?;
+            let mut next=run.clone();
+            if choice==2 {next.gold=unsafe {player.player_game_data.as_ref()}.rune_count;}
+            next.recover_at_spring(choice)?;record_checked(&next)?;
+            if choice==2 {unsafe {player.player_game_data.as_mut()}.rune_count=next.gold;state.view.runes=next.gold;}
             let stats=&mut player.chr_ins.modules.data;
-            if choice==0 {stats.hp=stats.max_hp;}else{stats.fp=stats.max_fp;}
+            if choice==0 {stats.hp=stats.max_hp;}else if choice==1{stats.fp=stats.max_fp;}
             state.view.run=Some(next);
-            room.view.message=if choice==0{"生命已回满"}else{"专注已回满"}.into();
+            room.view.message=match choice {0=>"生命已回满",1=>"专注已回满",_=>"已领取 800 卢恩"}.into();
         }
         return Ok(());
     }
@@ -2932,7 +3048,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
             if roster.iter().any(|e|params.get::<NpcParam>(e.npc as u32).is_none()||params.get::<NpcThinkParam>(e.think).is_none()) {return Err("事件守卫参数缺失".into());}
             state.pending=Some(Pending {
                 entity_base:None,networked:false,
-                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None}).collect(),
+                spirits:Default::default(),foes:roster.into_iter().map(|spec|Foe{spec,fight:Encounter::default(),requested:None,entity_address:None,respawn:None,spawn_gap:Default::default()}).collect(),
                 next_run:run.clone(),block:room.block,completed:false,stall:None,
             });
         }
@@ -3013,7 +3129,7 @@ fn tick_scarabs(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms
         if matches!(room.take_event_request(),Some(super::native_talk::EventRequest::Scarabs))&&!waiting {
             let player=world.main_player.as_mut().ok_or("角色尚未加载")?;
             let data=unsafe {player.player_game_data.as_mut()};
-            if data.rune_count<1000 {room.notice(9500084)?;return Ok(());}
+            if data.rune_count<erdtree_tower::regional_events::SCARAB_PRICE {room.notice(9500084)?;return Ok(());}
             let mut next=run.clone();let remaining=next.pay_scarabs(data.rune_count)?;
             record_checked(&next)?;
             data.rune_count=remaining;state.view.runes=remaining;
@@ -3035,7 +3151,7 @@ fn tick_scarabs(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms
         if room.scarabs.ready() && attempts<3 {
             let player=world.main_player.as_mut().ok_or("角色未加载")?;
             let data=unsafe {player.player_game_data.as_mut()};
-            if data.rune_count<1000 {room.notice(9500084)?;return Ok(());}
+            if data.rune_count<erdtree_tower::regional_events::SCARAB_PRICE {room.notice(9500084)?;return Ok(());}
             let mut next=state.view.run.clone().unwrap();
             let remaining=next.pay_scarabs(data.rune_count)?;
             record_checked(&next)?;
@@ -3049,7 +3165,7 @@ fn tick_scarabs(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms
         let run=state.view.run.as_mut().unwrap();
         if let Some(player)=world.main_player.as_mut() {
             let data=unsafe {player.player_game_data.as_mut()};
-            data.rune_count=data.rune_count.saturating_add(1000);run.gold=data.rune_count;state.view.runes=data.rune_count;
+            data.rune_count=data.rune_count.saturating_add(erdtree_tower::regional_events::SCARAB_PRICE);run.gold=data.rune_count;state.view.runes=data.rune_count;
         }
         run.regional_event.attempts=run.regional_event.attempts.saturating_sub(1);record(run);
         set_flag(45010942,false)?;set_flag(45010995,true)?;set_flag(45010966,false)?;
@@ -3180,7 +3296,7 @@ fn request_spawn(state: &mut Runtime, world: &mut WorldChrMan, id: usize) -> Res
     state.pending = Some(Pending {
         entity_base:None,networked:state.party.is_some(),
         spirits:Default::default(),
-        foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None }).collect(),
+        foes: roster.into_iter().map(|spec| Foe { spec, fight: Encounter::default(), requested: None, entity_address: None, respawn: None,spawn_gap:Default::default() }).collect(),
         next_run, block: i32::from(player.current_block_id), completed: false, stall: None,
     });
     state.spawn_used = true;
@@ -3200,6 +3316,10 @@ fn log_map_enemy(world:&WorldChrMan,entity:u32,spec:super::enemies::Enemy) {
             unsafe {chr.chr_set_entry.as_ref()}.chr_load_status,chr.chr_flags1c5.death_flag(),chr.debug_flags.character_disabled()));
     }
     super::log(format!("Map enemy diagnostic: entity={entity} matching_entities={count} controls={controls:?}"));
+}
+fn spawn_clock()->Duration {
+    static START:std::sync::LazyLock<Instant>=std::sync::LazyLock::new(Instant::now);
+    START.elapsed()
 }
 fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block: i32,authority:bool) -> (Outcome, Option<(i32,i32)>, bool) {
     if dead { return (Outcome::PlayerDied, None, false); }
@@ -3223,13 +3343,15 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
     let elite_node=matches!(pending.next_run.phase,Phase::Combat{id} if pending.next_run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Elite));
     let pacing=if elite_node {pending.next_run.law.elite_pacing()}else{erdtree_tower::encounter::Pacing::Together};
     let mut untouched=Vec::new();
+    let now=spawn_clock();
     for i in 0..count {
         let earlier:Vec<_>=(0..i).filter(|&j|roles[j]==erdtree_tower::encounter::Role::Strong).map(|j|{
             let health=pending.foes[j].fight.handle().and_then(|h|world.chr_ins_by_handle(&h)).map(|c|(c.modules.data.hp,c.modules.data.max_hp));
             (outcomes[j],health)
         }).collect();
         let held=pacing.waits(&earlier);
-        if !erdtree_tower::encounter::may_spawn_paced(pending.networked,monster_node,held,&roles,i,&outcomes) {
+        let eligible=erdtree_tower::encounter::may_spawn_paced(pending.networked,monster_node,held,&roles,i,&outcomes);
+        if !pending.foes[i].spawn_gap.allows(now,eligible) {
             outcomes.push(Outcome::Waiting);
             continue;
         }
@@ -3249,6 +3371,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
                     .map(|chr|(chr.field_ins_handle,std::ptr::from_ref(chr) as usize));
                 if let Some((handle,address))=candidate && foe.fight.bind(handle,true) {
                     foe.entity_address=Some(address);
+                    if authority&&foe.spec.model==4730&&let Some(chr)=world.chr_ins_by_handle_mut(&handle) {chr.apply_speffect(13918,false);}
                     super::log(format!("Party map enemy bound: entity={} handle={handle} model={}",ids[i],foe.spec.model));
                 }
             }
@@ -3268,6 +3391,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
                     foe.entity_address = Some(address);
                     if let Some(chr) = world.chr_ins_by_handle_mut(&handle) {
                         chr.team_type = 6;
+                        if authority&&foe.spec.model==4730 {chr.apply_speffect(13918,false);}
                     }
                     world.debug_chr_creator.last_created_chr = None;
                     super::log(format!("Group enemy bound: {}/{} {} handle={handle} networked={}", i+1,count,foe.spec.name,pending.networked));
@@ -3296,7 +3420,7 @@ fn poll_group(pending: &mut Pending, world: &mut WorldChrMan, dead: bool, block:
                 world.debug_chr_creator.last_created_chr = None;
                 world.spawn_debug_character(&ChrDebugSpawnRequest {
                     chr_id:foe.spec.model, npc_param_id:foe.spec.npc, npc_think_param_id:foe.spec.think as i32,
-                    chara_init_param_id:0, event_entity_id:pending.entity_base.map_or_else(||if pending.networked||foe.spec.bar>0 {arena.boss_entity(i)}else{0},|base|base+i as i32), talk_id:-1, pos_x:pos.0,pos_y:pos.1,pos_z:pos.2,
+                    chara_init_param_id:0, event_entity_id:pending.entity_base.map_or_else(||if pending.networked||foe.spec.bar>0||foe.spec.model==4730 {arena.boss_entity(i)}else{0},|base|base+i as i32), talk_id:-1, pos_x:pos.0,pos_y:pos.1,pos_z:pos.2,
                 });
                 foe.requested = Some(Instant::now());
                 super::log(format!("Group spawn {}/{}: {} local={local:?} world={pos:?}",i+1,count,foe.spec.name));
@@ -3368,6 +3492,7 @@ fn keep_summoned_ash(world:&WorldChrMan,run:&erdtree_tower::Run,summon_seen:Opti
     true
 }
 fn retire_group(pending:&Pending,world:&mut WorldChrMan){
+    if !pending.networked {super::radahn_entity::sync(world,None,false);}
     if pending.networked&&pending.entity_base.is_none() {
         if let Ok(ids)=super::enemies::map_entities(&pending.foes.iter().map(|f|f.spec).collect::<Vec<_>>()) {
             for id in ids {if let Err(error)=super::enemies::request_map_entity(id,false){super::log(error);}}
@@ -3445,7 +3570,7 @@ fn tick_chariot(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     if !alive&&state.party.is_none(){clear_chariot()?;if let Some(run)=state.view.run.as_mut(){run.end_on_death();record_checked(run)?;}return Ok(());}
     if !*restored&&alive&&player.chr_ins.modules.physics.standing_on_solid_ground {
         super::ailments::clear(&mut player.chr_ins)?;
-        player.chr_ins.modules.data.hp=player.chr_ins.modules.data.hp.min(*hp);
+        super::travel::restore_arrival_hp(&mut player.chr_ins,*hp,"chariot arrival");
         player.chr_ins.modules.data.fp=player.chr_ins.modules.data.fp.min(*fp);*restored=true;
     }
     let running=state.view.run.as_ref().is_some_and(|r|r.regional_event.stormveil==Some(Progress::Running));
@@ -3469,6 +3594,7 @@ fn tick_chariot(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     set_flag(45007881,false)?;
     if flag(45007882)?{return Ok(());}
     set_flag(45007883,true)?;
+    if state.party_death.awaiting_revival(){return Ok(());}
     let run=state.view.run.as_ref().ok_or("旅程未加载")?;
     let Phase::Node{id}=run.phase else{return Ok(());};
     let player=world.main_player.as_mut().ok_or("角色正在加载")?;
@@ -3516,7 +3642,7 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
     let grounded=alive&&player.chr_ins.modules.physics.standing_on_solid_ground&&!player.chr_ins.modules.physics.is_falling;
     if !*restored&&grounded {
         super::ailments::clear(&mut player.chr_ins)?;
-        player.chr_ins.modules.data.hp=player.chr_ins.modules.data.hp.min(*hp);
+        super::travel::restore_arrival_hp(&mut player.chr_ins,*hp,"parkour arrival");
         player.chr_ins.modules.data.fp=player.chr_ins.modules.data.fp.min(*fp);*restored=true;
         if let Some(view)=state.view.room.as_mut(){view.loading=false;}
     }
@@ -3526,7 +3652,7 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
         link.event.storm_finish=reached;
         link.event.storm_decision==Some(Decision::Complete)
     }else{reached};
-    if !complete{return Ok(());}
+    if !complete||!alive||state.party_death.awaiting_revival(){return Ok(());}
     let mut next=state.view.run.clone().ok_or("旅程未加载")?;
     if next.regional_event.stormveil!=Some(Progress::Running){return Err("跑城进度不匹配".into());}
     super::elite::validate()?;
@@ -3578,10 +3704,11 @@ fn tick_descent(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
         return Ok(());
     }
     let grounded=player.chr_ins.modules.physics.standing_on_solid_ground&&!player.chr_ins.modules.physics.is_falling;
+    if state.party_death.awaiting_revival(){return Ok(());}
     if !*restored {
         if !grounded{return Ok(());}
         super::ailments::clear(&mut player.chr_ins)?;
-        player.chr_ins.modules.data.hp=player.chr_ins.modules.data.hp.min(*hp);
+        super::travel::restore_arrival_hp(&mut player.chr_ins,*hp,"descent arrival");
         player.chr_ins.modules.data.fp=player.chr_ins.modules.data.fp.min(*fp);*restored=true;
         if let Some(view)=state.view.room.as_mut(){view.loading=false;}
     }
@@ -3591,8 +3718,12 @@ fn tick_descent(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
     let requested=flag(35007991)?;
     let pos=&player.block_position;
     let at_finish=grounded&&(pos.y+408.535).abs()<2.0&&(pos.x-125.644).powi(2)+(pos.z+61.213).powi(2)<25.0;
+    let party_complete=if let Some(link)=state.party.as_mut() {
+        link.event.storm_finish|=at_finish||run.regional_event.opened!=0;
+        link.event.descent_complete
+    }else{false};
     let data=unsafe {player.player_game_data.as_mut()};
-    if run.regional_event.opened==0&&run.regional_event.receipt.is_none()&&requested&&at_finish {
+    if run.regional_event.opened==0&&run.regional_event.receipt.is_none()&&(requested||party_complete)&&at_finish {
         let item=erdtree_tower::regional_events::descent_reward(run.seed,id);
         let item=erdtree_tower::affixes::roll_min(run,item,id as u64,true,3).ok_or("传说词条奖励缺失")?;
         let mut next=run.clone();next.begin_descent(item,loot::count(data,item))?;
@@ -3725,6 +3856,57 @@ fn request_travel(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn member_wave_delay_survives_frames_and_resets_for_a_new_encounter() {
+        use std::time::Duration as D;
+        let mut delays=None;let key=(7,1,1,3);
+        assert!(!super::member_gaps(&mut delays,key,2)[1].allows(D::ZERO,false));
+        assert!(!super::member_gaps(&mut delays,key,2)[1].allows(D::from_secs(1),true));
+        assert!(!super::member_gaps(&mut delays,key,2)[1].allows(D::from_millis(3999),true));
+        assert!(super::member_gaps(&mut delays,key,2)[1].allows(D::from_secs(4),true));
+        let next=super::member_gaps(&mut delays,(7,2,1,3),2);
+        assert!(!next[1].allows(D::from_secs(5),false));
+        assert!(!next[1].allows(D::from_secs(6),true));
+        assert!(!next[1].allows(D::from_millis(8999),true));
+        assert!(next[1].allows(D::from_secs(9),true));
+        assert!(super::member_gaps(&mut delays,(8,2,1,3),2)[0].allows(D::from_secs(10),true));
+    }
+    #[test]
+    fn retry_returns_to_the_dead_room_and_only_spends_one_charge() {
+        use erdtree_tower::{Class,Run,Phase};
+        let mut run=Run::new(42,Class::Samurai);let id=run.available()[0];
+        run.enter(id).unwrap();
+        let next=super::retry_run(&run,None,true,false).unwrap();
+        assert_eq!(next.retry_node,Some(id));assert_eq!(next.retries,run.retries-1);
+        assert_eq!(next.phase,Phase::Map);
+        assert!(!crate::input::capture_route(true,true,&super::View{run:Some(next.clone()),ready:true,..super::initial_view()}));
+        assert!(super::retry_run(&next,None,true,false).is_none());
+        assert!(super::retry_run(&run,None,true,true).is_none());
+        assert!(super::retry_run(&run,None,false,false).is_none());
+        run.retries=0;assert!(super::retry_run(&run,None,true,false).is_none());
+    }
+    #[test]
+    fn retry_keeps_destination_before_combat_starts_and_after_victory() {
+        use erdtree_tower::{Class,Run};
+        let mut run=Run::new(42,Class::Samurai);let id=run.available()[1];
+        let travel=super::retry_run(&run,Some(id),true,false).unwrap();
+        assert_eq!(travel.retry_node,Some(id));
+        assert!(super::retry_run(&run,None,true,false).is_none());
+        assert!(super::retry_run(&run,Some(usize::MAX),true,false).is_none());
+        run.enter(id).unwrap();
+        assert_eq!(super::retry_run(&run,None,true,false).unwrap().retry_node,Some(id));
+    }
+    #[test]
+    fn retry_waits_for_resurrection_and_stable_landing() {
+        use std::time::{Instant,Duration};
+        let start=Instant::now();let mut since=None;
+        for t in [0,1000,20000] {assert!(!super::retry_departure(&mut since,start+Duration::from_millis(t),false));}
+        assert!(!super::retry_departure(&mut since,start+Duration::from_millis(21000),true));
+        assert!(!super::retry_departure(&mut since,start+Duration::from_millis(21499),true));
+        assert!(!super::retry_departure(&mut since,start+Duration::from_millis(21500),false));
+        assert!(!super::retry_departure(&mut since,start+Duration::from_millis(22000),true));
+        assert!(super::retry_departure(&mut since,start+Duration::from_millis(22500),true));
+    }
     #[test]
     fn summoner_refund_keeps_the_first_ash_when_a_twin_spirit_follows() {
         use super::first_used_ash;

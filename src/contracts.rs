@@ -101,7 +101,7 @@ fn preferred(class:Class,roll:u64)->Kind {
         Class::Samurai=>&[Kind::Execution,Kind::Combo],
         Class::Astrologer=>&[Kind::Mystic],
         Class::Prophet=>&[Kind::Mystic,Kind::Guard],
-        Class::Confessor=>&[Kind::Mystic,Kind::Hunter],
+        Class::Confessor=>&[Kind::Mystic],
     };
     kinds[roll as usize%kinds.len()]
 }
@@ -111,7 +111,7 @@ impl State {
         let preferred=if class.sorcerer()||class.cleric(){Kind::Mystic}else{
             [Kind::Steel,Kind::Breaker,Kind::Combo,Kind::Guard][roll as usize%4]
         };
-        let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|Some(*k)!=previous).collect();
+        let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|*k!=Kind::Hunter&&Some(*k)!=previous).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
         let first=if Some(preferred)!=previous{preferred}else{pool[0]};
         let second=*pool.iter().find(|k|**k!=first).unwrap();
@@ -121,11 +121,11 @@ impl State {
     pub fn start(seed:u64,class:Class,act:u8,held:Vec<Oath>,peak:u8)->Self {
         let roll=crate::mix(seed^0xc071ac7);
         let preferred=preferred(class,roll);
-        let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|!held.iter().any(|o|o.kind==*k)).collect();
+        let mut pool:Vec<_>=Kind::ALL.into_iter().filter(|k|*k!=Kind::Hunter&&!held.iter().any(|o|o.kind==*k)).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
         let first=if pool.contains(&preferred){preferred}else{pool[0]};
         let second=*pool.iter().find(|k|**k!=first).unwrap();
-        let deepen=held.iter().rev().filter(|o|o.level<MAX_LEVEL).max_by_key(|o|o.level).map(|o|o.kind);
+        let deepen=held.iter().rev().filter(|o|o.kind!=Kind::Hunter&&o.level<MAX_LEVEL).max_by_key(|o|o.level).map(|o|o.kind);
         Self{act,offers:[first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(MAX_PEAK),gift:None,rules:1,held,deepen,deepened:false}
     }
     /// 进入下一幕：旧规则换一份新契约，新规则保留已有誓约
@@ -139,6 +139,17 @@ impl State {
         cards
     }
     pub fn options(&self)->usize {self.cards().len()}
+    pub fn retire_ranged_offers(&mut self) {
+        if !self.selection_pending(){return;}
+        for slot in 0..2 {
+            if self.offers[slot]==Kind::Hunter {
+                if let Some(kind)=Kind::ALL.into_iter().find(|k|*k!=Kind::Hunter&&!self.offers.contains(k)&&!self.held.iter().any(|o|o.kind==*k)) {
+                    self.offers[slot]=kind;
+                }
+            }
+        }
+        if self.deepen==Some(Kind::Hunter){self.deepen=None;}
+    }
     /// 当前生效的誓约及等级；旧规则返回等级 0，表示沿用旧数值
     pub fn active(&self)->Vec<Oath> {
         if self.rules==0 {self.chosen.map(|kind|Oath{kind,level:0}).into_iter().collect()}else{self.held.clone()}

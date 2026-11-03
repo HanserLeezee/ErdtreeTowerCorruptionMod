@@ -75,6 +75,7 @@ impl Report {
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Order {
+    DescentComplete{epoch:u64},
     Merchant{epoch:u64,phase:u8},
     BossTest{epoch:u64,seed:u64,test:crate::debug::BossTest},
     Law{epoch:u64,seed:u64,law:crate::law::Law},
@@ -154,11 +155,19 @@ impl Gate {
         let decision=if self.stormveil.is_none()&&self.all(|r|r.arrived&&r.alive&&r.stormveil==Some(Progress::Choosing)) {
             if self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.storm_choice==Some(false))) {Decision::Skip}
             else if self.all(|r|r.storm_choice==Some(true)){Decision::Challenge}else{return None;}
-        }else if chariot&&self.stormveil==Some(Decision::Challenge)&&self.all(|r|r.alive&&r.chariot_ready&&r.stormveil==Some(Progress::Running)){Decision::Engage}
+        }else if chariot&&self.stormveil==Some(Decision::Challenge)&&self.all(|r|!r.alive||r.chariot_ready&&r.stormveil==Some(Progress::Running))
+            &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.chariot_ready)){Decision::Engage}
         else if self.stormveil==Some(if chariot{Decision::Engage}else{Decision::Challenge})&&self.all(|r|r.stormveil==Some(Progress::Running)&&(!r.alive||r.storm_finish))
             &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.storm_finish)){Decision::Complete}
         else{return None;};
         self.stormveil=Some(decision);Some(Order::Stormveil{epoch:self.epoch,decision})
+    }
+    pub fn descent_order(&mut self)->Option<Order> {
+        if self.stage!=Stage::Service||self.trial!=Some(crate::regional_events::Trial::Descent)
+            ||self.stormveil.is_some()||!self.all(|r|!r.alive||r.storm_finish)
+            ||!self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.storm_finish)){return None;}
+        self.stormveil=Some(crate::stormveil::Decision::Complete);
+        Some(Order::DescentComplete{epoch:self.epoch})
     }
     pub fn restart(&mut self,seed:u64)->RuleResult<Option<Order>> {
         if self.epoch==0||!matches!(self.stage,Stage::Stopped|Stage::Reward)||!self.all(|r|r.at_hub&&r.alive){return Ok(None);}
@@ -264,6 +273,35 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn descent_completion_waits_for_survivors_and_never_rewards_a_wipe() {
+        for count in 2..=8 {
+            let run=Run::new(42,crate::Class::Samurai);
+            let mut gate=Gate::new((1..=count).collect());gate.stage=Stage::Service;
+            gate.trial=Some(crate::regional_events::Trial::Descent);
+            let mut r=Report::new(&run,0,true,false,false);
+            for id in 1..=count {gate.report(id,r.clone()).unwrap();}
+            assert!(gate.descent_order().is_none());
+            r.alive=true;gate.report(count,r.clone()).unwrap();
+            assert!(gate.descent_order().is_none());
+            r.storm_finish=true;gate.report(count,r.clone()).unwrap();
+            gate.disconnect(1);assert!(gate.descent_order().is_none());
+            let mut dead=r.clone();dead.alive=false;dead.storm_finish=false;gate.report(1,dead).unwrap();
+            assert!(matches!(gate.descent_order(),Some(Order::DescentComplete{epoch:0})));
+            assert!(gate.descent_order().is_none());
+        }
+    }
+    #[test]
+    fn chariot_start_ignores_dead_peers_but_waits_for_living_peers() {
+        use crate::stormveil::{Progress,Decision};
+        let run=Run::new(42,crate::Class::Samurai);
+        let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Service;gate.stormveil=Some(Decision::Challenge);
+        let mut r=Report::new(&run,0,true,false,true);r.chariot=true;r.chariot_ready=true;r.stormveil=Some(Progress::Running);
+        gate.report(1,r.clone()).unwrap();r.chariot_ready=false;gate.report(2,r.clone()).unwrap();
+        assert!(gate.stormveil_order().is_none());
+        r.alive=false;gate.report(2,r).unwrap();
+        assert!(matches!(gate.stormveil_order(),Some(Order::Stormveil{decision:Decision::Engage,..})));
+    }
     #[test]
     fn merchant_waits_for_all_surviving_peers_and_rejects_departures() {
         let run=Run::new(42,crate::Class::Samurai);let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Service;

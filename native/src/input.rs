@@ -51,6 +51,7 @@ pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime:
     if view.room.is_some()||view.shared_event {
         return false;
     }
+    if view.run.as_ref().is_some_and(|r|r.retry_node.is_some()){return false;}
     visible
         && player_present
         && !view.travelling

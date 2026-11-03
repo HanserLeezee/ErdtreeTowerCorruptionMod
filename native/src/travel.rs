@@ -4,6 +4,20 @@ pub const PREPARATION: Duration = Duration::from_secs(3);
 const TIMEOUT: Duration = Duration::from_secs(60);
 const SETTLE: Duration = Duration::from_millis(500);
 
+fn arrival_hp(current:i32,maximum:i32,saved:i32,dead:bool)->i32 {
+    if dead||current<=0||maximum<=0||saved<=0 {return current;}
+    saved.min(maximum)
+}
+
+/// Loading may clamp HP before permanent max-HP effects return. Restore the departure amount once.
+pub fn restore_arrival_hp(chr:&mut eldenring::cs::ChrIns,saved:i32,context:&str) {
+    let dead=chr.chr_flags1c5.death_flag();
+    let data=&mut chr.modules.data;
+    let before=data.hp;
+    data.hp=arrival_hp(before,data.max_hp,saved,dead);
+    super::log(format!("TRAVEL_HP {context} saved={saved} arrival={before} max={} restored={} dead={dead}",data.max_hp,data.hp));
+}
+
 pub fn combat_fp(class: erdtree_tower::Class, current: i32, maximum: i32) -> i32 {
     if class != erdtree_tower::Class::Astrologer { return current; }
     let maximum = maximum.max(0);
@@ -86,6 +100,30 @@ impl Travel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn arrival_restores_hp_clamped_while_godslayer_or_crimson_amber_reloads() {
+        assert_eq!(arrival_hp(1000,1440,1440,false),1440);
+        assert_eq!(arrival_hp(1000,1440,1200,false),1200);
+        assert_eq!(arrival_hp(1000,1060,1060,false),1060);
+    }
+    #[test]
+    fn arrival_keeps_departure_damage_instead_of_filling_the_health_bar() {
+        assert_eq!(arrival_hp(1440,1440,750,false),750);
+        assert_eq!(arrival_hp(1000,1440,750,false),750);
+        assert_eq!(arrival_hp(1000,1000,1,false),1);
+    }
+    #[test]
+    fn arrival_caps_health_if_maximum_really_decreased() {
+        assert_eq!(arrival_hp(900,900,1200,false),900);
+        assert_eq!(arrival_hp(500,900,1200,false),900);
+    }
+    #[test]
+    fn arrival_never_revives_or_applies_an_invalid_snapshot() {
+        assert_eq!(arrival_hp(0,1440,1440,false),0);
+        assert_eq!(arrival_hp(1,1440,1440,true),1);
+        assert_eq!(arrival_hp(500,1440,0,false),500);
+        assert_eq!(arrival_hp(500,0,1440,false),500);
+    }
     #[test]
     fn circle_wait_is_unlimited_and_countdown_starts_after_entry_and_landing() {
         let mut travel=Travel::new(0);

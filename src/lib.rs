@@ -321,9 +321,11 @@ pub struct Run {
     pub shop_stock: Option<ShopStock>,
     #[serde(default)]
     pub bells: merchant::Bells,
-    /// 徘徊赐福：单人旅程里死亡时消耗一个，回到路线图重打本层（开局 RETRIES 个；联机不使用，旧存档为 0）
+    /// 徘徊赐福：单人死亡后消耗一个，自动返回原房间（旧存档为 0）。
     #[serde(default)]
     pub retries: u8,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub retry_node: Option<usize>,
     checkpoint: Option<CombatCheckpoint>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -395,14 +397,15 @@ mod map_compatibility {
             assert!(run.retry_floor());
             assert_eq!(run.retries,left);assert_eq!(run.phase,Phase::Map);
             assert_eq!((run.hp,run.flasks),(hp,flasks),"restored to the values on entering the floor");
-            assert!(run.available().contains(&id),"the same floor can be fought again");
+            assert_eq!(run.available(),vec![id],"a retry must lock the room instead of reopening route choices");
+            let pending=run.clone();assert!(!run.retry_floor());assert_eq!(run,pending,"one death must not spend two charges");
             assert!(run.visited.is_empty());
             run.validate().unwrap();
             assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
         }
         let mut travelling=Run::new(42,Class::Samurai);
-        assert!(travelling.retry_floor(),"dying on the way still spends a charge");
-        assert_eq!((travelling.retries,travelling.phase.clone()),(RETRIES-1,Phase::Map));
+        assert!(!travelling.retry_floor(),"a route screen without a destination has no room to retry");
+        assert_eq!((travelling.retries,travelling.phase.clone()),(RETRIES,Phase::Map));
         run.enter(id).unwrap();
         assert!(!run.retry_floor(),"no charges left");
         run.observe_hp(0).unwrap();assert_eq!(run.phase,Phase::Dead);
@@ -413,6 +416,33 @@ mod map_compatibility {
         let mut value:serde_json::Value=serde_json::from_str(&Run::new(42,Class::Samurai).encode().unwrap()).unwrap();
         value.as_object_mut().unwrap().remove("retries").unwrap();
         assert_eq!(Run::decode(&value.to_string()).unwrap().retries,0);
+    }
+    #[test]
+    fn lingering_grace_keeps_room_across_reload_and_rejects_another_route() {
+        let mut run=Run::new(42,Class::Samurai);
+        let routes=run.available();let id=routes[0];let other=routes[1];
+        run.enter(id).unwrap();assert!(run.retry_floor());
+        let mut restored=Run::decode(&run.encode().unwrap()).unwrap();
+        restored.resume_from_hub().unwrap();
+        assert_eq!(restored.available(),vec![id]);
+        assert!(restored.enter(other).is_err());
+        restored.enter(id).unwrap();assert_eq!(restored.phase,Phase::Combat{id});
+        restored.observe_hp(1).unwrap();restored.validate().unwrap();
+    }
+    #[test]
+    fn lingering_grace_keeps_event_identity_and_validates_saved_destination() {
+        let mut run=Run::new(42,Class::Samurai);
+        let id=run.nodes.iter().position(|n|n.kind==NodeKind::Event).unwrap();
+        run.debug_jump(id).unwrap();run.enter(id).unwrap();let event=run.event_draw(id);
+        assert!(run.retry_floor());
+        let saved=run.encode().unwrap();let mut restored=Run::decode(&saved).unwrap();
+        assert_eq!(restored.retry_node,Some(id));restored.enter(id).unwrap();
+        assert_eq!(restored.phase,Phase::Node{id});assert_eq!(restored.event_draw(id),event);
+        restored.validate().unwrap();
+        let mut invalid:serde_json::Value=serde_json::from_str(&saved).unwrap();
+        invalid["retry_node"]=serde_json::json!(usize::MAX);
+        assert!(Run::decode(&invalid.to_string()).is_err());
+        run.end_on_death();assert_eq!(run.retry_node,None);run.validate().unwrap();
     }
     #[test]
     fn old_act_keeps_twelve_floors_then_advances_to_sixteen() {
@@ -644,6 +674,7 @@ impl Run {
             shop_stock: None,
             bells: Default::default(),
             retries: RETRIES,
+            retry_node: None,
             checkpoint: None,
         }
     }
@@ -702,7 +733,7 @@ impl Run {
         if self.phase != Phase::Map || self.contract_pending() {
             return vec![];
         }
-        self.next_route()
+        self.retry_node.map_or_else(||self.next_route(),|id|vec![id])
     }
 
     fn next_route(&self) -> Vec<usize> {
@@ -718,6 +749,7 @@ impl Run {
         if !self.available().contains(&id) {
             return Err("节点不可达".into());
         }
+        self.retry_node=None;
         self.reached_layer=self.nodes[id].layer+1;
         self.shop_purchased = 0;self.shop_stock=None;
         if self.nodes[id].kind==NodeKind::Event {
@@ -1056,21 +1088,21 @@ impl Run {
         }
         Ok(())
     }
-    /// 徘徊赐福：死在本层（战斗、房间里或出发途中）时消耗一个，回到路线图重打本层——本层的节点仍可选择，
-    /// 生命与圣杯瓶恢复到进入本层时的值（房间里没有进场快照时生命回满）。没有剩余或不在本层里时返回 false，由调用方照常结束旅程
+    /// 保存自动返回的房间，并恢复进场时的生命与圣杯瓶；同一次死亡只扣一次。
     pub fn retry_floor(&mut self)->bool {
-        // 路线图阶段（出发传送途中）死亡也算：扣一个，留在路线图
-        if self.retries==0||!matches!(self.phase,Phase::Combat{..}|Phase::Node{..}|Phase::Map) {return false;}
+        if self.retries==0||self.retry_node.is_some() {return false;}
+        let id=match self.phase {Phase::Combat{id}|Phase::Node{id}=>id,_=>return false};
         self.retries-=1;
         if let Some(checkpoint)=self.checkpoint.take() {self.hp=checkpoint.hp;self.flasks=checkpoint.flasks;}
         if self.hp==0 {self.hp=self.max_hp;}
         self.regional_event=Default::default();
         self.shop_purchased=0;self.shop_stock=None;
         self.phase=Phase::Map;
+        self.retry_node=Some(id);
         true
     }
     pub fn end_on_death(&mut self) {
-        self.hp=0;self.phase=Phase::Dead;self.checkpoint=None;
+        self.hp=0;self.phase=Phase::Dead;self.checkpoint=None;self.retry_node=None;
     }
 
     pub fn decode(json: &str) -> RuleResult<Self> {
@@ -1088,6 +1120,7 @@ impl Run {
             run.flask_limit=run.full_flask_limit();
         }
         run.validate()?;
+        if let Some(contract)=&mut run.contract {contract.retire_ranged_offers();}
         if run.boss_reward_rules==0 {
             run.boss_reward_rules=1;
             if let Phase::Reward{id,..}=run.phase {run.phase=Phase::Reward{id,offers:run.offers(id)};}
@@ -1210,6 +1243,7 @@ impl Run {
             }
         };
         if current_id.is_some_and(|id| !route.contains(&id))
+            || self.retry_node.is_some_and(|id|self.phase!=Phase::Map||!route.contains(&id))
             || (!matches!(self.phase, Phase::Combat { .. }) && self.checkpoint.is_some())
             || (self.hp == 0 && self.phase != Phase::Dead)
             || (self.shop_purchased != 0

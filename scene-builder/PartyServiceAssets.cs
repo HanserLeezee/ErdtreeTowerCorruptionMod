@@ -14,15 +14,16 @@ static class PartyServiceAssets {
         var file=new EMEVD();file.Events.Add(ev);PersonalEvents.Verify(EMEVD.Read(file.Write()).Events.Single());
         Console.WriteLine("Verified local service loading/unloading order and serialized ABI");
     }
-    public static EMEVD.Event Visibility(uint id) {
+    public static EMEVD.Event Visibility(uint id,uint? visibilityFlag=null) {
+        uint flag=visibilityFlag??(id+70);
         var ev=new EMEVD.Event(id,EMEVD.Event.RestBehaviorType.Restart);PersonalEvents.Local(ev);
         ev.Instructions.Add(new(2004,5,new object[]{id,(byte)0}));
         ev.Instructions.Add(new(2004,29,new object[]{id,(byte)1}));
-        ev.Instructions.Add(new(3,0,new object[]{(sbyte)0,(byte)1,(byte)0,id+70}));
+        ev.Instructions.Add(new(3,0,new object[]{(sbyte)0,(byte)1,(byte)0,flag}));
         ev.Instructions.Add(new(2004,35,new object[]{id,(byte)1}));
         ev.Instructions.Add(new(2004,29,new object[]{id,(byte)0}));
         ev.Instructions.Add(new(2004,5,new object[]{id,(byte)1}));
-        ev.Instructions.Add(new(3,0,new object[]{(sbyte)0,(byte)0,(byte)0,id+70}));
+        ev.Instructions.Add(new(3,0,new object[]{(sbyte)0,(byte)0,(byte)0,flag}));
         ev.Instructions.Add(new(1000,4,new object[]{(byte)1}));return ev;
     }
     public static void Build(string input,string output) {

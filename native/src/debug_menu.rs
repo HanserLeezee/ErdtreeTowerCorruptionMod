@@ -4,7 +4,7 @@ use hudhook::imgui::{Condition,Ui};
 use erdtree_tower::{NodeKind,Run,contracts::Kind,embers::Ember,law::{Law,NODES}};
 use crate::enemies::Enemy;
 
-pub enum Command {BossTest(u16),EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool)}
+pub enum Command {BossTest(u16),RadahnTest,EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool)}
 
 // tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
 static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()||crate::options::get().debug);
@@ -13,6 +13,7 @@ static QUEUE:Mutex<VecDeque<Command>>=Mutex::new(VecDeque::new());
 /// 无敌（玩家不会死、敌人打不中玩家）与秒杀（玩家每次命中 9999999 伤害）：游戏自带的调试开关（WorldChrManDbgFlags），只在单人生效
 static GOD:AtomicBool=AtomicBool::new(false);
 static ONE_SHOT:AtomicBool=AtomicBool::new(false);
+pub fn replace_cheats(god:bool,one_shot:bool)->(bool,bool){(GOD.swap(god,Ordering::Relaxed),ONE_SHOT.swap(one_shot,Ordering::Relaxed))}
 static APPLIED:Mutex<Option<(bool,bool)>>=Mutex::new(None);
 static BOUT_PROTECT:AtomicBool=AtomicBool::new(false);
 static PLAYER_PROTECTION:Mutex<PlayerProtection>=Mutex::new(PlayerProtection{previous:None});
@@ -64,10 +65,10 @@ fn ime_here(ui:&Ui) {
     if ui.is_item_active() {let min=ui.item_rect_min();let max=ui.item_rect_max();hudhook::set_ime_position(min[0],max[1]);}
 }
 fn send(command:Command) {if let Ok(mut queue)=QUEUE.lock(){queue.push_back(command);}}
-pub fn take()->Option<Command> {let mut queue=QUEUE.lock().ok()?;let index=queue.iter().position(|c|!matches!(c,Command::BossTest(_)|Command::EndBossTest|Command::ChainTest(_)))?;queue.remove(index)}
+pub fn take()->Option<Command> {let mut queue=QUEUE.lock().ok()?;let index=queue.iter().position(|c|!matches!(c,Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;queue.remove(index)}
 pub fn take_test()->Option<Command> {
     let mut queue=QUEUE.lock().ok()?;
-    let index=queue.iter().position(|c|matches!(c,Command::BossTest(_)|Command::EndBossTest|Command::ChainTest(_)))?;
+    let index=queue.iter().position(|c|matches!(c,Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;
     queue.remove(index)
 }
 static PARTY_ROLE:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
@@ -164,6 +165,11 @@ impl Menu {
         let groups=crate::enemies::debug_encounters();
         ui.text(format!("共 {} 个 Boss 组合；多实体组合整组测试",groups.len()));
         let ready=role!=2&&run.phase==erdtree_tower::Phase::Map&&!view.travelling&&!view.busy;
+        {
+            let _disabled=ui.begin_disabled(!ready||party);
+            if ui.button("碎星拉塔恩：陨石阶段复现（单人）") {send(Command::RadahnTest);}
+        }
+        ui.text_wrapped("自动降至 40% 血量，玩家免伤；靠近中心开战，必要时轻击一次。仅记录，不强制落地。");
         ui.child_window("##boss-tests").size([0.0,0.0]).build(|| {
             for (index,group) in groups.iter().enumerate() {
                 let names=crate::enemies::debug_group_name(group);

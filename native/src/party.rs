@@ -17,6 +17,7 @@ struct Steam {
 }
 #[derive(Default)]
 pub struct EventSync {
+    pub descent_complete:bool,
     pub merchant_phase:u8,
     pub merchant_bound:bool,
     pub chariot_pose:Option<(u64,[f32;3],Instant)>,
@@ -40,6 +41,9 @@ pub struct EventSync {
     pub guards_cleared:bool,
 }
 impl EventSync {
+    pub fn trial_victory(&self)->bool {
+        self.descent_complete||self.storm_decision==Some(erdtree_tower::stormveil::Decision::Complete)
+    }
     pub fn victory(&self)->bool {
         self.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Guards(_)))
             &&self.hunting&&self.done==Some(0)&&!self.aborted
@@ -241,6 +245,11 @@ impl Link {
                 if *sequence==0||!super::chariot::valid_pose(*pose){return Err("战车位置同步数据无效".into());}
                 if self.event.chariot_pose.is_some_and(|(n,_,_)|*sequence<=n){return Ok(false);}
                 self.event.chariot_pose=Some((*sequence,*pose,Instant::now()));
+            },
+            Order::DescentComplete{epoch} if *epoch==self.epoch&&self.event.trial_decision==Some(erdtree_tower::regional_events::Trial::Descent)=>{
+                if self.event.descent_complete{return Ok(false);}
+                self.event.descent_complete=true;
+                super::log(format!("Party descent completed: epoch={epoch}"));
             },
             Order::Trial{epoch,choice} if *epoch==self.epoch=>{
                 if self.event.trial_decision==Some(*choice){return Ok(false);}
@@ -472,7 +481,7 @@ impl Link {
                     super::log(format!("PARTY_REWARD_PORTAL epoch={}; every living member entered",self.epoch));
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{self.rewards=true;orders.push(order);}
                 }
-                for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.spawn(),self.gate.engage()].into_iter().flatten() {
+                for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.descent_order(),self.gate.spawn(),self.gate.engage()].into_iter().flatten() {
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{orders.push(order);}
                 }
             }
@@ -754,6 +763,16 @@ mod tests {
         assert!(!event.combat_active());
     }
     #[test]
+    fn trial_revival_requires_completion_and_excludes_skips() {
+        use erdtree_tower::stormveil::Decision;
+        let mut event=EventSync::default();
+        for decision in [None,Some(Decision::Challenge),Some(Decision::Engage),Some(Decision::Skip)] {
+            event.storm_decision=decision;assert!(!event.trial_victory());
+        }
+        event.storm_decision=Some(Decision::Complete);assert!(event.trial_victory());
+        event=Default::default();event.descent_complete=true;assert!(event.trial_victory());
+    }
+    #[test]
     fn fault_discards_travel_already_queued_in_the_same_poll() {
         for signal in 0..3 {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
@@ -776,6 +795,15 @@ mod tests {
         assert!(!link.accept(&Order::Trial{epoch:0,choice:Trial::Chariot}).unwrap());
         assert!(link.accept(&Order::Trial{epoch:0,choice:Trial::Skip}).is_err());
         assert_eq!(link.event.storm_decision,Some(Decision::Challenge));
+        assert!(link.accept(&Order::DescentComplete{epoch:0}).is_err());
+        link.event=Default::default();
+        assert!(link.accept(&Order::Trial{epoch:0,choice:Trial::Descent}).unwrap());
+        assert!(link.accept(&Order::DescentComplete{epoch:1}).is_err());
+        assert!(link.accept(&Order::DescentComplete{epoch:0}).unwrap());
+        assert!(!link.accept(&Order::DescentComplete{epoch:0}).unwrap());
+        assert!(link.event.trial_victory());
+        link.event=Default::default();
+        assert!(link.accept(&Order::Trial{epoch:0,choice:Trial::Chariot}).unwrap());
         assert!(link.accept(&Order::Stormveil{epoch:0,decision:Decision::Engage}).unwrap());
         let pose=Order::ChariotPose{epoch:0,sequence:1,pose:[1.,2.,0.]};
         assert!(link.accept(&pose).unwrap());assert!(!link.accept(&pose).unwrap());

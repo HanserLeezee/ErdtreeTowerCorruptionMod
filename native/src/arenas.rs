@@ -73,7 +73,7 @@ pub fn is_built(block:i32)->bool {BUILT.iter().any(|(_,a)|a.block==block)}
 pub fn require_resources(arena:Arena)->Result<(),String> {
     if !is_built(arena.block){return Ok(());}
     let [a,b,c,d]=arena.block.to_be_bytes();let map=format!("m{a:02}_{b:02}_{c:02}_{d:02}");
-    for path in [format!("map/mapstudio/{map}.msb.dcx"),format!("event/{map}.emevd.dcx")] {
+    for path in [format!("map/mapstudio/{map}.msb.dcx"),format!("event/{map}.emevd.dcx"),"asset/aeg/aeg990/aeg990_446.geombnd.dcx".to_owned()] {
         let row=include_str!("../../scene-assets/arenas-resources.txt").lines().find(|l|l.split('|').next()==Some(path.as_str())).ok_or("场地资源清单缺失")?;
         let p:Vec<_>=row.split('|').collect();
         let bytes=std::fs::read(crate::LOG_PATH.with_file_name("scene-assets").join(&path)).map_err(|_|format!("缺少场地资源：{path}，请更新完整整合包。"))?;
@@ -82,6 +82,10 @@ pub fn require_resources(arena:Arena)->Result<(),String> {
             return Err(format!("场地资源与 DLL 不匹配：{path}，请全队更新同一版整合包。"));
         }
     }
+    use fromsoftware_shared::FromStatic;
+    let params=unsafe {eldenring::cs::SoloParamRepository::instance()}.map_err(|_|"游戏参数尚未就绪")?;
+    let arch=params.get::<eldenring::cs::AssetEnvironmentGeometryParam>(990446).ok_or("缺少传送门装饰参数，请更新完整整合包。")?;
+    if arch.behavior_type()!=0||arch.hit_create_type()!=0||arch.collision_type()!=0 {return Err("传送门碰撞参数不匹配，请更新完整整合包。".into());}
     Ok(())
 }
 fn site_info(key:&str)->Option<(u8,bool)> {

@@ -145,12 +145,54 @@ def loading_art(image, index):
     draw.rectangle((0,760,1920,1080),fill=(7,9,8,199))
     gold='#'+config['palette']['gold']
     draw.line([(120,762),(1800,762)],fill=gold,width=2)
-    title,body=config['tips'][index%len(config['tips'])]
-    for at,text,size,color in [((130,785),config['subtitle']+'  ·  '+config['loading_title'],24,gold),
-                              ((155,840),title,34,'#f1e9d5'),((155,898),body,25,'#d2d6c8')]:
+    lines=[((130,785),config['subtitle']+'  ·  '+config['loading_title'],24,gold)]
+    for at,text,size,color in lines:
         font=ImageFont.truetype(str(root/'scene-assets/fonts/TowerSerif-Regular.otf'),size)
+        if draw.textlength(text,font=font)>790:
+            raise ValueError('Loading tip exceeds its column: '+text)
         draw.text(at,text,font=font,fill=color)
     return Image.alpha_composite(image,layer)
+
+
+def tip_atlases(output):
+    root=Path(__file__).resolve().parents[1]
+    tips=json.loads(Path(__file__).with_name('title_theme.json').read_text(encoding='utf-8'))['tips']
+    if len(tips)!=12:
+        raise ValueError('Expected twelve loading tips')
+    for page in range(2):
+        atlas=Image.new('RGBA',(1920,1080));draw=ImageDraw.Draw(atlas)
+        for slot,(title,body) in enumerate(tips[page*6:page*6+6]):
+            for text,size,y,color in [(title,34,15,'#f1e9d5'),(body,25,78,'#d2d6c8')]:
+                font=ImageFont.truetype(str(root/'scene-assets/fonts/TowerSerif-Regular.otf'),size)
+                if draw.textlength(text,font=font)>1600:raise ValueError('Tip too wide')
+                draw.text((155,slot*180+y),text,font=font,fill=color)
+        atlas.save(output/f'tips{page+1}.dds')
+
+
+def single_tip_cycle(data):
+    head,tags=gb.parse(data)
+    placed=next(b for c,b in tags if c==26 and b.endswith(b'TowerThemeArtCycle\0'))
+    cycle_id=struct.unpack_from('<H',placed,3)[0]
+    sprite=next(b for c,b in tags if c==39 and struct.unpack_from('<H',b)[0]==cycle_id)
+    backgrounds=[b for c,b in gb.read_tags(sprite,4,len(sprite)) if c==26 and struct.unpack_from('<H',b,1)[0]==1][:3]
+    if len(backgrounds)!=3:raise ValueError('Missing loading backgrounds')
+    first=gb.max_character(tags)+1
+    definitions=[];frames=[]
+    for i in range(12):
+        bitmap=first+i*2;shape=bitmap+1
+        definitions.extend([(1009,external_image(bitmap,f'MENU_TowerTheme_tip{i}',(1920,180))),
+                            (2,gb.bitmap_shape(shape,bitmap,1920,180,(1920,180)))])
+        if i:frames.extend([(28,struct.pack('<H',1)),(28,struct.pack('<H',2))])
+        frames.extend([(26,backgrounds[i%3]),(26,gb.place(2,shape,'TowerLoadingTip',0,825))])
+        frames.extend([(1,b'')]*240)
+    frames.append((0,b''))
+    replacement=struct.pack('<HH',cycle_id,2880)+b''.join(gb.tag(c,b) for c,b in frames)
+    out=[]
+    for code,body in tags:
+        if code==39 and struct.unpack_from('<H',body)[0]==cycle_id:
+            out.extend(definitions);out.append((39,replacement))
+        else:out.append((code,body))
+    return gb.build(head,out)
 
 
 def external_image(character, name, size):
@@ -196,6 +238,7 @@ def write_dds(art, output):
             with Image.open(path) as restored:
                 if restored.size != prepared.size or restored.convert('RGBA').tobytes() != prepared.tobytes():
                     raise ValueError('DDS pixel round-trip failed: ' + name)
+    tip_atlases(output)
 
 
 if __name__ == '__main__':
@@ -210,7 +253,7 @@ if __name__ == '__main__':
         if filename=='05_000_title.gfx':
             data=title_underlay(data)
         else:
-            data=loading_underlay(data)
+            data=single_tip_cycle(loading_underlay(data))
         (args.output / 'menu' / filename).write_bytes(data)
     filename = '05_001_title_logo.gfx'
     (args.output / 'menu' / filename).write_bytes((args.source / filename).read_bytes())

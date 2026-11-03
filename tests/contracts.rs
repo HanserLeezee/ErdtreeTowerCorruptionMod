@@ -1,6 +1,29 @@
 use erdtree_tower::{Class,contracts::{State,Kind,reinforcement_level}};
 
 #[test]
+fn ranged_oaths_are_retired_from_new_offers_and_deepening() {
+    use erdtree_tower::contracts::Oath;
+    for class in [Class::Vagabond,Class::Hero,Class::Samurai,Class::Astrologer,Class::Prophet,Class::Confessor] {
+        for seed in 0..128 {
+            assert!(!State::new(seed,class,1,None,0).offers.contains(&Kind::Hunter));
+            let state=State::start(seed,class,2,vec![Oath{kind:Kind::Hunter,level:1}],0);
+            assert!(!state.offers.contains(&Kind::Hunter));assert_ne!(state.deepen,Some(Kind::Hunter));
+            assert_eq!(state.level(Kind::Hunter),Some(1));
+        }
+    }
+}
+
+#[test]
+fn pending_ranged_offer_migrates_but_selected_gear_remains_readable() {
+    let mut run=erdtree_tower::Run::new(42,Class::Samurai);run.enable_contracts();
+    let state=run.contract.as_mut().unwrap();state.offers=[Kind::Hunter,Kind::Steel];
+    let loaded=erdtree_tower::Run::decode(&run.encode().unwrap()).unwrap();
+    assert!(!loaded.contract.unwrap().offers.contains(&Kind::Hunter));
+    run.contract.as_mut().unwrap().choose(0,42,Class::Samurai).unwrap();
+    assert_eq!(erdtree_tower::Run::decode(&run.encode().unwrap()).unwrap(),run);
+}
+
+#[test]
 fn skipping_oath_unlocks_routes_persists_and_grants_nothing() {
     let mut run=erdtree_tower::Run::new(42,Class::Samurai);run.enable_contracts();
     let before=run.clone();
@@ -19,11 +42,12 @@ fn skipping_oath_unlocks_routes_persists_and_grants_nothing() {
 }
 
 #[test]
-fn expanded_oaths_keep_existing_ids_and_all_enter_the_offer_pool() {
+fn expanded_oaths_keep_existing_ids_and_only_active_kinds_enter_the_pool() {
     for (index,kind) in [Kind::Steel,Kind::Breaker,Kind::Combo,Kind::Guard,Kind::Mystic,Kind::Hunter].into_iter().enumerate() {assert_eq!(kind.index(),index);}
     let mut seen=std::collections::HashSet::new();
     for seed in 0..256 {for kind in State::new(seed,Class::Samurai,1,None,0).offers {seen.insert(kind.index());}}
-    assert_eq!(seen.len(),10);
+    assert_eq!(seen.len(),9);
+    assert!(!seen.contains(&Kind::Hunter.index()));
     assert!(Kind::Ascetic.bane().contains("35%"));
 }
 

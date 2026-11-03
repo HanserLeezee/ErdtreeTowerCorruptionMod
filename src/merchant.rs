@@ -5,6 +5,10 @@ pub const MAX_BELLS:usize=64;
 pub const BASE_STOCK:usize=37;
 pub const MAX_STOCK:usize=BASE_STOCK+MAX_BELLS*5;
 pub const NAMES:[&str;3]=["武器铃珠","防具铃珠","护符铃珠"];
+pub const HUNTER_CHANCE:u64=30;
+pub fn hunter_appears(seed:u64,act:u8,node:usize)->bool {
+    crate::mix(seed^(u64::from(act)<<40)^node as u64^0x68756e746572)%100<HUNTER_CHANCE
+}
 
 #[derive(Clone,Debug,Default,PartialEq,Eq,Serialize,Deserialize)]
 pub struct Bells {
@@ -40,6 +44,21 @@ impl Run {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hunter_chance_is_thirty_percent_and_shared_across_personal_saves() {
+        assert_eq!((0..100).filter(|roll|*roll<HUNTER_CHANCE).count(),30);
+        let mut appeared=0;
+        for seed in 0..1000 {
+            let a=Run::new_personal(seed,crate::Class::Samurai,1);
+            let b=Run::new_personal(seed,crate::Class::Samurai,2);
+            let restored=Run::decode(&a.encode().unwrap()).unwrap();
+            let result=hunter_appears(a.seed,1,5);
+            assert_eq!(result,hunter_appears(b.seed,1,5));
+            assert_eq!(result,hunter_appears(restored.seed,1,5));
+            appeared+=usize::from(result);
+        }
+        assert!((230..370).contains(&appeared));
+    }
     fn shop()->Run {
         let mut r=Run::new(44,crate::Class::Samurai);
         let node=r.nodes.iter().position(|n|n.kind==NodeKind::Shop).unwrap();

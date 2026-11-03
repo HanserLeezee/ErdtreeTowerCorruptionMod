@@ -42,7 +42,9 @@ static class PartyDlcAssets {
         var addedPools=File.ReadAllLines(Path.Combine(input,"enemy-pools.txt")).Select(l=>l.Split('|')).Where(p=>p.Length>5&&p[5]=="party")
             .Select(p=>(enemy:new Enemy(int.Parse(p[0]),int.Parse(p[2]),900000000+int.Parse(p[2])*10000,int.Parse(p[2])*10000),copies:3)).ToArray();
         var addedBossIds=File.ReadAllLines(Path.Combine(input,"boss-pool.txt")).Select(l=>l.Split('|')).Where(p=>p.Length>10&&p[10]=="party").Select(p=>int.Parse(p[2])).ToHashSet();
-        var added=addedPools.Concat(BossAssets.Parts(input).Where(p=>addedBossIds.Contains(p.Index)).Select(p=>(enemy:new Enemy(p.Act,p.Model,BossAssets.Npc(p,false),p.Think),copies:1))).OrderBy(p=>p.enemy.Act).ThenBy(p=>p.enemy.Npc).ToArray();
+        var eliteOnly=File.ReadAllLines(Path.Combine(input,"elite-only-bosses.txt")).Select(int.Parse).ToHashSet();
+        var added=addedPools.Concat(BossAssets.Parts(input).Where(p=>addedBossIds.Contains(p.Index)).SelectMany(p=>
+            (eliteOnly.Contains(p.Index)?new[]{false,true}:new[]{false}).Select(elite=>(enemy:new Enemy(p.Act,p.Model,BossAssets.Npc(p,elite),p.Think),copies:1)))).OrderBy(p=>p.enemy.Act).ThenBy(p=>p.enemy.Npc).ToArray();
         var templates=Templates(game,enemies.Select(e=>e.Model).Concat(added.Select(p=>p.enemy.Model)).ToHashSet());
         var maps=new Dictionary<int,MSBE>();var scripts=new Dictionary<int,EMEVD>();
         for(int act=1;act<=3;act++){string map=$"m45_0{3-act}_00_00";maps[act]=MSBE.Read(Path.Combine(input,"map/mapstudio",map+".msb.dcx"));scripts[act]=EMEVD.Read(Path.Combine(input,"event",map+".emevd.dcx"));}

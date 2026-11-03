@@ -128,13 +128,22 @@ impl Run {
         self.start_talisman=talisman;Ok(())
     }
     /// 已经带在身上的开局护符（旧存档为 0，表示随身的祖灵角，不影响奖励）
-    pub fn valid_start_talisman(&self)->bool {self.start_talisman==0||talismans(self.class).contains(&self.start_talisman)}
+    pub fn valid_start_talisman(&self)->bool {self.start_talisman==0||self.start_talisman==DEFAULT_TALISMAN||talismans(self.class).contains(&self.start_talisman)}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::journal::Fight;
+    #[test]
+    fn old_default_talisman_saves_load_without_changing_the_run() {
+        for class in [Class::Vagabond,Class::Hero,Class::Samurai,Class::Astrologer,Class::Prophet,Class::Confessor] {
+            let mut run=Run::new(42,class);run.start_talisman=DEFAULT_TALISMAN;
+            let loaded=Run::decode(&serde_json::to_string(&run).unwrap()).unwrap();
+            assert_eq!(loaded,run);
+            run.start_talisman=999999;assert!(!run.valid_start_talisman());
+        }
+    }
     fn fight(act:u8,kind:&str,won:bool)->Fight {Fight{act,layer:1,kind:kind.into(),won,enemies:vec![]}}
     #[test]
     fn levels_follow_the_curve_and_cap() {

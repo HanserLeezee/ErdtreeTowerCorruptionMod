@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::{NodeKind, Phase, RuleResult, Run};
+pub const SCARAB_PRICE:u32=500;
+pub const SPRING_GOLD:u32=800;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,7 +73,8 @@ impl Run {
     }
     pub fn recover_at_spring(&mut self,choice:usize)->RuleResult<()> {
         self.active_node(NodeKind::Event)?;
-        if !self.regional_event.recovery||self.regional_event.opened!=0||choice>1 {return Err("泉水已使用或选项无效".into());}
+        if !self.regional_event.recovery||self.regional_event.opened!=0||choice>2 {return Err("泉水已使用或选项无效".into());}
+        if choice==2 {self.gold=self.gold.checked_add(SPRING_GOLD).ok_or("卢恩数量超限")?;}
         self.regional_event.opened=1<<choice;
         if choice==0 {self.hp=self.max_hp;}
         Ok(())
@@ -90,7 +93,7 @@ impl Run {
     pub fn pay_scarabs(&mut self, runes:u32)->RuleResult<u32> {
         self.active_node(NodeKind::Event)?;
         if !self.regional_event.scarabs || self.regional_event.attempts>=3 {return Err("本次游玩次数已用完".into());}
-        let remaining=runes.checked_sub(1000).ok_or("需要 1000 卢恩")?;
+        let remaining=runes.checked_sub(SCARAB_PRICE).ok_or("需要 500 卢恩")?;
         self.regional_event.attempts+=1;
         self.gold=remaining;
         Ok(remaining)
@@ -145,7 +148,7 @@ impl Run {
         if self.regional_event.descent_started&&!self.regional_event.descent{return false;}
         if self.regional_event.recovery {
             let p=&self.regional_event;
-            return !p.locked&&!p.scarabs&&!p.descent&&!p.guards&&p.guard_slot.is_none()&&p.receipt.is_none()&&p.attempts==0&&p.opened<=2
+            return !p.locked&&!p.scarabs&&!p.descent&&!p.guards&&p.guard_slot.is_none()&&p.receipt.is_none()&&p.attempts==0&&matches!(p.opened,0|1|2|4)
                 &&match self.phase {Phase::Dead=>true,Phase::Node{id}=>self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Event),_=>false};
         }
         if self.regional_event.descent {
@@ -185,7 +188,8 @@ mod tests {
     fn spring_is_free_personal_exclusive_and_survives_reload() {
         let mut run=Run::new(42,crate::Class::Samurai);
         let id=run.nodes.iter().position(|n|n.kind==NodeKind::Event).unwrap();
-        run.phase=Phase::Node{id};run.regional_event.recovery=true;run.gold=0;run.hp=1;
+        run.debug_jump(id).unwrap();run.enter(id).unwrap();
+        run.regional_event=Progress{recovery:true,..Default::default()};run.gold=0;run.hp=1;
         let original=run.clone();
         for choice in 0..2 {
             let mut player=original.clone();player.recover_at_spring(choice).unwrap();
@@ -198,7 +202,11 @@ mod tests {
             loaded.leave_regional_event().unwrap();assert_eq!(loaded.regional_event,Progress::default());
         }
         assert_eq!(original.regional_event.opened,0);
-        assert!(run.recover_at_spring(2).is_err());
+        assert!(run.recover_at_spring(3).is_err());
+        run.recover_at_spring(2).unwrap();assert_eq!(run.gold,800);assert_eq!(run.hp,1);
+        let mut loaded=Run::decode(&run.encode().unwrap()).unwrap();
+        for choice in 0..3 {assert!(loaded.recover_at_spring(choice).is_err());}
+        loaded.leave_regional_event().unwrap();assert_eq!(loaded.gold,800);
     }
     #[test]
     fn descent_reward_is_persisted_once_and_exit_requires_claim() {
@@ -229,9 +237,9 @@ mod tests {
         let mut run=Run::new(42,crate::Class::Samurai);
         let id=run.nodes.iter().position(|n|n.kind==NodeKind::Event).unwrap();
         run.phase=Phase::Node{id};run.regional_event.scarabs=true;
-        assert!(run.pay_scarabs(999).is_err());assert_eq!(run.regional_event.attempts,0);
+        assert!(run.pay_scarabs(SCARAB_PRICE-1).is_err());assert_eq!(run.regional_event.attempts,0);
         for attempt in 1..=3 {
-            assert_eq!(run.pay_scarabs(4000-(attempt-1)*1000).unwrap(),4000-attempt*1000);
+            assert_eq!(run.pay_scarabs(4000-(attempt-1)*SCARAB_PRICE).unwrap(),4000-attempt*SCARAB_PRICE);
             run.regional_event=serde_json::from_str(&serde_json::to_string(&run.regional_event).unwrap()).unwrap();
             assert_eq!(run.regional_event.attempts,attempt as u8);assert!(run.valid_regional_event());
         }

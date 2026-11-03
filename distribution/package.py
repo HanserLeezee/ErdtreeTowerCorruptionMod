@@ -42,6 +42,8 @@ if args.upload:
     upload_mirror.target_from_url(upload_mirror.mirror_url())
 
 project = Path(__file__).resolve().parents[1]
+from verify_release_sources import require_committed
+require_committed(project)
 source = project / 'release-preview'
 dist = project / 'dist'
 profile = (source / 'preview.me3').read_text(encoding='utf-8-sig')

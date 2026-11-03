@@ -150,7 +150,7 @@ mod tests {
         assert_eq!(victory_resources(None,100,1000,10,200),(100,10));
         let mut run=Run::new(42,erdtree_tower::Class::Samurai);run.enable_contracts();
         run.contract.as_mut().unwrap().held=vec![erdtree_tower::contracts::Oath{kind:Kind::Ascetic,level:2}];
-        assert_eq!(ascetic_rates(&run),Some((20,25)));
+        assert_eq!(ascetic_rates(&run),Some((18,23)));
         run.contract=Some(State::new(1,run.class,2,None,0));run.contract.as_mut().unwrap().chosen=Some(Kind::Ascetic);
         assert_eq!(ascetic_rates(&run),None,"old rules only heal in the act the contract was made");
     }
