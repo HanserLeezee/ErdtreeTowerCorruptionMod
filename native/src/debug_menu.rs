@@ -249,6 +249,7 @@ impl Menu {
             }
         }
         ui.separator();ui.text("余烬");
+        if ui.small_button("预览原生余烬获得窗口（不发奖）") {crate::ember_notice::preview(Ember::SpiritTwin);OPEN.store(false,Ordering::Relaxed);}
         for (i,ember) in Ember::ALL.into_iter().enumerate() {
             if i%3!=0 {ui.same_line_with_pos(10.0+(i%3) as f32*200.0);}
             let mut held=run.embers.contains(&ember);

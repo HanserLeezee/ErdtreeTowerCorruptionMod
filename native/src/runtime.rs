@@ -243,6 +243,7 @@ fn tick_party_scarabs(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->
 }
 
 struct Runtime {
+    ember_notice:super::ember_notice::Notice,
     load_trace:super::diagnostics::LoadTrace,
     drawing:erdtree_tower::map_drawing::Sync,
     drawing_owner:Option<(u32,i32)>,
@@ -344,6 +345,7 @@ fn fresh_runtime()->Runtime {
         summon_seen: None,
         ash_guard: None,
         ash_tracking:false,
+        ember_notice:Default::default(),
         ash_before:vec![],
         ash_used:None,
         ash_refund_requested:false,
@@ -1031,6 +1033,9 @@ pub fn tick() {
     if let Ok(mut state)=STATE.try_lock() {
         if let Ok(world)=unsafe {WorldChrMan::instance_mut()}{sync_action_guard(&mut state,world);}
         sync_map(&mut state);
+        let scope=state.view.run.as_ref().map(|run|(run.seed,run.act));
+        let ready=state.view.ready&&!state.view.travelling;
+        state.ember_notice.tick(scope,ready);
         let view=state.view.clone();let owner=state.identity;
         drop(state);
         if let Ok(mut ui)=UI.lock(){ui.publish(view,owner);}
@@ -2779,6 +2784,7 @@ fn tick_chest_award(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::r
     // 新旅程（余烬规则 2 起）：宝箱给一枚随机余烬；已经开始发放的物品（有领取记录）照旧发完，余烬拿完了也照旧给物品
     if !path.exists()&&let Some(ember)=erdtree_tower::embers::chest_ember(run,room.node) {
         let mut next=run.clone();next.claim_chest_ember()?;record_checked(&next)?;
+        state.ember_notice.queue(next.seed,next.act,ember);
         state.view.run=Some(next);room.complete(format!("获得余烬「{}」",ember.name()));
         set_flag(45010995,true)?;
         report(state,format!("宝箱里是余烬「{}」！",ember.name()));

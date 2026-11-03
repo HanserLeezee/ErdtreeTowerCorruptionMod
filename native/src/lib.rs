@@ -72,6 +72,7 @@ mod rooms;
 mod scarabs;
 mod map_scarabs;
 mod chest_award;
+mod ember_notice;
 mod smith;
 mod whetblades;
 mod parkour_barrier;
