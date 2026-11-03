@@ -13,13 +13,17 @@ modes=modes.Append("arena-build").ToArray();
 modes=modes.Append("affix-stack-patch").ToArray();
 modes=modes.Append("smith-stone-patch").ToArray();
 modes=modes.Append("smith-stone-text").ToArray();
+modes=modes.Append("retry-item-patch").ToArray();
+modes=modes.Append("retry-item-text").ToArray();
 modes=modes.Append("arena-candidates").ToArray();
 modes=modes.Append("stormveil-no-runes-patch").ToArray();
 modes=modes.Append("stormveil-sidewall-patch").ToArray();
 modes=modes.Append("title-texture-patch").ToArray();
+modes=modes.Append("portal-reveal-test").ToArray();
 if(args.Length<4||!modes.Contains(args[3])||args.Length!=4||args.Take(3).Any(modes.Contains)){Console.Error.WriteLine("Usage: SceneBuilder <game> <output> <cache> <mode>"+(args.Length>3?" (rejected: "+string.Join(" ",args.Skip(3))+")":"")+"\nModes: "+string.Join(" ",modes));Environment.Exit(2);}
 var game=args[0];var output=args[1];var cache=args[2];
 if(args.Contains("personal-events-test")){PersonalEvents.Test();return;}
+if(args.Contains("portal-reveal-test")){PortalReveal.Test();return;}
 if(args.Contains("dormant-loading-test")){DormantLoadingAssets.Test();return;}
 if(args.Contains("party-enemy-events-test")){PartyEnemyEvents.Test();return;}
 if(args.Contains("affix-text-test")){AffixTextFix.Test(cache);return;}
@@ -38,6 +42,8 @@ if(args.Contains("talisman-affix-patch")){TalismanAssets.Build(cache,output);ret
 if(args.Contains("affix-stack-patch")){AffixStackAssets.Patch(cache,output);return;}
 if(args.Contains("smith-stone-patch")){SmithAssets.PatchStone(cache,output);return;}
 if(args.Contains("smith-stone-text")){SmithAssets.PatchStoneText(cache,output);return;}
+if(args.Contains("retry-item-patch")){RetryItemAssets.Patch(cache,output);return;}
+if(args.Contains("retry-item-text")){RetryItemAssets.PatchText(cache,output);return;}
 if(args.Contains("talisman-affix-verify")){TalismanAssets.Verify(cache);return;}
 if(args.Contains("unrestricted-ashes-patch")){UnrestrictedAshAssets.Patch(cache,output);ProtectedAshAssets.Build(game,cache,output);return;}
 if(args.Contains("whetblade-menu-patch")){WhetbladeAssets.Patch(cache,output);return;}

@@ -207,6 +207,8 @@ struct CombatCheckpoint {
 
 /// 商店价格在第三幕最后一层的百分比（见 Run::shop_position_percent）
 pub const SHOP_PRICE_END:u32=150;
+/// 每局开局的徘徊赐福数量（单人）
+pub const RETRIES:u8=2;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
@@ -344,6 +346,9 @@ pub struct Run {
     pub shop_stock: Option<ShopStock>,
     #[serde(default)]
     pub bells: merchant::Bells,
+    /// 徘徊赐福：单人旅程里死亡时消耗一个，回到路线图重打本层（开局 RETRIES 个；联机不使用，旧存档为 0）
+    #[serde(default)]
+    pub retries: u8,
     checkpoint: Option<CombatCheckpoint>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -694,6 +699,36 @@ mod wander_mode {
 mod map_compatibility {
     use super::*;
     #[test]
+    fn lingering_grace_retries_the_current_floor_twice() {
+        let mut run=Run::new(42,Class::Samurai);
+        assert_eq!(run.retries,RETRIES);assert_eq!(RETRIES,2);
+        let id=*run.available().iter().find(|&&id|run.nodes[id].kind.combat()).unwrap();
+        let (hp,flasks)=(run.hp,run.flasks);
+        for left in [1,0] {
+            run.enter(id).unwrap();run.observe_hp(hp/2).unwrap();
+            assert!(run.retry_floor());
+            assert_eq!(run.retries,left);assert_eq!(run.phase,Phase::Map);
+            assert_eq!((run.hp,run.flasks),(hp,flasks),"restored to the values on entering the floor");
+            assert!(run.available().contains(&id),"the same floor can be fought again");
+            assert!(run.visited.is_empty());
+            run.validate().unwrap();
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+        }
+        let mut travelling=Run::new(42,Class::Samurai);
+        assert!(travelling.retry_floor(),"dying on the way still spends a charge");
+        assert_eq!((travelling.retries,travelling.phase.clone()),(RETRIES-1,Phase::Map));
+        run.enter(id).unwrap();
+        assert!(!run.retry_floor(),"no charges left");
+        run.observe_hp(0).unwrap();assert_eq!(run.phase,Phase::Dead);
+        assert!(!run.retry_floor(),"an ended run cannot be retried");
+    }
+    #[test]
+    fn old_saves_without_lingering_grace_load_with_none() {
+        let mut value:serde_json::Value=serde_json::from_str(&Run::new(42,Class::Samurai).encode().unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("retries").unwrap();
+        assert_eq!(Run::decode(&value.to_string()).unwrap().retries,0);
+    }
+    #[test]
     fn old_act_keeps_twelve_floors_then_advances_to_sixteen() {
         for schema in 1..=3 {
             let mut run=Run::new(42,Class::Samurai);run.schema=schema;
@@ -929,6 +964,7 @@ impl Run {
             shop_purchased: 0,
             shop_stock: None,
             bells: Default::default(),
+            retries: RETRIES,
             checkpoint: None,
         }
     }
@@ -1543,6 +1579,19 @@ impl Run {
             self.phase=Phase::Map;
         }
         Ok(())
+    }
+    /// 徘徊赐福：死在本层（战斗、房间里或出发途中）时消耗一个，回到路线图重打本层——本层的节点仍可选择，
+    /// 生命与圣杯瓶恢复到进入本层时的值（房间里没有进场快照时生命回满）。没有剩余或不在本层里时返回 false，由调用方照常结束旅程
+    pub fn retry_floor(&mut self)->bool {
+        // 路线图阶段（出发传送途中）死亡也算：扣一个，留在路线图
+        if self.retries==0||!matches!(self.phase,Phase::Combat{..}|Phase::Node{..}|Phase::Map) {return false;}
+        self.retries-=1;
+        if let Some(checkpoint)=self.checkpoint.take() {self.hp=checkpoint.hp;self.flasks=checkpoint.flasks;}
+        if self.hp==0 {self.hp=self.max_hp;}
+        self.regional_event=Default::default();
+        self.shop_purchased=0;self.shop_stock=None;
+        self.phase=Phase::Map;
+        true
     }
     pub fn end_on_death(&mut self) {
         self.hp=0;self.phase=Phase::Dead;self.checkpoint=None;

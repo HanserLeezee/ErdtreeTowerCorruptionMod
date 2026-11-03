@@ -5,6 +5,11 @@ using SoulsFormats;
 // 这里写一层的数值，运行时（native/src/embers.rs）按当前层数改写没挂着的那一行再换上。
 static class EmberAssets {
     public const int First=9670000,Span=100;
+    // 圣杯余响：喝圣杯瓶后造成的伤害 ×1.15、受到的伤害 ×0.85（与 src/embers.rs 的 ECHO_* 一致；持续时间由运行时控制）
+    const float EchoAttack=1.15f,EchoCut=0.85f;
+    // 法师余烬（与 src/embers.rs 的 BARRIER_* / GLINTSTONE_* / MOON_* 一致）：施法时受到的伤害 ×0.65、施法时韧性伤害 ×0（霸体）、
+    // 法术与祷告的专注消耗 ×0.75（常驻）、专注不低于 70% 时造成的伤害 ×1.18；何时挂上由运行时控制
+    const float BarrierCut=0.65f,MeditationToughness=0f,GlintstoneCost=0.75f,MoonAttack=1.18f;
     const float ExecutionSeconds=5f,ExecutionStamina=0.5f,RevengeRate=1.3f,FrenzyStep=0.02f,CommandAttack=1.2f,CommandCut=0.8f;
     const int Buildup=12,FrenzyStacks=8,FlashVfx=1605000;
     // 叠层余烬（与 src/embers.rs 的常量一致）
@@ -40,6 +45,17 @@ static class EmberAssets {
         var blood=new PARAM.Row(p.Rows.Single(r=>r.ID==3191)){ID=First+10,Name="Tower ember blood buildup"};Set(blood,"bloodAttackPower",Buildup);rows.Add(blood);
         var frost=new PARAM.Row(p.Rows.Single(r=>r.ID==3141)){ID=First+11,Name="Tower ember frost buildup"};Set(frost,"freezeAttackPower",Buildup);rows.Add(frost);
         rows.Add(Player(p,First+20,"Tower ember revenge",RevengeRate,-1f));
+        var echo=Player(p,First+15,"Tower ember flask echo",EchoAttack,-1f);
+        foreach(var cut in new[]{"slash","blow","thrust","neutral","magic","fire","thunder","dark"})Set(echo,cut+"DamageCutRate",EchoCut);
+        rows.Add(echo);
+        var barrier=Player(p,First+16,"Tower ember mage barrier",1f,-1f);
+        foreach(var cut in new[]{"slash","blow","thrust","neutral","magic","fire","thunder","dark"})Set(barrier,cut+"DamageCutRate",BarrierCut);
+        rows.Add(barrier);
+        var meditation=Player(p,First+17,"Tower ember mage meditation",1f,-1f);Set(meditation,"toughnessDamageCutRate",MeditationToughness);rows.Add(meditation);
+        var glintstone=Player(p,First+18,"Tower ember mage glintstone",1f,-1f);
+        foreach(var kind in new[]{"magic","miracle"})Set(glintstone,kind+"ConsumptionRate",GlintstoneCost);
+        rows.Add(glintstone);
+        rows.Add(Player(p,First+19,"Tower ember mage full moon",MoonAttack,-1f));
         for(int stack=1;stack<=FrenzyStacks;stack++)rows.Add(Player(p,First+30+stack,$"Tower ember frenzy {stack}",1f+FrenzyStep*stack,-1f));
         var flash=Enemy(p,First+40,"Tower ember flash",1f);Set(flash,"vfxId",FlashVfx);rows.Add(flash);
         // 灵唤铃的号令：挂在召唤物身上，伤害 +20%、受到的伤害 -20%（沿用敌人侧的中性模板）

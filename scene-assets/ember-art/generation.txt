@@ -47,3 +47,20 @@ Production game UI icon sprite atlas on a truly transparent background. Square i
 3 godslayer: a broken crown pierced by a long spear, small golden shards falling, ember accent bright divine gold.
 4 spirit keeper: an open ornate soul lantern holding several small ghostly flames gathered inside, a faint spectral wolf head above it, ember accent spectral teal.
 All four emblems share identical style, rim, disc size and lighting with an existing set of ember emblems so they read as one set. Transparent canvas outside the discs.
+
+
+emblems-mage.png（法师余烬 990021–990024）由 gpt-image-2 一次生成（background=transparent，1254×1254），2 列 × 2 行，顺序与 Ember::ALL 的后四项一致。
+emblems-mage.png prompt (transparent background):
+Production game UI icon sprite atlas on a truly transparent background. Square image, EXACT regular grid of 2 columns by 2 rows, FOUR equal square cells, one emblem centered in each cell with generous empty transparent padding, no grid lines, no frames around cells, no backdrop. Every emblem is a round medallion-like sigil of the same size and same visual weight, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing ember accent color per emblem, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle warm inner glow like a smoldering coal, never cartoonish, never glossy plastic. Theme: sorcery and spellcasting, glintstone. Absolutely NO text, letters, runes, numbers, labels or watermarks. Layout row-major, left to right, top to bottom:
+1 Thops's barrier: a slender glintstone staff held upright with a translucent dome-shaped force field bubble around it, deflecting small incoming shards, ember accent glintstone blue.
+2 Azur's meditation: a seated robed sorcerer silhouette in still meditation, body half turned into crystal, unmoving like a statue, a calm halo of light behind the head, ember accent pale azure.
+3 lingering glintstone: a cut glintstone crystal shedding a thin trail of starlight that flows back into it in a loop, ember accent deep sapphire.
+4 Rennala's full moon: a large full moon disc rising over a sacred seal and a staff crossed beneath it, ember accent soft moonlight blue-white.
+All four emblems share identical style, rim, disc size and lighting with an existing set of ember emblems so they read as one set. Transparent canvas outside the discs.
+
+
+emblems-footwork.png（黑刀刺客的身法 990025）由 gpt-image-2 单独生成（background=transparent，1254×1254）。
+emblems-footwork.png prompt (transparent background):
+Production game UI icon on a truly transparent background. Square image with ONE single emblem centered with generous empty transparent padding, no frame, no backdrop. The emblem is a round medallion-like sigil, straight-on flat orthographic, no perspective. Style: premium restrained dark fantasy, Elden Ring inspired, antique gold fine line engraving with a single glowing ember accent color, carved on a small charcoal black weathered metal disc with a thin gold rim; subtle warm inner glow like a smoldering coal, never cartoonish, never glossy plastic. Absolutely NO text, letters, runes, numbers, labels or watermarks.
+Subject: Black Knife assassin's footwork: a hooded assassin silhouette caught mid dodge-roll, leaving a curved trail of three fading afterimages, a slender black dagger with a faint violet-red edge held reversed in hand, ember accent dusky violet with a thin gold edge.
+Identical style, rim, disc size and lighting to an existing set of ember emblems so it reads as part of the set. Transparent canvas outside the disc.

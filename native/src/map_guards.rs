@@ -72,6 +72,15 @@ impl Guards {
         }
         Ok(dead==self.bound.len())
     }
+    /// Boss 血条：交战开始后（倒计时结束）仍活着的守卫，返回 (血条等级, 名称编号, 句柄)；联机成员也绑定了守卫，同样显示
+    pub fn bars(&self,world:&WorldChrMan)->Vec<(u8,i32,FieldInsHandle)> {
+        if !self.active {return Vec::new();}
+        self.bound.iter().zip(self.ids.iter().zip(&self.specs)).filter_map(|(&(handle,address),(&id,spec))|{
+            let chr=world.chr_ins_by_handle(&handle).filter(|c|std::ptr::from_ref(*c) as usize==address&&c.event_entity_id==id&&c.npc_id==spec.model&&c.npc_param_id==spec.npc)?;
+            if chr.modules.data.hp<=0||chr.chr_flags1c5.death_flag() {return None;}
+            Some((enemies::bar_rank(spec),enemies::bar_text(spec)?,handle))
+        }).collect()
+    }
     pub fn retire(&self) {
         let _=set_flag(self.combat,false);
         for &id in &self.ids {if let Ok((request,_))=controls(id){let _=set_flag(request,false);}}
@@ -95,6 +104,15 @@ mod tests {
         }}
         for id in [0,48040000,48010300]{assert!(entity(id).is_err());}
         assert!(positions(51010000,12).is_err());
+    }
+    #[test]
+    fn merchant_hunter_has_a_boss_bar_name() {
+        let hunter=Guards::merchant().unwrap();
+        let spec=hunter.specs[0];
+        assert_eq!(enemies::bar_rank(&spec),0,"shown as a boss bar");
+        let name=enemies::bar_text(&spec).unwrap();
+        assert!((enemies::BOSS_NAME_FIRST..enemies::BOSS_NAME_FIRST+enemies::boss_name_count() as i32).contains(&name),"inside the tower's boss name range");
+        assert!(!hunter.active,"no bar before the countdown ends");
     }
     #[test]
     fn guards_cannot_fight_before_both_clients_bind_and_countdown_finishes() {

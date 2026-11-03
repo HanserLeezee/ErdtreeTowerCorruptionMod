@@ -312,6 +312,10 @@ struct Runtime {
     victory_cleanup:Option<(u64,Vec<u32>,Instant,bool)>,
     /// 本局结束（死亡或通关）时这场战斗的敌人：先留在场上，复活或 15 秒后再撤，不在死亡瞬间消失
     lingering:Option<(Pending,Instant)>,
+    /// 这次死亡已经用徘徊赐福处理过（回到路线图重打本层）：角色复活前别的死亡检查不再结束旅程或再扣一次
+    death_retry:bool,
+    /// 徘徊赐福实物道具：背包数量跟随旅程剩余次数
+    retry_item:super::retry_item::Sync,
     action_guard: super::input::ActionGuard,
     shop_guard: super::native_shop::StockGuard,
     last_blessing_sync: Option<Instant>,
@@ -382,6 +386,8 @@ fn fresh_runtime()->Runtime {
         reward_portal:Default::default(),
         victory_cleanup:None,
         lingering:None,
+        death_retry:false,
+        retry_item:Default::default(),
         action_guard: Default::default(),
         shop_guard: Default::default(),
         last_blessing_sync: None,
@@ -871,6 +877,11 @@ fn finish_victory_cleanup(state:&mut Runtime,world:&mut WorldChrMan) {
 }
 fn stray_sweep_due(waited:Duration)->bool {waited>=Duration::from_secs(8)}
 /// 本局结束后留在场上的敌人：玩家活着时（复活回到大赐福，或通关）5 秒后撤下，最多留 15 秒
+/// 当前是不是单人旅程（每帧由 tick 更新）：界面据此决定显示不显示徘徊赐福
+static SOLO:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(true);
+pub fn solo()->bool {SOLO.load(std::sync::atomic::Ordering::Relaxed)}
+/// 徘徊赐福生效时的提示
+fn lingering_message(left:u8)->String {format!("徘徊赐福生效：复活后从路线图重打本层（剩余 {left} 个）。")}
 fn lingering_due(alive:bool,waited:Duration)->bool {alive&&waited>=Duration::from_secs(5)||waited>=Duration::from_secs(15)}
 #[cfg(test)]
 mod victory_cleanup_tests {
@@ -1069,6 +1080,7 @@ fn tick_locked() {
     if let Some(action)=action {state.command=Some(action);state.view.busy=true;}
     let mut music=super::bgm::Frame::default();
     state.pad_capture.update(super::input::active());
+    SOLO.store(state.party.is_none(),std::sync::atomic::Ordering::Relaxed);
     let Ok(game) = (unsafe { GameMan::instance_mut() }) else {
         super::boss_bars::sync(Vec::new());
         PLAYER_READY.store(false,std::sync::atomic::Ordering::Relaxed);
@@ -1258,6 +1270,8 @@ fn tick_locked() {
             }
         }}
     }
+    // 商店的铃珠猎人不走战斗流程，单独接上 Boss 血条
+    if let Some(hunter)=state.room.as_ref().and_then(|room|room.hunter.as_ref()) {bars.extend(hunter.bars(world));}
     super::boss_bars::sync(super::boss_bars::select(bars));
     if !game.warp_requested {member_combat(&mut state,world);}
     // [fix] Diagnostic switch: ERDTREE_TOWER_NO_ATTENDANT=1 skips the arena-side NPC entirely, to test
@@ -1361,7 +1375,10 @@ fn tick_locked() {
     let client_fighting=state.party.as_ref().is_some_and(|p|!p.host()&&!p.victory&&!p.defeated)
         &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
     // 联机的守卫战（所有人都没有 Pending）也拍快照，胜利时补骨灰要用
-    let ash_fighting=ash_tracking_active(state.travel.is_some(),state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting||state.party.as_ref().is_some_and(|p|p.event.combat_active()));
+    // 召唤师「群灵」也覆盖房间里的挑战：铃珠猎人、粪金龟狩猎、史东薇尔突围与泥头车生存（这些不走普通战斗流程，单独算进来）
+    let room_challenge=state.room.as_ref().is_some_and(|room|room.hunter.is_some()||room.scarabs.active())
+        ||state.view.run.as_ref().is_some_and(|run|run.regional_event.stormveil==Some(erdtree_tower::stormveil::Progress::Running));
+    let ash_fighting=ash_tracking_active(state.travel.is_some(),state.pending.as_ref().is_some_and(|pending|!pending.completed)||client_fighting||state.party.as_ref().is_some_and(|p|p.event.combat_active())||room_challenge);
     if ash_fighting&&!state.ash_tracking {
         match super::loadout::ash_snapshot(player_data) {
             Ok(before)=>{
@@ -1380,12 +1397,8 @@ fn tick_locked() {
     if world.summon_buddy_manager.player_has_alive_summon {
         state.summon_seen=Some(Instant::now());
         if ash_fighting {
-            for raw in [world.summon_buddy_manager.active_summon_goods_id,world.summon_buddy_manager.requested_summon_goods_id] {
-                let id=raw as u32&0x0fffffff;
-                if raw>0&&state.ash_before.iter().any(|(item,_)|*item==id)&&state.ash_used!=Some(id) {
-                    state.ash_used=Some(id);super::log(format!("Spirit ash used: goods={id}"));break;
-                }
-            }
+            let candidates=[world.summon_buddy_manager.active_summon_goods_id,world.summon_buddy_manager.requested_summon_goods_id];
+            if let Some(id)=first_used_ash(state.ash_used,&state.ash_before,candidates) {state.ash_used=Some(id);super::log(format!("Spirit ash used: goods={id}"));}
         }
     }
     // 双生的灵唤铃：第二只的召唤被原版拒绝时，补回白扣的骨灰（扣除可能稍晚于请求，5 秒内重试）
@@ -1434,8 +1447,17 @@ fn tick_locked() {
             Err(error)=>{state.hub_failed=Some((identity,Instant::now()));report(&mut state,format!("旅程存档加载失败，未重置角色：{error}"));return;},
         }
     }
-    if state.party.is_none() && state.hub.as_ref().is_some_and(|h|!h.active) && player.chr_ins.chr_flags1c5.death_flag() {
-        if let Some(run)=&mut state.view.run {if !matches!(run.phase,Phase::Won|Phase::Dead){run.end_on_death();record(run);}}
+    // 别处没处理的死亡：单人还有徘徊赐福就回到路线图重打本层，否则结束旅程。
+    // 战斗进行中、胜利后等传送门、准备出发时的死亡由各自的流程处理；同一次死亡只处理一次（death_retry）
+    let fighting=state.pending.as_ref().is_some_and(|p|!p.completed)||state.reward_wait.is_some()
+        ||state.travel.as_ref().is_some_and(|(travel,_,_,_)|travel.is_preparing());
+    if state.party.is_none() && !state.death_retry && !fighting && state.hub.as_ref().is_some_and(|h|!h.active) && player.chr_ins.chr_flags1c5.death_flag() {
+        let mut retried=None;
+        if let Some(run)=&mut state.view.run {if !matches!(run.phase,Phase::Won|Phase::Dead){
+            if run.retry_floor() {retried=Some(run.retries);} else {run.end_on_death();}
+            record(run);
+        }}
+        if let Some(left)=retried {state.death_retry=true;report(&mut state,lingering_message(left));}
     }
     if state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Dead|Phase::Won))
         && state.hub.as_ref().is_some_and(|h|!h.active) {
@@ -1541,6 +1563,7 @@ fn tick_locked() {
     }
     let block = i32::from(player.current_block_id);
     let player_dead = hp <= 0 || player.chr_ins.chr_flags1c5.death_flag();
+    if !player_dead {state.death_retry=false;}
     let was_ready = state.view.ready;
     state.view.ready =
         class.is_some() && local_world && !player_dead && max_hp > 0 && max_hp <= 1_000_000 && !state.view.shared_event;
@@ -1703,15 +1726,17 @@ fn tick_locked() {
             .is_some_and(|(travel, _, _, _)| travel.is_preparing())
     {
         let (travel, _, _, _) = state.travel.take().unwrap();
+        let mut retried=None;
         if let Some(run) = &mut state.view.run {
             if run.enter(travel.node).is_ok() {
-                let _ = run.observe_hp(0);
+                if run.retry_floor() {retried=Some(run.retries);} else {let _ = run.observe_hp(0);}
                 record(run);
             }
         }
         state.view.travelling = false;
         state.view.busy = false;
-        report(&mut state, "准备期间角色死亡，本局结束。");
+        if let Some(left)=retried {state.death_retry=true;report(&mut state,lingering_message(left));}
+        else {report(&mut state, "准备期间角色死亡，本局结束。");}
         return;
     }
     let arena=state.view.run.as_ref().map_or_else(||super::arenas::for_act(1),|r|super::arenas::for_run(r,state.party.is_some()));
@@ -1804,6 +1829,13 @@ fn tick_locked() {
             ResultState::PlayerDied => {
                 let _ = super::native_talk::set_flag(45020970, false);
                 let _ = super::native_talk::set_flag(45020971, false);
+                // 单人还有徘徊赐福：回到路线图重打本层（这场胜利不算）
+                if state.party.is_none()&&next.retry_floor() {
+                    if let Some(pending)=state.pending.take() {state.lingering=Some((pending,Instant::now()));}
+                    state.flasks=None;state.death_retry=true;
+                    let left=next.retries;record(&next);state.view.run=Some(next);state.view.busy=false;
+                    report(&mut state,lingering_message(left));return;
+                }
                 let _ = next.observe_hp(0);
             }
             ResultState::PortalReady => {
@@ -1846,6 +1878,11 @@ fn tick_locked() {
         return;
     }
 
+    // 徘徊赐福实物道具：背包里的数量对齐旅程剩余次数（单人进行中才有，结束或联机时收回）
+    if !loading && !player_dead {
+        let runtime=&mut *state;
+        runtime.retry_item.tick(player_data,runtime.view.run.as_ref(),runtime.party.is_none());
+    }
     if !loading
         && !player_dead
         && state
@@ -2032,9 +2069,11 @@ fn tick_locked() {
     pending.completed = true;
     let fought=if let Phase::Combat{id}=pending.next_run.phase {Some(id)} else {None};
     let names:Vec<&'static str>=pending.foes.iter().map(|f|f.spec.name).collect();
+    // 单人还有徘徊赐福：不结束旅程，回到路线图重打本层（这场战斗仍记为失败）
+    let retried=matches!(outcome,Outcome::PlayerDied)&&!party_mode&&pending.next_run.phase!=Phase::Dead&&pending.next_run.retry_floor();
     let result = match outcome {
         Outcome::Victory => Ok(()),
-        Outcome::PlayerDied if pending.next_run.phase == Phase::Dead => Ok(()),
+        Outcome::PlayerDied if retried||pending.next_run.phase == Phase::Dead => Ok(()),
         Outcome::PlayerDied => pending.next_run.observe_hp(0),
         _ => Ok(()),
     };
@@ -2076,7 +2115,15 @@ fn tick_locked() {
             state.reward_wait = Some((Instant::now(), next));
             state.reward_portal=Default::default();
             state.view.busy = true;
-            report(&mut state, format!("敌人已击败，3 秒后激活传送门。{healed}"));
+            report(&mut state, format!("敌人已击败，传送门即将出现。{healed}"));
+        }
+        (Outcome::PlayerDied, Ok(())) if retried => {
+            // 敌人照原版留在场上，角色复活后由 lingering 撤下；本场的圣杯瓶记录作废
+            let _=super::native_talk::set_flag(45007990,false);
+            if let Some(pending)=state.pending.take() {state.lingering=Some((pending,Instant::now()));}
+            state.flasks=None;state.event_start=None;state.death_retry=true;
+            let left=next.retries;record(&next);state.view.run=Some(next);
+            report(&mut state,lingering_message(left));
         }
         (Outcome::PlayerDied, Ok(())) => {
             record(&next);
@@ -2573,6 +2620,8 @@ fn tick_merchant(state:&mut Runtime,world:&WorldChrMan,room:&mut super::rooms::R
     }
     room.view.message=if started {"铃珠猎人已出现：击败后获得随机铃珠。"}else{"商人已倒下，正在等待全队加载铃珠猎人……"}.into();
     if hunter.poll(world,started,host)? {
+        // 召唤师「群灵」：击败铃珠猎人时召唤物还活着，补回这次用掉的骨灰
+        if let Some(run)=state.view.run.as_ref()&&keep_summoned_ash(world,run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
         if let Some(link)=state.party.as_mut(){link.merchant_phase(3)?;sync_merchant_reward(state)?;}
         else {
             let mut next=state.view.run.clone().unwrap();let kind=next.defeat_hunter()?;record_checked(&next)?;state.view.run=Some(next);
@@ -2592,15 +2641,19 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
     let mut room = state.room.take().unwrap();
     if dead && state.party.is_none() && !room.view.loading && !game.warp_requested {
         room.retire(world);
+        let mut retried=None;
         if let Some(run) = &mut state.view.run {
-            run.hp = 0;
-            run.phase = Phase::Dead;
+            if run.retry_floor() {retried=Some(run.retries);}
+            else {run.hp = 0;run.phase = Phase::Dead;}
             record(run);
         }
         state.command = None;
         state.view.room = None;
         state.view.busy = false;
-        report(state, "角色死亡，本局结束。");
+        match retried {
+            Some(left)=>{state.death_retry=true;report(state,lingering_message(left));},
+            None=>report(state, "角色死亡，本局结束。"),
+        }
         return;
     }
     let mut transferred=false;
@@ -3080,7 +3133,11 @@ fn tick_scarabs(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::rooms
         room.scarabs.rewarded(slot);
         super::log(format!("Scarab hunt reward: slot={slot}, item={}",item.name));
     }
-    if room.scarabs.done() {room.scarabs=Default::default();}
+    if room.scarabs.done() {
+        // 召唤师「群灵」：狩猎结束时召唤物还活着，补回这次用掉的骨灰
+        if let Some(run)=state.view.run.as_ref()&&keep_summoned_ash(world,run,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
+        room.scarabs=Default::default();
+    }
     let active=room.scarabs.active();
     set_flag(45010942,active)?;set_flag(45010995,!active)?;
     set_flag(45010966,room.scarabs.ready())?;
@@ -3369,7 +3426,13 @@ fn spirit_peak(run:&Run,inventory:u8)->u8 {
 }
 /// 召唤师「群灵」：战斗胜利时召唤物还活着，这次召唤不消耗骨灰。
 /// 胜利前两秒内仍存活也计入；离场后再请求返还，保留资格直到背包确认或下一场战斗。
-fn keep_summoned_ash(world:&mut WorldChrMan,run:&erdtree_tower::Run,summon_seen:Option<Instant>,before:&[(u32,u32)],used:Option<u32>)->bool {
+/// 这场战斗第一次召唤用的骨灰（召唤师「群灵」胜利时补回的就是它）：已经记下就不再改。
+/// 双生的灵唤铃召唤第二只时 requested / active 会换成第二个骨灰，不能覆盖第一个——第二个骨灰按余烬说明照常消耗
+fn first_used_ash(recorded:Option<u32>,before:&[(u32,u32)],candidates:[i32;2])->Option<u32> {
+    if recorded.is_some() {return None;}
+    candidates.into_iter().filter(|raw|*raw>0).map(|raw|raw as u32&0x0fffffff).find(|id|before.iter().any(|(item,_)|item==id))
+}
+fn keep_summoned_ash(world:&WorldChrMan,run:&erdtree_tower::Run,summon_seen:Option<Instant>,before:&[(u32,u32)],used:Option<u32>)->bool {
     if !run.summoner() {return false;}
     let alive=world.summon_buddy_manager.player_has_alive_summon||summon_seen.is_some_and(|t|t.elapsed()<Duration::from_secs(2));
     if !alive {super::log("Spirit ash not kept: no living summon at victory");return false;}
@@ -3469,7 +3532,10 @@ fn tick_chariot(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result
         if let Some(v)=state.view.room.as_mut(){v.loading=false;v.message=match clock {ChariotClock::Warmup(_)=>format!("战车将在 {remaining} 秒后出现"),ChariotClock::Loading(_)=>"正在加载战车……".into(),ChariotClock::Surviving(_)=>format!("泥头车生存：剩余 {remaining} 秒")};}
         let complete=if let Some(link)=state.party.as_mut(){link.event.storm_finish=finished;link.event.storm_decision==Some(Decision::Complete)}else{finished};
         if !complete{return Ok(());}
-        let mut next=state.view.run.clone().ok_or("旅程未加载")?;next.stormveil_decide(Decision::Complete)?;record_checked(&next)?;state.view.run=Some(next);
+        let mut next=state.view.run.clone().ok_or("旅程未加载")?;next.stormveil_decide(Decision::Complete)?;record_checked(&next)?;
+        // 召唤师「群灵」：撑满时间时召唤物还活着，补回这次用掉的骨灰
+        if keep_summoned_ash(world,&next,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
+        state.view.run=Some(next);
         super::log("Chariot survival complete; personal legendary chest unlocked");
     }
     set_flag(45007881,false)?;
@@ -3545,6 +3611,8 @@ fn tick_stormveil(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Resu
     super::elite::validate()?;
     next.stormveil_decide(Decision::Complete)?;next.leave_regional_event()?;
     record_checked(&next)?;
+    // 召唤师「群灵」：抵达葛瑞克门前时召唤物还活着，补回这次用掉的骨灰
+    if keep_summoned_ash(world,&next,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
     super::run_screen::trial_rewards(state.view.run.as_ref().unwrap(),&next);
     state.view.run=Some(next);
     super::native_talk::set_flag(route.flag,false)?;
@@ -3736,6 +3804,20 @@ fn request_travel(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn summoner_refund_keeps_the_first_ash_when_a_twin_spirit_follows() {
+        use super::first_used_ash;
+        let before=[(212000,1),(232000,1)];
+        // 第一只召唤：记下第一个骨灰
+        assert_eq!(first_used_ash(None,&before,[212000,0]),Some(212000));
+        // 双生的灵唤铃召唤第二只：requested / active 换成第二个骨灰，已经记下的第一个不变
+        assert_eq!(first_used_ash(Some(212000),&before,[212000,232000]),None);
+        assert_eq!(first_used_ash(Some(212000),&before,[232000,232000]),None);
+        // 请求里带分类高位、或不在开战快照里的骨灰都按原规则处理
+        assert_eq!(first_used_ash(None,&before,[0x4000_0000|232000,0]),Some(232000));
+        assert_eq!(first_used_ash(None,&before,[999000,0]),None);
+        assert_eq!(first_used_ash(None,&before,[0,212000]),Some(212000));
+    }
     #[test]
     fn flask_sync_resumes_on_arrival_before_entering_the_spawn_circle() {
         let mut travel=crate::travel::Travel::new(0);
