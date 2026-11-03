@@ -243,10 +243,17 @@ def write_dds(art, output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, required=True)
+    parser.add_argument('--source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--art', type=Path, required=True)
+    parser.add_argument('--textures-only', action='store_true', help='只重新生成 theme-textures/*.dds（菜单 GFx 已经引用外部贴图时用；主菜单现为原版）')
     args = parser.parse_args()
+    if args.textures_only:
+        write_dds(args.art, args.output / 'theme-textures')
+        print('Wrote theme-textures; run title-texture-patch with the same output directory')
+        raise SystemExit
+    if args.source is None:
+        parser.error('--source is required unless --textures-only')
     (args.output / 'menu').mkdir(parents=True, exist_ok=True)
     for filename, names in MOVIES.items():
         data=externalize((args.source / filename).read_bytes(), names)

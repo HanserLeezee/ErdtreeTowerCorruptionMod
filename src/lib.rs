@@ -37,6 +37,7 @@ pub mod themes;
 
 pub mod music;
 pub mod options;
+pub mod lobby;
 pub mod dlc;
 pub mod stat_summary;
 
@@ -619,7 +620,7 @@ impl Run {
             schema: 6,
             affix_equipment: true,
             affix_rules: 5,
-            boss_reward_rules: 1,
+            boss_reward_rules: 2,
             class_rules: 1,
             talisman_affixes: true,
             ruby_spells: false,
@@ -1140,7 +1141,7 @@ impl Run {
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
         if self.boss_test.is_some_and(|t|!self.debug||!(1..=3).contains(&t.act)||t.encounter>=4096){return fail();}
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>1||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>2||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>2||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>2||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))

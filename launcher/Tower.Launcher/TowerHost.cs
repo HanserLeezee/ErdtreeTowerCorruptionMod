@@ -140,6 +140,10 @@ namespace Tower.Launcher
                 case "game.pause": Stop(true); break;
                 case "game.cancel": Stop(false); break;
                 case "game.launch": _ = LaunchAsync(); break;
+                case "lobby.list": _ = LobbyListAsync(); break;
+                case "lobby.host": _ = LobbyHostAsync(payload); break;
+                case "lobby.join": _ = LobbyJoinAsync(payload); break;
+                case "lobby.close": CloseLobby(); break;
                 case "game.locate": OpenFolder(paths.InstallDir); break;
                 case "settings.change":
                     Change(Text(payload, "key"), payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("value", out var value) ? value : default);
@@ -642,15 +646,117 @@ namespace Tower.Launcher
             return processes.Length > 0;
         }
 
+        // ---------------- 联机大厅 ----------------
+        // 房主：在这里开房（房间名、人数、可选房间密码），启动器生成无缝联机密码写进配置，再把房间信息写进模组目录的
+        // tower-lobby.json，游戏里的 DLL 用 Steam 大厅公开房间（native/src/lobby.rs）。其他人：列出房间，点加入时
+        // 启动器写入这个房间的无缝联机密码再启动游戏。玩家全程不用看、也不用填无缝联机密码。
+
+        SteamLobby? steam;
+        List<LobbyRoom> rooms = new List<LobbyRoom>();
+        string LobbyFile => Path.Combine(paths.InstallDir, "tower-lobby.json");
+        string LobbyVersion()
+        {
+            var state = InstallState.Load(paths.InstallDir);
+            if (state == null) return "dev";
+            return state.DisplayVersion.Length > 0 ? state.DisplayVersion : "v" + state.Version;
+        }
+        void CloseLobby()
+        {
+            if (steam == null) return;
+            try { steam.Dispose(); } catch (Exception e) { Log.Write("关闭 Steam 大厅连接：" + e.Message); }
+            steam = null;
+        }
+        async Task LobbyListAsync()
+        {
+            var gameDir = GameDir() ?? FindGameDir();
+            if (gameDir == null) { form.Post("lobby", "rooms", new { error = "没有找到游戏目录，请先在设置里选择" }); return; }
+            try
+            {
+                steam ??= SteamLobby.Open(gameDir);
+                rooms = await steam.ListAsync();
+                var version = LobbyVersion();
+                form.Post("lobby", "rooms", new
+                {
+                    version,
+                    rooms = rooms.Select(r => new
+                    {
+                        id = r.Id.ToString(), name = r.Name, host = r.Host, players = r.Players, max = r.Max, state = r.State,
+                        locked = r.Locked, open = r.Open, started = r.Started, version = r.Version, sameVersion = r.Version == version, full = r.Max > 0 && r.Players >= r.Max,
+                    }).ToArray(),
+                });
+            }
+            catch (Exception e) when (e is InvalidOperationException || e is TimeoutException || e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
+            {
+                Log.Write("大厅列表失败：" + e.Message);
+                CloseLobby();
+                form.Post("lobby", "rooms", new { error = e.Message });
+            }
+        }
+        /// <summary>写入这个房间的无缝联机密码，并切到无缝联机模式</summary>
+        bool UseSeamlessPassword(string password)
+        {
+            if (!(Seamless() is { } seamless) || !seamless.Installed) { Toast("没有找到无缝联机：请先安装无缝联机（设置 → 联机）", "error", 0); return false; }
+            seamless.Write(SeamlessSettings.Password, password);
+            settings.Mode = HostSettings.Seamless;
+            settings.Save(paths.SettingsFile);
+            PushStatus();
+            return true;
+        }
+        async Task LobbyHostAsync(JsonElement payload)
+        {
+            var name = Text(payload, "name").Trim();
+            var roomPassword = Text(payload, "password");
+            var max = payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("max", out var m) && m.TryGetInt32(out var n) ? n : 4;
+            if (name.Length == 0 || name.Length > 32) { Toast("房间名请填 1–32 个字", "warn"); return; }
+            if (max < 2 || max > 8) { Toast("房间人数为 2–8", "warn"); return; }
+            if (roomPassword.Length > 32) { Toast("房间密码最多 32 个字", "warn"); return; }
+            var locked = roomPassword.Length > 0;
+            var salt = locked ? SteamLobby.RandomSalt() : "";
+            var seamlessPassword = locked ? SteamLobby.Derive(salt, roomPassword) : SteamLobby.RandomPassword();
+            if (!UseSeamlessPassword(seamlessPassword)) return;
+            var room = new Dictionary<string, object> { ["name"] = name, ["max"] = max, ["locked"] = locked, ["salt"] = salt, ["password"] = locked ? "" : seamlessPassword, ["version"] = LobbyVersion() };
+            File.WriteAllText(LobbyFile, JsonSerializer.Serialize(room), new UTF8Encoding(false));
+            Log.Write($"大厅开房：{name}，{max} 人，{(locked ? "私密" : "公开")}");
+            Toast($"房间「{name}」已创建，正在启动游戏；进游戏后用无缝联机的道具开启联机，队友就能从大厅加入", "success", 8000);
+            await LaunchAsync(lobbyHost: true);
+        }
+        async Task LobbyJoinAsync(JsonElement payload)
+        {
+            var id = Text(payload, "id");
+            var room = rooms.FirstOrDefault(r => r.Id.ToString() == id);
+            if (room == null) { Toast("房间已经不在了，请刷新列表", "warn"); return; }
+            if (room.Version != LobbyVersion()) { Toast($"版本不同（房间 {room.Version}，你是 {LobbyVersion()}），请先更新到同一版本", "warn", 6000); return; }
+            if (room.Max > 0 && room.Players >= room.Max) { Toast("房间已满", "warn"); return; }
+            // 旅程中途加入会让队伍状态对不上：只能在房主回到大赐福时加入
+            if (room.Started) { Toast("这个房间的旅程已经开始，等房主回到大赐福后再加入", "warn", 6000); return; }
+            string password;
+            if (room.Locked)
+            {
+                var roomPassword = Text(payload, "password");
+                if (roomPassword.Length == 0) { Toast("这是私密房间，请输入房间密码", "warn"); return; }
+                if (room.Salt.Length < 16) { Toast("房间数据不完整，请刷新列表", "warn"); return; }
+                password = SteamLobby.Derive(room.Salt, roomPassword);
+            }
+            else password = room.Password;
+            if (password.Length < 8) { Toast("房间数据不完整，请刷新列表", "warn"); return; }
+            if (!UseSeamlessPassword(password)) return;
+            Log.Write($"大厅加入：{room.Name}（房主 {room.Host}）");
+            Toast($"正在加入「{room.Name}」：进游戏后用无缝联机的道具加入房主{(room.Locked ? "；房间密码不对时会找不到房主" : "")}", "success", 8000);
+            await LaunchAsync();
+        }
+
         // ---------------- 启动游戏 ----------------
 
         /// <summary>
         /// 和 Start-Solo.cmd / Start-Seamless.cmd 走同一个 Start-Tower.ps1，只是不开控制台窗口；
         /// 脚本失败时把原因写进 -ErrorFile，这里读出来提示。
         /// </summary>
-        async Task LaunchAsync()
+        async Task LaunchAsync(bool lobbyHost = false)
         {
             if (GameRunning()) { Toast("艾尔登法环已经在运行了", "warn"); return; }
+            // 大厅：不是从“开房”启动时删掉上次的房间文件，免得普通启动也公开房间；启动前先断开启动器自己的 Steam 连接
+            CloseLobby();
+            if (!lobbyHost && File.Exists(LobbyFile)) File.Delete(LobbyFile);
             if (launchWorkerId.HasValue) {
                 try {
                     using var worker = Process.GetProcessById(launchWorkerId.Value);

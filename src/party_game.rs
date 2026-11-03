@@ -264,11 +264,23 @@ impl Gate {
         (self.stage==Stage::Reward&&self.all(|r|r.bound&&(!r.alive||r.portal))
             &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.portal))).then_some(Order::Rewards{epoch:self.epoch})
     }
-    pub fn engage(&mut self)->Option<Order> {
-        if self.stage==Stage::Combat&&self.all(|r|r.bound) {self.stage=Stage::Fighting;Some(Order::Engage{epoch:self.epoch})}else{None}
+    pub fn engage(&mut self)->Option<Order> {self.engage_within(None)}
+    /// 开战屏障：全员确认敌人复制后开战（敌人此前在各自的游戏里不动、无敌）。
+    /// host_ready_ms：房主本机的敌人已经就绪多久；超过 ENGAGE_GRACE_MS 还有队员没就绪也先开战，免得一个加载慢的队员让全队的怪愣在原地，
+    /// 慢的队员加载好后自己接上（胜利仍要等全员确认）
+    pub fn engage_within(&mut self,host_ready_ms:Option<u64>)->Option<Order> {
+        if self.stage!=Stage::Combat {return None;}
+        let ready=self.all(|r|r.bound)||host_ready_ms.is_some_and(|ms|ms>=ENGAGE_GRACE_MS)&&self.all(|_|true);
+        if ready {self.stage=Stage::Fighting;Some(Order::Engage{epoch:self.epoch})}else{None}
+    }
+    /// 还没确认敌人复制的队员
+    pub fn unbound(&self)->Vec<u64> {
+        self.peers.iter().filter(|(_,r)|!r.as_ref().is_some_and(|r|r.present&&r.epoch==self.epoch&&r.bound)).map(|(id,_)|*id).collect()
     }
     pub fn stop(&mut self){self.stage=Stage::Stopped;}
 }
+/// 房主本机的敌人就绪后，最多再等队员这么久（毫秒）就开战
+pub const ENGAGE_GRACE_MS:u64=1500;
 
 #[cfg(test)]
 mod tests {
@@ -526,6 +538,22 @@ mod tests {
         assert!(gate.victory().is_err());
         assert!(matches!(gate.engage(),Some(Order::Engage{epoch:0})));
         assert!(gate.engage().is_none());assert!(gate.victory().is_ok());
+    }
+    #[test]
+    fn a_slow_member_delays_the_fight_by_at_most_the_grace_window() {
+        let run=Run::new(42,crate::Class::Samurai);let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Combat;
+        gate.report(1,Report::new(&run,0,true,true,true)).unwrap();
+        gate.report(2,Report::new(&run,0,true,false,true)).unwrap();
+        assert_eq!(gate.unbound(),vec![2]);
+        assert!(gate.engage_within(None).is_none(),"host enemies not ready yet");
+        assert!(gate.engage_within(Some(ENGAGE_GRACE_MS-1)).is_none());
+        assert!(matches!(gate.engage_within(Some(ENGAGE_GRACE_MS)),Some(Order::Engage{epoch:0})));
+        assert!(gate.victory().is_err(),"victory still needs every replica");
+        gate.report(2,Report::new(&run,0,true,true,true)).unwrap();assert!(gate.victory().is_ok());
+        // 队员掉线（没有汇报）时不靠宽限开战
+        let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Combat;
+        gate.report(1,Report::new(&run,0,true,true,true)).unwrap();
+        assert!(gate.engage_within(Some(10_000)).is_none());
     }
     #[test]
     fn failed_hunt_refund_waits_for_ack_before_retry() {

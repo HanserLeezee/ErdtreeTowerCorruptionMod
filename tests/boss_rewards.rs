@@ -2,10 +2,11 @@ use erdtree_tower::{Class,NodeKind,Phase,Reward,Run,elite,rewards};
 
 #[test]
 fn boss_guarantees_one_gold_and_rolls_the_other_two_normally() {
+    // 旧旅程（Boss 奖励规则 1）：第一格是那 9 件传说之一
     let mut seen=std::collections::HashSet::new();
     let mut non_gold=0;
     for class in Class::PLAYABLE {for seed in 0..100 {
-        let run=Run::new(seed,class);
+        let mut run=Run::new(seed,class);run.boss_reward_rules=1;
         let node=run.nodes.iter().position(|n|n.kind==NodeKind::Boss).unwrap();
         let offers=rewards::offers(&run,node);
         assert_eq!(offers.len(),3);assert_eq!(offers,rewards::offers(&run,node));
@@ -20,6 +21,32 @@ fn boss_guarantees_one_gold_and_rolls_the_other_two_normally() {
     }}
     assert_eq!(seen.len(),elite::LEGENDARY.len());
     assert!(non_gold>0,"Boss must not force all three cards to gold");
+}
+
+#[test]
+fn new_boss_pages_give_any_weapon_at_legendary_quality() {
+    let mut bases=std::collections::HashSet::new();let mut outside=0;let mut total=0;
+    for class in Class::PLAYABLE {for seed in 0..120 {
+        let run=Run::new(seed,class);assert_eq!(run.boss_reward_rules,2);
+        for node in (0..run.nodes.len()).filter(|n|run.nodes[*n].kind==NodeKind::Boss) {
+            let offers=rewards::offers(&run,node);assert_eq!(offers,rewards::offers(&run,node),"stable");
+            let Reward::Item(id)=offers[0] else {panic!("boss slot 0 must be an item")};
+            let base=erdtree_tower::affixes::base(id);
+            assert_eq!(rewards::lookup(base).unwrap().kind,rewards::ItemKind::Weapon);
+            assert_eq!(erdtree_tower::affixes::tier(id),Some(3),"always legendary quality");
+            if !elite::LEGENDARY.contains(&base) {outside+=1;}
+            bases.insert(base);total+=1;
+        }
+    }}
+    assert!(bases.len()>150,"drawn from the whole weapon pool, got {}",bases.len());
+    assert!(outside*10>total*9,"not limited to the nine legendary items");
+    // 已经拿过的武器先不给，全部拿过再放开
+    let mut run=Run::new(7,Class::Samurai);
+    let node=run.nodes.iter().position(|n|n.kind==NodeKind::Boss).unwrap();
+    let Reward::Item(first)=rewards::offers(&run,node)[0] else {panic!()};
+    run.claimed_items.push(first);
+    let Reward::Item(second)=rewards::offers(&run,node)[0] else {panic!()};
+    assert_ne!(erdtree_tower::affixes::base(second),erdtree_tower::affixes::base(first));
 }
 
 #[test]

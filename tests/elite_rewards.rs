@@ -23,8 +23,10 @@ fn elite_epic_and_legendary_tiers_both_appear_without_changing_bosses() {
         let offers=erdtree_tower::elite::offers(&run,id);
         if matches!(offers[0],Reward::Item(id) if erdtree_tower::elite::EPIC.contains(&id)){epic+=1;}
         assert_eq!(offers,erdtree_tower::elite::offers(&run,id));
-        // Boss 奖励页（boss_reward_rules 1）：第一格保底一件传说，其余两格走普通奖励
-        assert!(matches!(erdtree_tower::elite::boss_offers(&run,35)[0],Reward::Item(id) if erdtree_tower::elite::LEGENDARY.contains(&id)));
+        // Boss 奖励页：规则 1 第一格保底那 9 件传说之一；规则 2（新旅程）任意武器
+        let mut old=run.clone();old.boss_reward_rules=1;
+        assert!(matches!(erdtree_tower::elite::boss_offers(&old,35)[0],Reward::Item(id) if erdtree_tower::elite::LEGENDARY.contains(&id)));
+        assert!(matches!(erdtree_tower::elite::boss_offers(&run,35)[0],Reward::Item(id) if erdtree_tower::rewards::lookup(id).is_some_and(|i|i.kind==erdtree_tower::rewards::ItemKind::Weapon)));
     }
     let expected=1000*erdtree_tower::elite::EPIC.len()/(erdtree_tower::elite::EPIC.len()+9);
     assert!(epic.abs_diff(expected)<40);

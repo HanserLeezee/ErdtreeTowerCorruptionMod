@@ -31,6 +31,8 @@ pub struct EventSync {
     scarab_slots:Vec<(u64,u8)>,
     pub request:Option<erdtree_tower::party_events::Kind>,
     pub bound:Option<u8>,
+    /// 房主：本机这一场的敌人全部就绪的时刻（开战屏障的宽限从这里算）
+    pub host_bound_at:Option<Instant>,
     pub job:Option<erdtree_tower::party_events::Job>,
     pub done:Option<u8>,
     pub applied:Option<u8>,
@@ -307,7 +309,8 @@ impl Link {
                 if self.event.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Guards(_))) {self.event.guards_cleared=true;}
             },
             Order::Spawn{epoch} if *epoch==self.epoch=>{self.spawn=true;self.encounter=Some(Instant::now());},
-            Order::Engage{epoch} if *epoch==self.epoch&&self.spawn&&self.bound&&!self.victory=>self.fighting=true,
+            // 房主过了宽限也会先开战：本机敌人还在加载的队员同样接受，敌人加载出来就直接是开战状态
+            Order::Engage{epoch} if *epoch==self.epoch&&self.spawn&&!self.victory=>self.fighting=true,
             Order::Victory{epoch} if *epoch==self.epoch&&self.bound=>self.victory=true,
             Order::Rewards{epoch} if *epoch==self.epoch&&self.victory=>self.rewards=true,
             Order::Defeat{epoch} if *epoch==self.epoch=>{
@@ -481,7 +484,15 @@ impl Link {
                     super::log(format!("PARTY_REWARD_PORTAL epoch={}; every living member entered",self.epoch));
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{self.rewards=true;orders.push(order);}
                 }
-                for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.descent_order(),self.gate.spawn(),self.gate.engage()].into_iter().flatten() {
+                if self.spawn&&self.bound {self.event.host_bound_at.get_or_insert_with(Instant::now);}
+                let unbound=self.gate.unbound();
+                let engage=self.gate.engage_within(self.event.host_bound_at.map(|t|t.elapsed().as_millis() as u64));
+                if engage.is_some() {
+                    let since=self.encounter.map_or(0.0,|t|t.elapsed().as_secs_f32());
+                    super::log(if unbound.is_empty() {format!("PARTY_ENGAGE epoch={} all replicas ready {since:.1} s after spawn",self.epoch)}
+                        else {format!("PARTY_ENGAGE epoch={} after the {} ms grace, {since:.1} s after spawn; still loading: {unbound:?}",self.epoch,erdtree_tower::party_game::ENGAGE_GRACE_MS)});
+                }
+                for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.descent_order(),self.gate.spawn(),engage].into_iter().flatten() {
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{orders.push(order);}
                 }
             }
@@ -834,7 +845,8 @@ mod tests {
         assert!(link.accept(&Order::EventDone{epoch:0,wave:2,killed:0}).is_err());
         assert!(link.accept(&Order::Engage{epoch:0}).is_err());
         link.accept(&Order::Spawn{epoch:0}).unwrap();
-        assert!(link.accept(&Order::Engage{epoch:0}).is_err());
+        // 还没加载完敌人也接受开战（房主宽限后先开战）
+        assert!(!link.bound);link.accept(&Order::Engage{epoch:0}).unwrap();assert!(link.fighting);
         link.bound=true;link.accept(&Order::Engage{epoch:0}).unwrap();assert!(link.fighting);
         assert!(link.accept(&Order::Engage{epoch:1}).is_err());
         events.send(Receive::Order(Order::Enter{epoch:1,act:1,visited:vec![],node:0,has_stonesword_key:false})).unwrap();

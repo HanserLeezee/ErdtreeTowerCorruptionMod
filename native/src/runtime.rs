@@ -799,14 +799,15 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
                 }
                 if !link.bound {
                     let mut seen=held.clone();
+                    let engaged=link.fighting;
                     for chr in world.chr_sets.iter().flatten().flat_map(|set|set.characters()) {
                         for (slot,spec) in roster.iter().enumerate(){
                             if ready[slot]&&chr.event_entity_id==ids[slot]&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc
-                                &&chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag()&&!chr.debug_flags.character_disabled()
-                                &&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status){seen[slot]=true;}
+                                &&replica_seen(enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status),chr.modules.data.hp>0&&!chr.chr_flags1c5.death_flag(),chr.debug_flags.character_disabled(),engaged){seen[slot]=true;}
                         }
                     }
                     link.bound=held.iter().any(|h|!h)&&seen.iter().all(|x|*x);
+                    if link.bound {super::log(format!("Party replicas ready epoch={} {:.1} s after spawn{}",link.epoch,link.encounter.map_or(0.0,|t|t.elapsed().as_secs_f32()),if engaged{" (fight already engaged)"}else{""}));}
                 }
             }
             if !link.bound&&link.encounter.is_some_and(|t|t.elapsed()>Duration::from_secs(90)){
@@ -932,6 +933,22 @@ fn return_to_retry_room(state:&mut Runtime,world:&mut WorldChrMan,game:&mut Game
     true
 }
 fn lingering_due(alive:bool,waited:Duration)->bool {alive&&waited>=Duration::from_secs(5)||waited>=Duration::from_secs(15)}
+#[cfg(test)]
+mod replica_tests {
+    #[test]
+    fn slow_members_count_enemies_killed_before_they_loaded() {
+        use super::replica_seen as seen;
+        // 开战前：只认已加载、启用、活着的
+        assert!(seen(true,true,false,false));
+        assert!(!seen(true,false,false,false),"a stale corpse never counts before the fight starts");
+        assert!(!seen(true,true,true,false),"not enabled yet");
+        assert!(!seen(false,true,false,false),"not loaded yet");
+        // 开战后：已经被打死的也算，但还没加载、还没启用的活敌人不算
+        assert!(seen(true,false,false,true));assert!(seen(true,false,true,true),"a corpse may already be disabled");
+        assert!(seen(true,true,false,true));
+        assert!(!seen(false,false,false,true));assert!(!seen(true,true,true,true));
+    }
+}
 #[cfg(test)]
 mod victory_cleanup_tests {
     #[test]
@@ -1338,6 +1355,13 @@ fn tick_locked() {
     // 商店的铃珠猎人不走战斗流程，单独接上 Boss 血条
     if let Some(hunter)=state.room.as_ref().and_then(|room|room.hunter.as_ref()) {bars.extend(hunter.bars(world));}
     super::boss_bars::sync(super::boss_bars::select(bars));
+    // 联机大厅（房主由启动器开房时才有房间文件）：人数与进度每 5 秒同步到 Steam 大厅
+    {
+        // 旅程出发后（不在大赐福、旅程没结束）房间标为“旅程中”，启动器里不能加入
+        let journey=state.view.run.as_ref().filter(|run|!state.hub.as_ref().is_some_and(|h|h.active)&&!matches!(run.phase,Phase::Dead|Phase::Won));
+        let progress=journey.map_or_else(||"大赐福".to_string(),|run|format!("第 {} 幕",run.act));
+        super::lobby::tick(&progress,journey.is_some());
+    }
     if !game.warp_requested {member_combat(&mut state,world);}
     // [fix] Diagnostic switch: ERDTREE_TOWER_NO_ATTENDANT=1 skips the arena-side NPC entirely, to test
     // whether it is what triggers the arena-arrival crash. The fog gate and fight do not need it.
@@ -2067,7 +2091,7 @@ fn tick_locked() {
             let flasks=runtime.flasks.as_ref().map(|f|f.total());
             let team=runtime.party.as_ref().map(|p|p.gate.flask_uses());
             runtime.boss_fight.tick(world,&handles,authority,runtime.party.is_some(),flasks,team.as_deref());
-            runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles,authority);
+            runtime.growth.tick(world,(run.seed,run.act,id),erdtree_tower::scaling::growth_step(run,id),&handles);
             runtime.view.boss_affixes=runtime.boss_fight.title();runtime.view.boss_alert=runtime.boss_fight.alert();runtime.view.boss_affix_list=runtime.boss_fight.affixes().to_vec();
             // Boss 房的 Boss 卡在 1 点生命太久：视为转阶段锁血，直接放行
             if run.nodes.get(id).is_some_and(|n|n.kind==erdtree_tower::NodeKind::Boss) {
@@ -2410,12 +2434,22 @@ fn member_fighting(state:&Runtime)->bool {
 }
 /// 联机成员正在打、还没收到胜利：律法限时与 Boss 词条在这段时间结算
 fn member_live(state:&Runtime)->bool {member_fighting(state)&&state.party.as_ref().is_some_and(|p|p.fighting&&!p.victory)}
+/// 成员判断这一场的某只敌人在本机“已就绪”：开战前（敌人无敌）要已加载、启用且活着；
+/// 收到开战之后（房主宽限后可能先开战），已加载出来但已经死了的也算——慢的成员加载出来时它可能已经被打死，不算就永远凑不齐、整队超时
+fn replica_seen(loaded:bool,alive:bool,disabled:bool,engaged:bool)->bool {
+    loaded&&(alive&&!disabled||engaged&&!alive)
+}
+/// 联机成员：这一场已经出怪（收到 Spawn）、还在战斗阶段。本机副本一加载出来就要挂上与房主相同的效果，不等全员就绪
+fn member_replicating(state:&Runtime)->bool {
+    state.party.as_ref().is_some_and(|p|!p.host()&&p.spawn&&!p.defeated)
+        &&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))
+}
 /// 联机成员的战斗结算。成员没有本地的战斗记录，敌人按地图里的预置实体找（与 Boss 血条相同的找法，倒下的也留着，用来判断击倒）。
 /// - 苦难律法：限时倒计时与超时失血（敌人的强化由房主挂）
 /// - Boss 词条：屏幕上的词条与护盾提示、腐败积累、荆棘反弹（改 Boss 状态的由房主做）
 /// - 余烬：作用在自己与召唤物身上的直接生效；作用在敌人身上的（出血、冻伤、死诞之焰等）算出后随汇报交给房主执行
 fn member_combat(state:&mut Runtime,world:&mut WorldChrMan) {
-    if !member_fighting(state) {return;}
+    if !member_replicating(state)&&!member_fighting(state) {return;}
     let Some(run)=state.view.run.as_ref() else{return};
     let Phase::Combat{id}=run.phase else{return};
     let key=(run.seed,run.act,id);
@@ -2425,14 +2459,37 @@ fn member_combat(state:&mut Runtime,world:&mut WorldChrMan) {
         world.chr_sets.iter().flatten().flat_map(|set|set.characters())
             .find(|chr|chr.event_entity_id==entity&&chr.npc_id==spec.model&&chr.npc_param_id==spec.npc&&enemy_loaded(unsafe {chr.chr_set_entry.as_ref()}.chr_load_status))
             .map(|chr|chr.field_ins_handle)).collect()).unwrap_or_default();
-    if member_live(state) {
+    // 层数成长：与房主挂同一个效果，本机副本的最大生命才和房主一致（见 scaling::Growth）
+    let step=erdtree_tower::scaling::growth_step(run,id);
+    state.growth.tick(world,key,step,&handles);
+    // 诊断：本机副本生命已到 0 却没有死亡（与房主不同步、卡在原地），每只敌人记一次
+    {
+        // (战斗, 实体, 第一次看到 0 生命的时间, 已记录)；正常死亡在同一时刻就有死亡标记，持续 1.5 秒才算卡住
+        static STUCK:std::sync::Mutex<Vec<((u64,u8,usize,u32),Instant,bool)>>=std::sync::Mutex::new(Vec::new());
+        for handle in &handles {
+            let Some(chr)=world.chr_ins_by_handle(handle) else{continue};
+            if chr.modules.data.hp>0||chr.chr_flags1c5.death_flag() {continue;}
+            let entry=(key.0,key.1,key.2,chr.event_entity_id);
+            let Ok(mut seen)=STUCK.lock() else{continue};
+            if seen.len()>256 {seen.clear();}
+            let index=match seen.iter().position(|(e,_,_)|*e==entry) {Some(i)=>i,None=>{seen.push((entry,Instant::now(),false));seen.len()-1}};
+            if !seen[index].2&&seen[index].1.elapsed()>=Duration::from_millis(1500) {
+                seen[index].2=true;
+                let grown=chr.special_effect.entries().any(|e|e.param_id==super::scaling::GROWTH_FIRST+i32::from(step));
+                super::log(format!("TOWER_PARTY member copy at 0 hp without death: entity={} max_hp={} growth_step={step} grown={grown}",chr.event_entity_id,chr.modules.data.max_hp));
+            }
+        }
+    }
+    // 开战后（含宽限后先开战、本机还没全部就绪的那段）就结算律法与 Boss 词条：常驻词条效果要尽早挂到本机副本上
+    let engaged=state.party.as_ref().is_some_and(|p|p.fighting&&!p.victory);
+    if engaged {
         state.law_fight.tick(world,key,run.law,&handles,false,flasks,None);
         state.view.law_clock=state.law_fight.clock();
         state.boss_fight.begin(key,erdtree_tower::boss_affixes::roll(run,id),run.law.empowered_affixes());
         state.boss_fight.tick(world,&handles,false,true,flasks,None);
         state.view.boss_affixes=state.boss_fight.title();state.view.boss_alert=state.boss_fight.alert();state.view.boss_affix_list=state.boss_fight.affixes().to_vec();
     }
-    member_embers(state,world);
+    if member_fighting(state) {member_embers(state,world);}
 }
 /// 联机成员的余烬（见 member_combat）
 fn member_embers(state:&mut Runtime,world:&mut WorldChrMan) {

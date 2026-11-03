@@ -17,7 +17,9 @@ pub fn init(dll:Option<PathBuf>) {
         Hotkey::ALL.map(|h|format!("{}={}",h.id(),options.key(h))).join(",")));
 }
 
-fn path()->PathBuf {DIR.get().cloned().or_else(||crate::LOG_PATH.parent().map(PathBuf::from)).unwrap_or_default().join(FILE)}
+/// 模组目录（DLL 所在目录）：tower-options.ini、联机大厅的 tower-lobby.json 都在这里
+pub fn dir()->PathBuf {DIR.get().cloned().or_else(||crate::LOG_PATH.parent().map(PathBuf::from)).unwrap_or_default()}
+fn path()->PathBuf {dir().join(FILE)}
 
 static OPTIONS:LazyLock<Options>=LazyLock::new(||std::fs::read_to_string(path()).map(|text|parse(&text)).unwrap_or_default());
 

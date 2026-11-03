@@ -106,6 +106,7 @@ mod dummy;
 mod name_tags;
 mod auras;
 mod throw_guard;
+mod lobby;
 mod law_art;
 mod scenery;
 mod spirit_tune;

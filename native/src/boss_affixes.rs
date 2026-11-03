@@ -123,9 +123,11 @@ impl Fight {
             let (hp,max)=(chr.modules.data.hp,chr.modules.data.max_hp);
             // 荆棘：单人按 Boss 受到的伤害；联机只按自己与自己召唤物打的（看 last_hit_by），由各自在本机反弹给自己
             if hp<foe.hp&&self.affixes.contains(&Affix::Thorned)&&(!party||own.contains(&chr.last_hit_by)) {reflected+=i64::from(foe.hp-hp)*tuning.thorn_percent/100;}
-            if !authority {foe.hp=hp;continue;}
+            // 常驻词条效果（减伤、攻击、再生等）房主和成员都在本机挂上：效果不随网络同步，只有房主挂时成员那边的 Boss 更“软”，
+            // 成员算出的伤害偏高，本机副本先被打到 0、卡住不倒。护盾、吸血、涅槃这些改 Boss 状态的仍只由房主做
             let present:Vec<i32>=chr.special_effect.entries().map(|e|e.param_id).collect();
             for id in self.affixes.iter().filter_map(|a|resident(*a,self.empowered)) {if !present.contains(&id){chr.apply_speffect(id,false);}}
+            if !authority {foe.hp=hp;continue;}
             if hp<foe.hp {foe.hurt=now;if foe.proud{chr.remove_speffect(pride);foe.proud=false;}}
             if self.affixes.contains(&Affix::Leeching)&&team_taken>0&&max>0 {
                 chr.modules.data.hp=(i64::from(hp)+i64::from(max)*tuning.leech_permille/1000).min(i64::from(max)) as i32;
