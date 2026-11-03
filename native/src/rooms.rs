@@ -25,7 +25,7 @@ fn service(hub:bool,kind:NodeKind,index:usize)->u32 {
     if hub {if index==2 {5}else{3+index as u32}} else if kind==NodeKind::Shop {if index==0 {2}else{5}} else if kind!=NodeKind::Camp||index==2 {5} else {index as u32}
 }
 fn npc_data(model:i32,role:u32)->(i32,i32,i32) {
-    match model {2180=>(21801034,21800000,-1),3451=>(34510179,34519000,-1),0 if role==4||role==5=>(523180079,523180000,23180),0=>(523200079,523200000,23200),_=>(model*10000,model*10000,-1)}
+    match model {2180=>(21800000,21800000,-1),3451=>(34510179,34519000,-1),0 if role==4||role==5=>(523180079,523180000,23180),0=>(523200079,523200000,23200),_=>(model*10000,model*10000,-1)}
 }
 fn loaded(status:ChrLoadStatus)->bool {matches!(status,ChrLoadStatus::Active|ChrLoadStatus::ReadyForActivation)}
 fn map_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadStatus,hp:i32)->bool {
@@ -35,20 +35,20 @@ fn map_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadS
 fn player_model(model:i32)->u8 {u8::from(model==0)}
 fn conditional_services(block:i32,kind:NodeKind)->Vec<(u32,i32,i32,u32)> {
     if block==0x2d000000 && kind==NodeKind::Camp {
-        return vec![(45001800,0,523200079,0),(45001801,3451,34510179,1),(45001802,2180,21801034,5)];
+        return vec![(45001800,0,523200079,0),(45001801,3451,34510179,1),(45001802,2180,21800000,5)];
     }
     static SERVICES:std::sync::LazyLock<Vec<(i32,NodeKind,(u32,i32,i32,u32))>>=std::sync::LazyLock::new(||include_str!("../../scene-assets/party-services.txt").lines().filter_map(|line| {
         let p:Vec<_>=line.split('|').collect();
         let map:Vec<u8>=p[0][1..].split('_').map(|v|v.parse().unwrap()).collect();
         let kind=match p[1]{"Shop"=>NodeKind::Shop,"Chest"=>NodeKind::Chest,"Event"=>NodeKind::Event,"Monster"=>NodeKind::Monster,_=>return None};
         let role=p[7].parse().unwrap();
-        Some((i32::from_be_bytes([map[0],map[1],map[2],map[3]]),kind,(p[2].parse().unwrap(),if role==5{2180}else{p[3].parse().unwrap()},if role==5{21801034}else{p[4].parse().unwrap()},role)))
+        Some((i32::from_be_bytes([map[0],map[1],map[2],map[3]]),kind,(p[2].parse().unwrap(),if role==5{2180}else{p[3].parse().unwrap()},if role==5{21800000}else{p[4].parse().unwrap()},role)))
     }).collect());
     let block=if super::arenas::is_built(block) {0x2d020000}else{block};
     SERVICES.iter().filter(|(b,k,_)|*b==block&&*k==kind).map(|(_,_,service)|*service).collect()
 }
 fn camp_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadStatus,hp:i32)->bool {
-    let expected=match slot {0=>(0,523200079),1=>(3451,34510179),2=>(2180,21801034),_=>return false};
+    let expected=match slot {0=>(0,523200079),1=>(3451,34510179),2=>(2180,21800000),_=>return false};
     entity==45001800+slot as u32&&(model,param)==expected&&loaded(status)&&hp>0
 }
 
@@ -262,8 +262,10 @@ impl Room {
                 else if self.kind==NodeKind::Camp {camp_service_matches(slot,entity,model,param,status,hp)}
                 else {conditional.get(slot).is_some_and(|&(id,m,p,_)|(entity,model,param)==(id,m,p))&&loaded(status)&&(hp>0||self.kind==NodeKind::Shop&&slot==0&&self.merchant_down)}
             };
+            // [HansFix] 1.5.0 正式版的地图把梅琳娜的 NPC 参数从 21801034 改成了 21800000（公开源码还是旧值）；两种都认
+            let melina=|model:i32,param:i32|if model==2180&&param==21801034 {21800000} else {param};
             let found=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).find(|chr|
-                matches(slot,chr.event_entity_id,chr.npc_id,chr.npc_param_id,
+                matches(slot,chr.event_entity_id,chr.npc_id,melina(chr.npc_id,chr.npc_param_id),
                     unsafe {chr.chr_set_entry.as_ref()}.chr_load_status,chr.modules.data.hp)
                 &&((self.kind==NodeKind::Shop&&slot==0&&self.merchant_down)||(!chr.debug_flags.character_disabled()&&!chr.chr_flags1c5.death_flag())))
                 .map(|chr|(chr.field_ins_handle,std::ptr::from_ref(chr) as usize));
@@ -511,7 +513,7 @@ mod tests {
     }
     #[test]
     fn camp_bindings_require_matching_role_entity_and_live_character() {
-        for (slot,model,param) in [(0,0,523200079),(1,3451,34510179),(2,2180,21801034)] {
+        for (slot,model,param) in [(0,0,523200079),(1,3451,34510179),(2,2180,21800000)] {
             let id=45001800+slot as u32;
             assert!(camp_service_matches(slot,id,model,param,ChrLoadStatus::Active,1));
             assert!(!camp_service_matches(slot,id+1,model,param,ChrLoadStatus::Active,1));
@@ -557,7 +559,7 @@ mod tests {
         assert!(loaded(ChrLoadStatus::ReadyForActivation));
         for kind in [NodeKind::Camp,NodeKind::Shop,NodeKind::Chest,NodeKind::Monster] {
             for (i,(model,_)) in npcs(kind).into_iter().enumerate() {
-                if service(false,kind,i)==5 {assert_eq!(npc_data(model,5),(21801034,21800000,-1));}
+                if service(false,kind,i)==5 {assert_eq!(npc_data(model,5),(21800000,21800000,-1));}
             }
         }
         assert!(npcs(NodeKind::Monster)[0].1[0].abs()>=15.0);
