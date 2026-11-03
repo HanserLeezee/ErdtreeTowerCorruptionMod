@@ -38,8 +38,10 @@ static class EmberAssets {
         Set(resident,"iconId",-1);Set(resident,"spCategory",0);Set(resident,"categoryPriority",0);rows.Add(resident);
         var trigger=new PARAM.Row(p.Rows.Single(r=>r.ID==350501)){ID=First+1,Name="Tower ember execution trigger"};
         Set(trigger,"replaceSpEffectId",First+2);Set(trigger,"spCategory",0);Set(trigger,"categoryPriority",0);rows.Add(trigger);
-        var relief=new PARAM.Row(p.Rows.Single(r=>r.ID==350502)){ID=First+2,Name="Tower ember execution relief"};
-        foreach(var (key,value) in new (string,object)[]{("changeHpRate",0f),("changeHpPoint",0),("motionInterval",0f),("effectEndurance",ExecutionSeconds),("consumeStaminaRate",ExecutionStamina),("spCategory",0),("categoryPriority",0)})Set(relief,key,value);
+        // 生效的那一行由运行时在致命一击时直接挂上（原生处决事件），不再走处决状态 288：挂着 288 常驻时原版染红 / 染蓝凶刀的触发也会生效，处决会回血回蓝。
+        // 用玩家增益的中性模板，只改持续时间、精力消耗与原来的光效
+        var relief=Player(p,First+2,"Tower ember execution relief",1f,ExecutionSeconds);
+        Set(relief,"consumeStaminaRate",ExecutionStamina);Set(relief,"vfxId",Convert.ToInt32(p.Rows.Single(r=>r.ID==350502)["vfxId"].Value));
         rows.Add(relief);
         // 异常积累复制原版鲜血油脂、冻结油脂的命中效果：积满后的发作内容（出血扣血、冻伤减防）由这一行提供，只改积累值
         var blood=new PARAM.Row(p.Rows.Single(r=>r.ID==3191)){ID=First+10,Name="Tower ember blood buildup"};Set(blood,"bloodAttackPower",Buildup);rows.Add(blood);
@@ -93,6 +95,10 @@ static class EmberAssets {
             if(Convert.ToInt32(p.Rows.Single(r=>r.ID==resident)["stateInfo"].Value)!=CriticalState||Convert.ToInt32(t["invocationConditionsStateChange1"].Value)!=CriticalState||Convert.ToInt32(t["replaceSpEffectId"].Value)!=result)
                 throw new Exception($"Critical-hit trigger {trigger} lost its condition");
         }
+        // 无声处刑生效行：不回血回蓝、不依赖处决状态（直接由运行时挂上）
+        var relief=p.Rows.Single(r=>r.ID==First+2);
+        if(new[]{"changeHpRate","changeHpPoint","changeMpRate","changeMpPoint","invocationConditionsStateChange1","replaceSpEffectId","cycleOccurrenceSpEffectId"}.Any(f=>Convert.ToDouble(relief[f].Value)!=(f is "replaceSpEffectId" or "cycleOccurrenceSpEffectId"?-1:0)))
+            throw new Exception("Execution relief must only cut stamina cost");
         if(new[]{First+80,First+81}.Any(id=>Convert.ToInt32(p.Rows.Single(r=>r.ID==id)["throwAttackParamChange"].Value)!=1))throw new Exception("Chain stacks must only boost critical hits");
     }
     public static void Patch(string input,string output) {

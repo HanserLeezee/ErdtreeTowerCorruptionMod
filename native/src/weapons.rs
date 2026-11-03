@@ -19,8 +19,9 @@ pub fn upgrade(data: &mut PlayerGameData) -> Result<(), String> {
     } else {
         25
     };
-    let minimum = next_id(old as u32, cap, base.origin_equip_wep1() >= 0)?;
-    let next = super::smith::target_with_peak(old,cap as i32,super::smith::inventory_peak(data,params))
+    let max = super::smith::level_max(params, base.reinforce_type_id()) as u32;
+    let minimum = next_id(old as u32, cap, max, base.origin_equip_wep1() >= 0)?;
+    let next = super::smith::target_with_peak(old,cap as i32,max as i32,super::smith::inventory_peak(data,params))
         .map(|id|id as u32).unwrap_or(minimum);
     let reinforcement = i32::from(base.reinforce_type_id()) + (next % 100) as i32;
     if reinforcement < 0
@@ -42,8 +43,7 @@ pub fn reforge_target(data: &PlayerGameData, run: &erdtree_tower::Run, node: usi
     let target = erdtree_tower::affixes::reforge(run, node, variant, guaranteed).ok_or(if guaranteed {"传说品质的武器不能精炼，未扣除卢恩"} else {"这把武器没有其他词条组合，未扣除卢恩"})?;
     let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "武器参数未就绪")?;
     let row = params.get::<EquipParamWeapon>(target).ok_or("重铸后的武器参数不存在")?;
-    let cap = if row.origin_equip_wep16() < 0 {10} else {25};
-    let next = target + level.min(cap);
+    let next = target + level.min(super::smith::level_max(params, row.reinforce_type_id()) as u32);
     let reinforcement = i32::from(row.reinforce_type_id()) + (next % 100) as i32;
     if reinforcement < 0 || params.get::<ReinforceParamWeapon>(reinforcement as u32).is_none() {
         return Err("重铸后的强化参数不存在，未扣除卢恩".into());
@@ -182,11 +182,12 @@ fn matching_copy(data: &PlayerGameData, id: ItemId, gem: i32) -> Option<u32> {
         })
 }
 
-fn next_id(id: u32, cap: u32, upgradeable: bool) -> Result<u32, String> {
-    if !upgradeable || id % 100 >= cap {
+/// cap：原版满级（普通 25、失色 10，决定步长）；max：实际能到的最高等级
+fn next_id(id: u32, cap: u32, max: u32, upgradeable: bool) -> Result<u32, String> {
+    if !upgradeable || id % 100 >= max {
         Err("当前武器无法继续强化，未扣除资源".into())
     } else {
-        super::smith::reinforcement_target(id as i32,cap as i32).map(|id|id as u32).ok_or("当前武器无法继续强化，未扣除资源".into())
+        super::smith::reinforcement_target(id as i32,cap as i32,max as i32).map(|id|id as u32).ok_or("当前武器无法继续强化，未扣除资源".into())
     }
 }
 
@@ -195,11 +196,14 @@ mod tests {
     use super::*;
     #[test]
     fn reinforcement_preserves_affinity_and_checks_normal_and_somber_caps() {
-        assert_eq!(next_id(901200, 25, true).unwrap(), 901203);
-        assert_eq!(next_id(901224, 25, true).unwrap(), 901225);
-        assert_eq!(next_id(901209, 10, true).unwrap(), 901210);
-        assert!(next_id(901225, 25, true).is_err());
-        assert!(next_id(901210, 10, true).is_err());
-        assert!(next_id(110000, 25, false).is_err());
+        assert_eq!(next_id(901200, 25, 99, true).unwrap(), 901203);
+        assert_eq!(next_id(901224, 25, 99, true).unwrap(), 901227);
+        assert_eq!(next_id(901225, 25, 99, true).unwrap(), 901228);
+        assert_eq!(next_id(901209, 10, 39, true).unwrap(), 901210);
+        assert_eq!(next_id(901210, 10, 39, true).unwrap(), 901211);
+        assert!(next_id(901299, 25, 99, true).is_err());
+        assert!(next_id(901239, 10, 39, true).is_err());
+        assert!(next_id(901225, 25, 25, true).is_err());
+        assert!(next_id(110000, 25, 99, false).is_err());
     }
 }

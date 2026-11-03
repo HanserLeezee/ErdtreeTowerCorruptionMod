@@ -20,18 +20,30 @@ fn update_offer(offer:&mut Offer,old:i32,next:i32,material:i32) {
 #[repr(C)]
 struct Offers {allocator:usize,begin:*mut Offer,end:*mut Offer,capacity:*mut Offer}
 type BuildOffers=unsafe extern "C" fn(*mut Offers,i32)->usize;
-pub fn reinforcement_target(id:i32,cap:i32)->Option<i32> {
-    target_with_peak(id,cap,0)
+/// 等效等级 peak 的上限（普通 +99 ×2）
+const MAX_PEAK:i32=erdtree_tower::contracts::MAX_PEAK as i32;
+/// 这种强化类型能到的最高等级：强化参数里从 +0 起连续存在的等级行（weapon-level-patch 之后普通 +99、失色 +39；原版 +25、+10）
+pub fn level_max(params:&SoloParamRepository,reinforce_type:i16)->i32 {
+    use eldenring::cs::ReinforceParamWeapon;
+    if reinforce_type<0 {return 0;}
+    let mut level=0;
+    while level<99&&params.get::<ReinforceParamWeapon>((i32::from(reinforce_type)+level+1) as u32).is_some() {level+=1;}
+    level
 }
-pub fn target_with_peak(id:i32,cap:i32,peak:i32)->Option<i32> {
-    if id<0||!matches!(cap,10|25)||id%100>=cap {return None;}
+/// cap：原版满级（普通 25、失色 10），决定换算比例与每次强化的步长；max：实际能到的最高等级（level_max）
+pub fn reinforcement_target(id:i32,cap:i32,max:i32)->Option<i32> {
+    target_with_peak(id,cap,max,0)
+}
+pub fn target_with_peak(id:i32,cap:i32,max:i32,peak:i32)->Option<i32> {
+    if id<0||!matches!(cap,10|25)||id%100>=max {return None;}
     let step=if cap==25 {3}else{1};
-    Some(id-id%100+(id%100).max(peak.clamp(0,50)*cap/50).saturating_add(step).min(cap))
+    Some(id-id%100+(id%100).max(peak.clamp(0,MAX_PEAK)*cap/50).saturating_add(step).min(max))
 }
-pub fn received_with_peak(id:u32,cap:Option<i32>,peak:i32)->u32 {
+/// 获得武器时追平等效等级：cap 为 (原版满级, 实际最高等级)
+pub fn received_with_peak(id:u32,cap:Option<(i32,i32)>,peak:i32)->u32 {
     if id>>28!=0 {return id;}
-    let Some(cap)=cap.filter(|cap|matches!(cap,10|25)) else{return id;};
-    id-id%100+(id%100).max((peak.clamp(0,50)*cap/50) as u32).min(cap as u32)
+    let Some((cap,max))=cap.filter(|(cap,_)|matches!(cap,10|25)) else{return id;};
+    id-id%100+(id%100).max((peak.clamp(0,MAX_PEAK)*cap/50) as u32).min(max.max(0) as u32)
 }
 pub fn acquisition_id(id:u32,peak:i32,params:&SoloParamRepository)->Result<u32,String> {
     use eldenring::cs::{EquipParamWeapon,ReinforceParamWeapon};
@@ -39,7 +51,7 @@ pub fn acquisition_id(id:u32,peak:i32,params:&SoloParamRepository)->Result<u32,S
     let base=params.get::<EquipParamWeapon>(id/100*100).ok_or("武器参数未就绪")?;
     if base.origin_equip_wep1()<0 {return Ok(id);}
     let cap=if base.origin_equip_wep16()<0 {10}else{25};
-    let next=received_with_peak(id,Some(cap),peak);
+    let next=received_with_peak(id,Some((cap,level_max(params,base.reinforce_type_id()))),peak);
     let reinforce=i32::from(base.reinforce_type_id())+(next%100) as i32;
     if reinforce<0||params.get::<ReinforceParamWeapon>(reinforce as u32).is_none() {
         return Err("追平等级的武器参数不完整，未发放或扣款".into());
@@ -58,7 +70,7 @@ pub fn inventory_peak(data:&PlayerGameData,params:&SoloParamRepository)->i32 {
             let id=e.item_id.param_id();
             let base=params.get::<eldenring::cs::EquipParamWeapon>(id/100*100)?;
             let cap=if base.origin_equip_wep16()<0 {10}else{25};
-            (base.origin_equip_wep1()>=0&&id%100<=cap).then_some((id%100*50/cap) as i32)
+            (base.origin_equip_wep1()>=0).then_some(((id%100*50/cap) as i32).min(MAX_PEAK))
         }).max().unwrap_or(0)
 }
 unsafe extern "C" fn build_offers(list:*mut Offers,id:i32)->usize {
@@ -73,7 +85,8 @@ unsafe extern "C" fn build_offers(list:*mut Offers,id:i32)->usize {
     let cap=if base.origin_equip_wep16()<0 {10}else{25};
     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.ok();
     let peak=player.as_ref().map(|p|inventory_peak(unsafe {p.player_game_data.as_ref()},params)).unwrap_or(0);
-    let Some(next)=target_with_peak(id,cap,peak) else{return count;};
+    let max=level_max(params,base.reinforce_type_id());
+    let Some(next)=target_with_peak(id,cap,max,peak) else{log_offer(format!("Smith bypass: id={id} at max +{max}"));return count;};
     let Some(reinforce)=params.get::<eldenring::cs::ReinforceParamWeapon>((i32::from(base.reinforce_type_id())+next%100) as u32) else{log_offer(format!("Smith bypass: id={id} next={next} reinforcement parameter missing"));return count;};
     if list.is_null()||count>1024 {return count;}
     let list=unsafe {&mut *list};
@@ -87,7 +100,7 @@ unsafe extern "C" fn build_offers(list:*mut Offers,id:i32)->usize {
         update_offer(offer,id,next,base.material_set_id()+i32::from(reinforce.material_set_id()));
         changed+=usize::from(before!=offer.weapon);
     }
-    log_offer(format!("Smith offer: id={id} cap={cap} peak={peak} next={next} player={} changed={changed} offers={offers:?}",player.is_some()));
+    log_offer(format!("Smith offer: id={id} cap={cap} max={max} peak={peak} next={next} player={} changed={changed} offers={offers:?}",player.is_some()));
     count
 }
 pub unsafe fn install()->Result<(),String> {
@@ -244,22 +257,26 @@ mod tests {
     #[test]
     fn catch_up_converts_caps_without_rounding_up_or_losing_affinity() {
         use super::target_with_peak;
-        assert_eq!(target_with_peak(901200,25,40),Some(901223));
-        assert_eq!(target_with_peak(901200,10,40),Some(901209));
-        assert_eq!(target_with_peak(901200,25,35),Some(901220));
-        assert_eq!(target_with_peak(901200,10,38),Some(901208));
-        assert_eq!(target_with_peak(901220,25,40),Some(901223));
-        assert_eq!(target_with_peak(901208,10,40),Some(901209));
-        assert_eq!(target_with_peak(901224,25,50),Some(901225));
-        assert_eq!(target_with_peak(901210,10,50),None);
-        assert_eq!(target_with_peak(-1,25,50),None);
+        assert_eq!(target_with_peak(901200,25,99,40),Some(901223));
+        assert_eq!(target_with_peak(901200,10,39,40),Some(901209));
+        assert_eq!(target_with_peak(901200,25,99,35),Some(901220));
+        assert_eq!(target_with_peak(901200,10,39,38),Some(901208));
+        assert_eq!(target_with_peak(901220,25,99,40),Some(901223));
+        assert_eq!(target_with_peak(901208,10,39,40),Some(901209));
+        assert_eq!(target_with_peak(901224,25,99,50),Some(901228),"+25 is no longer the cap");
+        assert_eq!(target_with_peak(901210,10,39,50),Some(901211));
+        assert_eq!(target_with_peak(901200,25,99,100),Some(901253),"peak 100 = normal +50");
+        assert_eq!(target_with_peak(901200,10,39,100),Some(901221),"= somber +20");
+        assert_eq!(target_with_peak(901224,25,25,50),Some(901225),"vanilla parameters keep the vanilla cap");
+        assert_eq!(target_with_peak(901210,10,10,50),None);
+        assert_eq!(target_with_peak(-1,25,99,50),None);
     }
     #[test]
     fn camp_offer_catches_normal_weapon_up_to_somber_six() {
         let peak=6*50/10;
         for level in [0,1,2,6,10,12] {
             let old=901200+level;
-            let next=super::target_with_peak(old,25,peak).unwrap();
+            let next=super::target_with_peak(old,25,99,peak).unwrap();
             assert_eq!(next,901218);
             let mut offer=super::Offer{weapon:old+1,material:700001,flags:1};
             super::update_offer(&mut offer,old,next,700018);
@@ -270,28 +287,36 @@ mod tests {
     #[test]
     fn acquisition_matches_peak_without_an_upgrade_step_or_affinity_loss() {
         use super::received_with_peak as receive;
-        assert_eq!(receive(160001200,Some(25),30),160001215);
-        assert_eq!(receive(160001200,Some(10),30),160001206);
-        assert_eq!(receive(160001215,Some(25),30),160001215);
-        assert_eq!(receive(160001218,Some(25),30),160001218);
-        assert_eq!(receive(160001200,Some(10),36),160001207);
-        assert_eq!(receive(160001200,Some(25),50),160001225);
-        assert_eq!(receive(160001200,Some(10),50),160001210);
-        assert_eq!(receive(160001200,Some(25),0),160001200);
+        let (normal,somber)=(Some((25,99)),Some((10,39)));
+        assert_eq!(receive(160001200,normal,30),160001215);
+        assert_eq!(receive(160001200,somber,30),160001206);
+        assert_eq!(receive(160001215,normal,30),160001215);
+        assert_eq!(receive(160001218,normal,30),160001218);
+        assert_eq!(receive(160001200,somber,36),160001207);
+        assert_eq!(receive(160001200,normal,50),160001225);
+        assert_eq!(receive(160001200,somber,50),160001210);
+        assert_eq!(receive(160001200,normal,0),160001200);
+        // 超过原版满级：等效等级继续换算，普通 +99、失色 +39 封顶；参数只到原版满级时停在原版满级
+        assert_eq!(receive(160001200,normal,120),160001260);
+        assert_eq!(receive(160001200,somber,120),160001224);
+        assert_eq!(receive(160001200,normal,250),160001299);
+        assert_eq!(receive(160001200,somber,250),160001239);
+        assert_eq!(receive(160001200,Some((25,25)),120),160001225);
         for id in [50000000,110000,0x40000000|2200006,0x10000000|5260000] {
             assert_eq!(receive(id,None,50),id);
         }
-        assert_eq!(receive(0x40000000|2200006,Some(25),50),0x40000000|2200006);
+        assert_eq!(receive(0x40000000|2200006,normal,50),0x40000000|2200006);
     }
     #[test]
     fn upgrading_is_one_step_above_acquisition_for_every_valid_peak_and_level() {
-        for cap in [10,25] {for peak in 0..=50 {for level in 0..cap {
+        for (cap,max) in [(10,39),(25,99),(10,10),(25,25)] {for peak in 0..=super::MAX_PEAK {for level in 0..max {
             let id=160001200+level;
-            let received=super::received_with_peak(id as u32,Some(cap),peak) as i32;
-            let upgraded=super::target_with_peak(id,cap,peak).unwrap();
-            assert_eq!(upgraded,160001200+(received%100+if cap==25 {3}else{1}).min(cap));
-            assert!(upgraded>id&&upgraded%100<=cap);
-        }}}
+            let received=super::received_with_peak(id as u32,Some((cap,max)),peak) as i32;
+            let upgraded=super::target_with_peak(id,cap,max,peak).unwrap();
+            assert_eq!(upgraded,160001200+(received%100+if cap==25 {3}else{1}).min(max));
+            assert!(upgraded>id&&upgraded%100<=max);
+        }}
+        assert_eq!(super::target_with_peak(160001200+max,cap,max,super::MAX_PEAK),None,"nothing above the top level");}
     }
     #[test]
     fn native_offer_changes_only_reinforcement_not_affinity_or_reversion() {
@@ -306,14 +331,16 @@ mod tests {
     }
     #[test]
     fn reinforcement_step_preserves_affinity_and_caps() {
-        assert_eq!(super::reinforcement_target(901200,25),Some(901203));
-        assert_eq!(super::reinforcement_target(901223,25),Some(901225));
-        assert_eq!(super::reinforcement_target(901224,25),Some(901225));
-        assert_eq!(super::reinforcement_target(901225,25),None);
-        assert_eq!(super::reinforcement_target(901200,10),Some(901201));
-        assert_eq!(super::reinforcement_target(901209,10),Some(901210));
-        assert_eq!(super::reinforcement_target(901210,10),None);
-        assert_eq!(super::reinforcement_target(-1,25),None);
+        assert_eq!(super::reinforcement_target(901200,25,99),Some(901203));
+        assert_eq!(super::reinforcement_target(901223,25,99),Some(901226),"past the vanilla +25");
+        assert_eq!(super::reinforcement_target(901297,25,99),Some(901299));
+        assert_eq!(super::reinforcement_target(901299,25,99),None);
+        assert_eq!(super::reinforcement_target(901224,25,25),Some(901225),"vanilla parameters keep the vanilla cap");
+        assert_eq!(super::reinforcement_target(901225,25,25),None);
+        assert_eq!(super::reinforcement_target(901200,10,39),Some(901201));
+        assert_eq!(super::reinforcement_target(901210,10,39),Some(901211));
+        assert_eq!(super::reinforcement_target(901239,10,39),None);
+        assert_eq!(super::reinforcement_target(-1,25,99),None);
     }
     #[test]
     fn opening_smith_enables_all_categories_without_changing_adjacent_menu_state() {

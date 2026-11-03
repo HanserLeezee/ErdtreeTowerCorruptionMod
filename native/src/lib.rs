@@ -100,6 +100,7 @@ mod weapon_glow;
 mod dummy;
 mod name_tags;
 mod auras;
+mod throw_guard;
 mod law_art;
 mod scenery;
 mod spirit_tune;
@@ -220,6 +221,7 @@ impl ImguiRenderLoop for TowerPreview {
         ctx.io_mut().mouse_draw_cursor = capture;
         let map=runtime::with_view(|view|view.run.as_ref().is_some_and(|run|
             matches!(run.phase,Phase::Map)&&!run.contract_pending())).unwrap_or(false);
+        reward_ui::poll_game_devices(capture&&input::active());
         reward_ui::poll_pad(ctx.io_mut(),capture&&input::active(),map);
         let io = ctx.io_mut();
         if capture {

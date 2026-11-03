@@ -434,9 +434,9 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
         match live.spirit_peak {
             Some(peak)=>{
                 live.spirit_peak=Some(peak.max(super::spirit_tune::inventory_peak(data)));
-                live.weapon_peak=Some(live.weapon_peak.unwrap_or(0).max(super::smith::inventory_peak(data,params).clamp(0,50) as u8));
+                live.weapon_peak=Some(live.weapon_peak.unwrap_or(0).max(super::smith::inventory_peak(data,params).clamp(0,i32::from(erdtree_tower::contracts::MAX_PEAK)) as u8));
             },
-            None=>live.weapon_peak=Some(super::smith::inventory_peak(data,params).clamp(0,50) as u8),
+            None=>live.weapon_peak=Some(super::smith::inventory_peak(data,params).clamp(0,i32::from(erdtree_tower::contracts::MAX_PEAK)) as u8),
         }
         let mut stock = stock_capped(run,erdtree_tower::rewards::spirit_cap(&live));
         filter_spells(&mut stock,tools,run.reward_seed());

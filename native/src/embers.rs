@@ -5,7 +5,10 @@ use erdtree_tower::{Phase,Run,embers::{self,Ember,Gain,Strike,StrikeRequest}};
 
 /// 余烬效果：scene-builder ember-patch 写入的 9670000 段
 pub const FIRST:i32=9670000;
+/// 无声处刑的旧常驻效果（处决状态 288）：只用于清理。挂着它时原版染红 / 染蓝凶刀的触发也会生效，处决会回血回蓝，所以不再挂上
 const EXECUTION:i32=FIRST;
+/// 无声处刑：致命一击后挂上 5 秒（精力消耗减半），由原生处决事件触发，不依赖处决状态
+const EXECUTION_RELIEF:i32=FIRST+2;
 const BLOOD:i32=FIRST+10;
 const FROST:i32=FIRST+11;
 const REVENGE:i32=FIRST+20;
@@ -121,13 +124,12 @@ const HIT_INTERVAL:Duration=Duration::from_millis(300);
 pub fn held(run:Option<&Run>)->Vec<Ember> {
     run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)).map(|r|r.embers.clone()).unwrap_or_default()
 }
-/// 玩家身上的余烬效果：无声处刑常驻，以血还血与癫火狂热只在战斗中按状态挂上
+/// 玩家身上的余烬效果：以血还血、癫火狂热等只在战斗中按状态挂上；无声处刑在致命一击时由 Fight::tick 挂上
 pub fn sync(chr:&mut ChrIns,run:Option<&Run>,fight:&Fight) {
     let mut want=Vec::new();
     let embers=held(run);
-    let owner=if embers.contains(&Ember::Chain){std::ptr::from_ref(chr) as usize}else{0};
+    let owner=if embers.contains(&Ember::Chain)||embers.contains(&Ember::Execution){std::ptr::from_ref(chr) as usize}else{0};
     if CHAIN_OWNER.swap(owner,Ordering::AcqRel)!=owner{CRITICAL_PENDING.store(false,Ordering::Release);}
-    if embers.contains(&Ember::Execution) {want.push(EXECUTION);}
     if fight.revenge_active() {want.push(REVENGE);}
     if fight.echo_active() {want.push(ECHO);}
     if embers.contains(&Ember::Glintstone) {want.push(GLINTSTONE);}
@@ -194,15 +196,21 @@ impl Fight {
         let now=Instant::now();
         let Some(player)=world.main_player.as_ref() else{return events};
         if player.chr_ins.modules.data.hp<=0||player.chr_ins.chr_flags1c5.death_flag() {return events;}
-        if has(Ember::Chain) {
+        // 致命一击（原生处决事件，见 install_critical_trace）：处刑之链加层，无声处刑挂上精力减半
+        if has(Ember::Chain)||has(Ember::Execution) {
             let marked=CRITICAL_PENDING.swap(false,Ordering::AcqRel);
             let throwing=unsafe{std::ptr::addr_of!(player.chr_ins.modules.throw.throw_node.throw_state).cast::<u32>().read()}==3;
             if self.critical_edge.observe(marked,throwing) {
-                events.gains.push(Gain::Critical);
+                if has(Ember::Chain) {events.gains.push(Gain::Critical);}
                 let count=CRITICAL_EVENTS.fetch_add(1,std::sync::atomic::Ordering::Relaxed)+1;
                 super::log(format!("CHAIN_TEST real critical marker observed count={count}"));
+                if has(Ember::Execution)&&ready(&[EXECUTION_RELIEF]) {
+                    world.main_player.as_mut().unwrap().chr_ins.apply_speffect(EXECUTION_RELIEF,false);
+                    super::log("TOWER_EMBER execution relief applied");
+                }
             }
         }
+        let Some(player)=world.main_player.as_ref() else{return events};
         let data=&player.chr_ins.modules.data;
         let (hp,max_hp,stamina,max_stamina)=(data.hp,data.max_hp,data.stamina,data.max_stamina);
         // 法师余烬：施法键（主手、副手，含武器上的施法）按住即算施法，松开后再保持一会儿，出招动作放完前都算
@@ -451,9 +459,10 @@ mod tests {
     #[test]
     fn effect_ids_do_not_overlap() {
         let ids:Vec<_>=player_ids().collect();
-        assert_eq!(ids.len(),3+usize::from(embers::FRENZY_STACKS));
+        assert_eq!(ids.len(),8+usize::from(embers::FRENZY_STACKS));
+        assert!(!ids.contains(&EXECUTION_RELIEF),"the relief expires on its own, sync never strips it");
         assert_eq!(frenzy_effect(embers::FRENZY_STACKS),FIRST+38);
-        let mut all=ids.clone();all.extend([BLOOD,FROST,FLASH,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION+2]);
+        let mut all=ids.clone();all.extend([BLOOD,FROST,FLASH,SPIRIT_COMMAND,CHAIN_MARK,CHAIN_RESIDENT+1,EXECUTION+1,EXECUTION_RELIEF]);
         all.extend(Ember::ALL.into_iter().filter_map(slots).flatten());
         let count=all.len();all.sort();all.dedup();assert_eq!(all.len(),count,"effect ids overlap");
         assert!(all.iter().all(|id|(FIRST..FIRST+100).contains(id)),"inside the ember range");

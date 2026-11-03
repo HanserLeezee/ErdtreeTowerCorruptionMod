@@ -88,9 +88,11 @@ fn new_gifts_are_epic_and_old_saves_keep_the_old_rules() {
 
 #[test]
 fn level_text_matches_the_planned_numbers() {
-    assert_eq!(Kind::Steel.boon_at(1),"蓄力重攻击伤害 +35%");assert_eq!(Kind::Steel.boon_at(3),"蓄力重攻击伤害 +80%");
-    assert_eq!(Kind::Mystic.boon_at(2),"魔法／祷告伤害 +40%");
-    assert_eq!(Kind::Blood.boon_at(3),"生命低于 50%\n伤害 +75%");
+    assert_eq!(Kind::Steel.boon_at(1),"蓄力重攻击伤害 +35%");assert_eq!(Kind::Steel.boon_at(3),"蓄力重攻击伤害 +55%");
+    assert_eq!(Kind::Mystic.boon_at(2),"魔法／祷告伤害 +32%");
+    assert_eq!(Kind::Blood.boon_at(3),"生命低于 50%\n伤害 +55%");
+    assert_eq!(Kind::Feather.boon_at(3),"轻负重时伤害 +30%\n精力恢复 +7 点/秒");
+    assert_eq!(Kind::Ascetic.boon_at(3),"胜利恢复最大生命 20%\n最大专注 26%");
     assert_eq!(Kind::Ascetic.boon_at(1),"胜利恢复最大生命 15%\n最大专注 20%");
     assert_eq!((Kind::Combo.bane_at(),Kind::Guard.bane_at(),Kind::Steel.bane_at()),("受到伤害 +5%","动作精力消耗 +10%","战技伤害 -20%"));
 }

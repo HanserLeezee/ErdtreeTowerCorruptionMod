@@ -44,14 +44,14 @@ impl Kind {
     /// 新规则下各等级的增益（1–3 级）
     pub fn boon_at(self,level:u8)->String {
         let l=usize::from(level.clamp(1,3)-1);
-        let narrow=[35,55,80][l];
+        let narrow=NARROW[l];
         match self {
             Self::Steel=>format!("蓄力重攻击伤害 +{narrow}%"),Self::Breaker=>format!("跳跃攻击伤害 +{narrow}%"),
             Self::Combo=>format!("连段末击伤害 +{narrow}%"),Self::Guard=>format!("防御反击伤害 +{narrow}%"),
             Self::Hunter=>format!("弓弩伤害 +{narrow}%"),Self::Execution=>format!("致命一击伤害 +{narrow}%"),
-            Self::Mystic=>format!("魔法／祷告伤害 +{}%",[25,40,55][l]),
-            Self::Feather=>format!("轻负重时伤害 +{}%\n精力恢复 +{} 点/秒",[20,30,40][l],[5,7,10][l]),
-            Self::Blood=>format!("生命低于 50%\n伤害 +{}%",[35,55,75][l]),
+            Self::Mystic=>format!("魔法／祷告伤害 +{}%",MYSTIC[l]),
+            Self::Feather=>format!("轻负重时伤害 +{}%\n精力恢复 +{} 点/秒",FEATHER[l],FEATHER_STAMINA[l]),
+            Self::Blood=>format!("生命低于 50%\n伤害 +{}%",BLOOD[l]),
             Self::Ascetic=>{let (hp,fp)=ASCETIC[l];format!("胜利恢复最大生命 {hp}%\n最大专注 {fp}%")},
         }
     }
@@ -60,8 +60,17 @@ impl Kind {
         Self::Combo=>"受到伤害 +5%",Self::Guard=>"动作精力消耗 +10%",_=>self.bane(),
     }}
 }
+// 誓约 I–III 级的增益（%）。I 级不变，II、III 级削弱过一次（原来 II、III 级分别约为 I 级的 1.6 倍、2.3 倍）；
+// 参数里的倍率在 scene-builder/OathAssets.cs，两边一起改
+/// 蓄力、凌空、连击、坚盾、猎手、处刑
+pub const NARROW:[u32;3]=[35,45,55];
+pub const MYSTIC:[u32;3]=[25,32,40];
+pub const FEATHER:[u32;3]=[20,25,30];
+/// 轻羽之誓的精力恢复（点/秒）
+pub const FEATHER_STAMINA:[u32;3]=[5,6,7];
+pub const BLOOD:[u32;3]=[35,45,55];
 /// 苦修之誓各等级的胜利恢复（最大生命 %、最大专注 %）
-pub const ASCETIC:[(u8,u8);3]=[(15,20),(20,25),(25,30)];
+pub const ASCETIC:[(u8,u8);3]=[(15,20),(18,23),(20,26)];
 pub const MAX_LEVEL:u8=3;
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
 pub struct Oath {pub kind:Kind,pub level:u8}
@@ -106,7 +115,7 @@ impl State {
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
         let first=if Some(preferred)!=previous{preferred}else{pool[0]};
         let second=*pool.iter().find(|k|**k!=first).unwrap();
-        Self{act,offers:[first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:0,held:vec![],deepen:None,deepened:false}
+        Self{act,offers:[first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(MAX_PEAK),gift:None,rules:0,held:vec![],deepen:None,deepened:false}
     }
     /// 新规则：两份新誓约（不与已有的重复），已有誓约未满级时加一张深化卡
     pub fn start(seed:u64,class:Class,act:u8,held:Vec<Oath>,peak:u8)->Self {
@@ -117,7 +126,7 @@ impl State {
         let first=if pool.contains(&preferred){preferred}else{pool[0]};
         let second=*pool.iter().find(|k|**k!=first).unwrap();
         let deepen=held.iter().rev().filter(|o|o.level<MAX_LEVEL).max_by_key(|o|o.level).map(|o|o.kind);
-        Self{act,offers:[first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:1,held,deepen,deepened:false}
+        Self{act,offers:[first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(MAX_PEAK),gift:None,rules:1,held,deepen,deepened:false}
     }
     /// 进入下一幕：旧规则换一份新契约，新规则保留已有誓约
     pub fn next_act(&self,seed:u64,class:Class,act:u8)->Self {
@@ -183,7 +192,7 @@ impl State {
                 &&(!self.deepened||self.chosen.is_some()&&self.chosen==self.deepen),
             _=>false,
         };
-        self.act==act&&self.peak<=50&&self.offers[0]!=self.offers[1]&&held_ok
+        self.act==act&&self.peak<=MAX_PEAK&&self.offers[0]!=self.offers[1]&&held_ok
             &&self.chosen.is_none_or(|k|self.offers.contains(&k)||self.deepened)
             &&if self.chosen.is_none()||self.deepened{self.gift.is_none()&&self.gear==[0;3]}else{
                 self.gear.iter().enumerate().all(|(i,id)|!self.gear[..i].contains(id)&&crate::rewards::lookup(*id).is_some_and(|r|r.kind==crate::rewards::ItemKind::Weapon))
@@ -191,7 +200,13 @@ impl State {
             }
     }
 }
-pub fn reinforcement_level(peak:u8,cap:u8)->u8 {((u16::from(peak.min(50))*u16::from(cap))/50) as u8}
+/// 武器强化上限（scene-builder weapon-level-patch 补了等级行）：普通 +99（武器编号能表示的最高等级）、失色 +39（每级相当于普通 2.5 级，取同一水平）。
+/// 原版是 +25、+10。等效等级 peak = 普通等级×2 = 失色等级×5（原版满级都是 50），最高 MAX_PEAK
+pub const NORMAL_MAX:u8=99;
+pub const SOMBER_MAX:u8=39;
+pub const MAX_PEAK:u8=198;
+/// 等效等级换算成某种武器的强化等级：cap 为原版满级（普通 25、失色 10），超过原版满级照比例继续
+pub fn reinforcement_level(peak:u8,cap:u8)->u8 {((u16::from(peak.min(MAX_PEAK))*u16::from(cap))/50) as u8}
 fn gear(kind:Kind,_class:Class,seed:u64,epic:bool)->[u32;3] {
     let mut pool:Vec<u32>=include_str!("../scene-assets/reward-rarities.tsv").lines().filter_map(|line| {
         let (id,tier)=line.split_once('\t')?;let id:u32=id.parse().ok()?;

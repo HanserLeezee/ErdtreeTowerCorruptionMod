@@ -245,6 +245,13 @@ pub fn reward(run:&crate::Run,node:usize)->Option<Ember> {
     if run.ember_rules>=1 {offer_by_quality(roll>>8,&run.embers,carries_spirit(run),carries_catalyst(run),odds(crate::affixes::quality_odds(run)))}
     else {offer(roll>>8,&run.embers,carries_spirit(run),carries_catalyst(run))}
 }
+/// 宝箱房（余烬规则 2 起）：打开宝箱直接得到一枚随机余烬（按品质概率，没拿过的，召唤流、法师余烬照常看构筑）；
+/// 能抽的都拿完了返回 None，宝箱照旧给物品
+pub fn chest_ember(run:&crate::Run,node:usize)->Option<Ember> {
+    if !run.ember_rewards||run.ember_rules<2||run.nodes.get(node).is_none_or(|n|n.kind!=crate::NodeKind::Chest) {return None;}
+    let seed=crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0xc4e5_e3be);
+    offer_by_quality(seed,&run.embers,carries_spirit(run),carries_catalyst(run),odds(crate::affixes::quality_odds(run)))
+}
 /// 身上带着骨灰：召唤师（开局就有骨灰），或拿到过任何骨灰奖励
 pub fn carries_spirit(run:&crate::Run)->bool {
     run.summoner()||run.claimed_items.iter().any(|id|crate::rewards::lookup(*id).is_some_and(|i|i.kind==crate::rewards::ItemKind::Spirit))
@@ -370,6 +377,47 @@ mod tests {
         }
         assert_eq!(plain,0,"no summon embers without a spirit ash");
         assert!(summoner>0);
+    }
+    #[test]
+    fn chest_rooms_grant_one_random_ember() {
+        use crate::{Class,NodeKind,Phase,Run};
+        let mut seen=std::collections::HashSet::new();let mut checked=0;
+        for seed in 0..80 {
+            let run=Run::new(seed,Class::Samurai);
+            for id in (0..run.nodes.len()).filter(|id|run.nodes[*id].kind==NodeKind::Chest) {
+                let ember=chest_ember(&run,id).unwrap();
+                assert!(!ember.needs_spirit()&&!ember.needs_casting(),"gates still apply");
+                assert_eq!(chest_ember(&run,id),Some(ember),"same chest, same ember");
+                seen.insert(ember);checked+=1;
+            }
+            assert!(run.nodes.iter().enumerate().filter(|(_,n)|n.kind!=NodeKind::Chest).all(|(id,_)|chest_ember(&run,id).is_none()));
+        }
+        assert!(checked>20&&seen.len()>8,"random across chests");
+        // 领取：进背包、节点结束；拿完了就没有，宝箱照旧给物品；旧存档（余烬规则 1）不变
+        // 照正常路线走到第一个宝箱房
+        let (mut run,chest)=(0..60).find_map(|seed|{
+            let mut run=Run::new(seed,Class::Samurai);
+            for _ in 0..run.floors()-1 {
+                let available=run.available();
+                let id=available.iter().copied().find(|id|run.nodes[*id].kind==NodeKind::Chest).unwrap_or(available[0]);
+                run.enter(id).unwrap();
+                match run.nodes[id].kind {
+                    NodeKind::Chest=>return Some((run,id)),
+                    NodeKind::Monster|NodeKind::Elite=>{run.win_combat().unwrap();run.decline_reward().unwrap();},
+                    NodeKind::Camp=>run.leave_camp().unwrap(),NodeKind::Shop=>run.leave_shop().unwrap(),
+                    NodeKind::Event=>run.resolve_event(false).unwrap(),_=>return None,
+                }
+            }
+            None
+        }).unwrap();
+        assert_eq!(run.phase,Phase::Node{id:chest});
+        let expected=chest_ember(&run,chest).unwrap();
+        let mut opened=run.clone();assert_eq!(opened.claim_chest_ember().unwrap(),Some(expected));
+        assert_eq!(opened.embers,vec![expected]);assert!(!matches!(opened.phase,Phase::Node{..}),"the chest node is finished");
+        assert_eq!(Run::decode(&opened.encode().unwrap()).unwrap(),opened);
+        run.embers.clear();let mut full=run.clone();full.embers=Ember::ALL.into_iter().filter(|e|e.fits(false,false)).collect();
+        assert_eq!(full.claim_chest_ember().unwrap(),None);assert_eq!(full.phase,Phase::Node{id:chest},"nothing changes without an ember");
+        let mut old=run.clone();old.ember_rules=1;assert_eq!(old.claim_chest_ember().unwrap(),None);
     }
     #[test]
     fn mage_embers_need_a_staff_or_seal() {

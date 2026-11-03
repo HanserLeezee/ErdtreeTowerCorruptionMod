@@ -14,7 +14,7 @@ static class AdvancedAffixAssets {
     static void Set(PARAM.Row r,string k,object v)=>r[k].Value=Convert.ChangeType(v,r[k].Value.GetType(),CultureInfo.InvariantCulture);
     static int I(PARAM.Row r,string k)=>Convert.ToInt32(r[k].Value);
     static double F(PARAM.Row r,string k)=>Convert.ToDouble(r[k].Value);
-    static int Mask(PARAM.Row source,ulong seed,int profile) {
+    public static int Mask(PARAM.Row source,ulong seed,int profile) {
         int anchor=profile==0?Enumerable.Range(0,5).MaxBy(i=>F(source,Scaling[i])):(int)(Mix(seed^19)%5);
         int mask=1<<anchor;
         if(Mix(seed^23)%100<70)mask|=1<<(int)(Mix(seed^29)%5);
@@ -87,7 +87,7 @@ static class AdvancedAffixAssets {
                     foreach(var originalRow in family) {
                         var row=new PARAM.Row(originalRow){ID=id+originalRow.ID-baseId,Name=$"Tower advanced affix {baseId}:{profile}:{tier}"};
                         if(!occupied.Add(row.ID))throw new Exception("Advanced equipment ID collision");
-                        double damageRate=0.94+roll*0.12+tier*0.04+(stars==2?0.12:0);
+                        double damageRate=0.94+roll*0.12+tier*AffixQualityAssets.AttackStep+(stars==2?0.12:0);
                         Set(row,"rarity",tier);Set(row,"sellValue",WeaponSaleAssets.Price(tier));
                         Set(row,"weight",Math.Round(F(originalRow,"weight")*(0.92+roll*0.16)*(weapon?1:profile==2?0.8:profile==0?1.12:profile==1?0.95:1.08),2));
                         if(weapon) {
@@ -98,7 +98,7 @@ static class AdvancedAffixAssets {
                                 foreach(var element in Damage)Set(row,"attackBase"+element,0);
                                 Set(row,"attackBasePhysics",Math.Clamp(physical,0,ushort.MaxValue));Set(row,"attackBase"+Damage[mode],Math.Clamp(total-physical,0,ushort.MaxValue));
                             }
-                            double budget=Math.Max(60,Scaling.Sum(k=>F(originalRow,k)))*(0.95+roll*0.1+tier*0.04);
+                            double budget=Math.Max(60,Scaling.Sum(k=>F(originalRow,k)))*(0.95+roll*0.1+tier*AffixQualityAssets.ScalingStep);
                             double totalWeight=Enumerable.Range(0,5).Where(i=>(mask&(1<<i))!=0).Sum(i=>70d+Mix(seed^(ulong)(200+i))%61);
                             for(int i=0;i<5;i++)Set(row,Scaling[i],(mask&(1<<i))==0?0:Math.Round(budget*(70+Mix(seed^(ulong)(200+i))%61)/totalWeight,2));
                             Set(row,"attackElementCorrectId",CorrectionFirst+mask);

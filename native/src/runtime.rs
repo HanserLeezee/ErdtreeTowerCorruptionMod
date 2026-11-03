@@ -1284,6 +1284,8 @@ fn tick_locked() {
     } else if let Some(dummy)=state.dummy.take() {dummy.retire(world);state.view.dummy=None;}
     let contract_run=state.view.run.as_ref().filter(|_|state.hub.as_ref().is_some_and(|h|!h.active));
     if let Some(player)=world.main_player.as_mut(){let light=super::contracts::light_load(unsafe {player.player_game_data.as_ref()});super::contracts::sync(&mut player.chr_ins,contract_run,light);super::elite::sync(&mut player.chr_ins,contract_run);super::passives::sync(&mut player.chr_ins,contract_run);super::auras::sync(&mut player.chr_ins);super::law::sync(&mut player.chr_ins,contract_run,state.law_fight.overtime());super::embers::sync(&mut player.chr_ins,contract_run,&state.ember_fight);let data=player.player_game_data.as_ptr();super::weapon_glow::sync(&mut player.chr_ins,unsafe {&*data},super::weapon_glow::clock());super::affix_stack::sync(&mut player.chr_ins,unsafe {&*data});}
+    // 处决期间敌人不再无敌，我方照旧无敌（旅程进行中）
+    super::throw_guard::sync(world,contract_run.is_some_and(|run|!matches!(run.phase,Phase::Dead|Phase::Won)));
     if let Some(player)=world.main_player.as_mut(){super::auras::countdown(&mut player.chr_ins,false);}
     if !game.warp_requested&&!state.view.travelling {
         if let Some(player)=world.main_player.as_mut(){super::star_stream::tick(&mut player.chr_ins,contract_run);}
@@ -1826,7 +1828,7 @@ fn tick_locked() {
                 let _ = super::native_talk::set_flag(45020971, false);
                 next.flasks = state.flasks.as_ref().map_or(next.flasks, |f| f.total());
                 next.casting_tools=Some(super::loot::casting_tools(player_data));
-                if let Ok(params)=unsafe {SoloParamRepository::instance()} {next.weapon_peak=Some(super::smith::inventory_peak(player_data,params).clamp(0,50) as u8);}
+                if let Ok(params)=unsafe {SoloParamRepository::instance()} {next.weapon_peak=Some(super::smith::inventory_peak(player_data,params).clamp(0,i32::from(erdtree_tower::contracts::MAX_PEAK)) as u8);}
                 next.spirit_peak=Some(spirit_peak(&next,super::spirit_tune::inventory_peak(player_data)));
                 let result = next
                     .observe_hp(normalized_hp(hp, max_hp))
@@ -2774,6 +2776,15 @@ fn tick_chest_award(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super::r
     if !flag(45010990)?&&!path.exists(){return Ok(());}
     if room.chest_attempt.is_some_and(|at|at.elapsed()<Duration::from_secs(1)){return Ok(());}
     room.chest_attempt=Some(Instant::now());
+    // 新旅程（余烬规则 2 起）：宝箱给一枚随机余烬；已经开始发放的物品（有领取记录）照旧发完，余烬拿完了也照旧给物品
+    if !path.exists()&&let Some(ember)=erdtree_tower::embers::chest_ember(run,room.node) {
+        let mut next=run.clone();next.claim_chest_ember()?;record_checked(&next)?;
+        state.view.run=Some(next);room.complete(format!("获得余烬「{}」",ember.name()));
+        set_flag(45010995,true)?;
+        report(state,format!("宝箱里是余烬「{}」！",ember.name()));
+        super::log(format!("Personal chest ember: node={} ember={ember:?}",room.node));
+        return Ok(());
+    }
     let data=unsafe {world.main_player.as_mut().ok_or("角色尚未加载")?.player_game_data.as_mut()};
     let receipt=if let Some(receipt)=Receipt::load(&path)? {receipt}else {
         let tools=loot::casting_tools(data);

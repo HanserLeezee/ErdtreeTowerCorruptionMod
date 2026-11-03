@@ -28,10 +28,11 @@ pub fn background(draw:&DrawListMut<'_>,size:[f32;2]) {
     let uv=if ratio>native {let d=(1.0-native/ratio)*0.5;([0.0,d],[1.0,1.0-d])}else{let d=(1.0-ratio/native)*0.5;([d,0.0],[1.0-d,1.0])};
     image(draw,1,[0.0,0.0],size,uv,255);
 }
-pub fn card(draw:&DrawListMut<'_>,kind:usize,min:[f32;2],max:[f32;2],light:u8) {
+/// 誓约卡插画：3 列 × 2 行图集中的第 kind 幅，可以半透明（入场 / 离场动画用）
+pub fn card_alpha(draw:&DrawListMut<'_>,kind:usize,min:[f32;2],max:[f32;2],light:u8,alpha:u8) {
     let kind=kind%6;
     let col=(kind%3) as f32;let row=(kind/3) as f32;
-    image(draw,0,min,max,([(col+0.005)/3.0,(row+0.003)/2.0],[(col+0.995)/3.0,(row+0.997)/2.0]),light);
+    image_alpha(draw,0,min,max,([(col+0.005)/3.0,(row+0.003)/2.0],[(col+0.995)/3.0,(row+0.997)/2.0]),light,alpha);
 }
 /// 职业插画：3 列 × 2 行图集中的第 index 幅，按目标区域的宽高比从顶部裁切（人物在画面上部）；zoom 大于 1 时向中心推近
 pub fn class_art(draw:&DrawListMut<'_>,index:usize,min:[f32;2],max:[f32;2],light:u8,zoom:f32) {

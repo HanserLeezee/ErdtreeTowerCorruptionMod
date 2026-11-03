@@ -245,7 +245,7 @@ pub struct Run {
     /// 叠层余烬的层数（整局保留）：击倒、致命一击由运行时记录，精英与 Boss 胜利在 win_combat 里记录
     #[serde(default,skip_serializing_if="embers::Stacks::is_empty")]
     pub ember_stacks: embers::Stacks,
-    /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；旧存档为 0，等概率
+    /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；2 起宝箱房改为给一枚随机余烬（embers::chest_ember）；旧存档为 0，等概率
     #[serde(default)]
     pub ember_rules: u8,
     /// 新旅程：普通战与精英战的奖励里会出现强化石
@@ -601,7 +601,7 @@ impl Run {
             weapon_preference: None,
             weapon_preferences: Vec::new(),
             ember_rewards: true,
-            ember_rules: 1,
+            ember_rules: 2,
             stone_rewards: true,
             embers: vec![],
             ember_stacks: Default::default(),
@@ -807,7 +807,7 @@ impl Run {
                 self.physick_empty=false;
             }
             CampChoice::UpgradeWeapon => {
-                if self.weapon_level >= 25 {
+                if self.weapon_level >= contracts::NORMAL_MAX {
                     return Err("武器已达到上限".into());
                 }
                 self.weapon_level += 1;
@@ -929,7 +929,7 @@ impl Run {
                 }
             }
             Reward::UpgradeWeapon => {
-                if self.weapon_level >= 25 {
+                if self.weapon_level >= contracts::NORMAL_MAX {
                     return Err("武器已达到上限".into());
                 }
                 self.weapon_level += 1;
@@ -969,6 +969,15 @@ impl Run {
         let id = self.active_node(NodeKind::Chest)?;
         self.finish(id);
         Ok(())
+    }
+
+    /// 宝箱房打开宝箱（余烬规则 2 起）：得到一枚随机余烬并结束节点；没有可得的余烬时返回 None、什么都不改（照旧给物品）
+    pub fn claim_chest_ember(&mut self) -> RuleResult<Option<embers::Ember>> {
+        let id = self.active_node(NodeKind::Chest)?;
+        let Some(ember) = embers::chest_ember(self, id) else { return Ok(None) };
+        self.embers.push(ember);
+        self.finish(id);
+        Ok(Some(ember))
     }
 
     pub fn open_chest(&mut self) -> RuleResult<()> {
@@ -1098,7 +1107,7 @@ impl Run {
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
         if self.boss_test.is_some_and(|t|!self.debug||!(1..=3).contains(&t.act)||t.encounter>=4096){return fail();}
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>1||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>1||self.scaling_rules>1
+        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>1||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>2||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
@@ -1119,8 +1128,8 @@ impl Run {
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()
             || self.flasks > self.flask_limit
-            || self.weapon_level > 25
-            || self.weapon_peak.is_some_and(|peak|peak>50)
+            || self.weapon_level > contracts::NORMAL_MAX
+            || self.weapon_peak.is_some_and(|peak|peak>contracts::MAX_PEAK)
             || self.spirit_peak.is_some_and(|peak|peak>10)
             || self.spirit_rules>1
             || self.shop_purchased > 7
