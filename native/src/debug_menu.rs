@@ -7,7 +7,9 @@ use crate::enemies::Enemy;
 pub enum Command {BossTest(u16),EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool),FallenStart,FallenValue(u32),TorchGive,TorchAll,TorchFast(bool)}
 
 // tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
-static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()||crate::options::get().debug);
+// [HansFix] 无缝联机模式下日志在 seamless-entry\runtime：模组文件夹里的 tower-debug.enable 也算
+static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()
+    ||crate::hansfix::mod_dir().is_some_and(|d|d.join("tower-debug.enable").exists())||crate::options::get().debug);
 static OPEN:AtomicBool=AtomicBool::new(false);
 static QUEUE:Mutex<VecDeque<Command>>=Mutex::new(VecDeque::new());
 /// 无敌（玩家不会死、敌人打不中玩家）与秒杀（玩家每次命中 9999999 伤害）：游戏自带的调试开关（WorldChrManDbgFlags），只在单人生效

@@ -70,8 +70,12 @@ fn install_version(text:&str)->Option<u64> {
 pub fn detect(dir:&Path)->(bool,bool) {(dir.join(WANDER_MARKER).is_file(),dir.join(MERCHANT_MARKER).is_file())}
 
 /// DllMain: read markers next to the DLL. Must run before anything talks to the party.
+static MOD_DIR:std::sync::OnceLock<PathBuf>=std::sync::OnceLock::new();
+/// 模组文件夹（DLL 所在的文件夹）
+pub fn mod_dir()->Option<&'static Path> {MOD_DIR.get().map(PathBuf::as_path)}
 pub fn init(dll:Option<PathBuf>) {
     let dir=dll.as_deref().and_then(Path::parent).map(PathBuf::from);
+    if let Some(d)=&dir {let _=MOD_DIR.set(d.clone());}
     let (mut wander_on,mut merchant_on)=dir.as_deref().map(detect).unwrap_or_default();
     if dir.as_deref().is_some_and(|d|d.join(OATHS_MARKER).is_file()) {crate::log("HANSFIX hansfix-oaths.enabled is obsolete: the new oaths are part of the fallen (wander) patch now");}
     if let Some(reason)=dir.as_deref().and_then(stale_in) {

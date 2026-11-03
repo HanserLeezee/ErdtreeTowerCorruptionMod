@@ -451,13 +451,12 @@ fn sidebar(ui:&Ui,run:&Run,view:&View,vitals:&str,origin:[f32;2],extent:[f32;2],
     // ── 地图工具 ──
     crate::map_ink::toolbar(ui,erdtree_tower::map_drawing::Scope::of(run),at(20.0,y+16.0),[(inner-40.0)*scale,34.0*scale],scale,view.ready&&!view.busy&&run.phase==Phase::Map);
     // [HansFix] 堕落模式开关（第一幕开局）与整局堕落值
-    let mut y=y+62.0;
+    // 放在地图工具的操作说明下面（说明在工具栏下方约 60 处），按钮和“选路 / 划线 / 擦除”同款
+    let mut y=y+96.0;
     if crate::hansfix::wander()&&run.phase==Phase::Map&&run.act==1&&run.visited.is_empty() {
-        ui.set_cursor_screen_pos(at(20.0,y));ui.set_window_font_scale(scale);
-        let _disabled=ui.begin_disabled(!view.ready||view.busy);
-        let _on=run.wander.then(||ui.push_style_color(StyleColor::Button,[0.53,0.40,0.16,1.0]));
-        if ui.button_with_size(if run.wander {"堕落：开"} else {"堕落：关"},[108.0*scale,32.0*scale]) {runtime::submit(Action::ToggleWander);}
-        y+=40.0;
+        let tone=if !view.ready||view.busy {style::Tone::Disabled} else if run.wander {style::Tone::Primary} else {style::Tone::Normal};
+        if style::button(ui,"map-wander",if run.wander {"堕落：开"} else {"堕落：关"},at(20.0,y),at(inner-20.0,y+34.0),tone,0.9*scale) {runtime::submit(Action::ToggleWander);}
+        y+=46.0;
     } else if run.wander {
         text(20.0,y,"堕落模式",[0.78,0.20,0.15,1.0],15.0,0.0);y+=26.0;
     }
