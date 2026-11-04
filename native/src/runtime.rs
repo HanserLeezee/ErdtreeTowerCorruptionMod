@@ -29,6 +29,8 @@ const SPAWN_TIMEOUT: Duration = Duration::from_secs(15);
 // victory forever. After the others die, an untouched full-HP survivor is retired after this long.
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 pub static QUICK_END:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+/// 「跳过本关」键：渲染线程置位，游戏任务线程处理
+pub static SKIP:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub static PLAYER_READY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 fn can_end_run(phase:Option<&Phase>,host:bool,blocked:bool)->bool {
     host&&!blocked&&phase.is_some_and(|p|!matches!(p,Phase::Dead|Phase::Won))
@@ -46,6 +48,20 @@ fn clear_ailments_under_overlay(state:&mut Runtime,world:&mut WorldChrMan,game:&
     let Some(player)=world.main_player.as_mut().filter(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()) else {return;};
     state.ailment_cleared=Some(Instant::now());
     if let Err(error)=super::ailments::clear(&mut player.chr_ins){super::log_repeating(error);}
+}
+/// 「跳过本关」：战斗中视为胜利（敌人撤下、不掉卢恩），传送门不用摸，直接到三选一；联机只有房主能用，房主通知全队
+fn request_skip(state:&mut Runtime)->String {
+    if state.party.as_ref().is_some_and(|p|!p.host()) {return "只有房主可以跳过本关。".into();}
+    if state.reward_wait.is_some() {state.skip_portal=true;return "跳过本关：直接领取奖励。".into();}
+    if let Some(pending)=state.pending.as_ref().filter(|p|!p.completed)&&let Phase::Combat{id}=pending.next_run.phase {
+        state.skip_fight=Some(id);
+        return if state.party.is_some() {"跳过本关：全队开战后立即判定胜利。"}else{"跳过本关：敌人出现后立即判定胜利。"}.into();
+    }
+    "现在没有可以跳过的战斗。".into()
+}
+/// 跳过请求在这一帧生效：本机还活着、敌人已经出现；联机还要等全队开战（房主才能判定胜利）
+fn skip_fight_due(requested:Option<usize>,node:Option<usize>,bound:bool,dead:bool,party:Option<(bool,bool)>)->bool {
+    requested.is_some()&&requested==node&&bound&&!dead&&party.is_none_or(|(host,fighting)|host&&fighting)
 }
 fn overlay_cleanse_due(captured:bool,last:Option<Instant>,now:Instant)->bool {
     captured&&last.is_none_or(|t|now.saturating_duration_since(t)>=Duration::from_secs(1))
@@ -330,6 +346,10 @@ struct Runtime {
     death_retry:bool,
     /// 上次在地图 / 奖励界面里清除中毒、腐败等异常的时间
     ailment_cleared:Option<Instant>,
+    /// 跳过本关：这个战斗节点一开战（联机为全队开战）就判定胜利
+    skip_fight:Option<usize>,
+    /// 跳过本关：传送门一亮就直接领奖（联机由房主通知全队）
+    skip_portal:bool,
     retry_ready_since:Option<Instant>,
     member_spawn_gaps:Option<MemberSpawnGaps>,
     /// 徘徊赐福实物道具：背包数量跟随旅程剩余次数
@@ -403,6 +423,7 @@ fn fresh_runtime()->Runtime {
         lingering:None,
         death_retry:false,
         ailment_cleared:None,
+        skip_fight:None,skip_portal:false,
         retry_ready_since:None,
         member_spawn_gaps:None,
         retry_item:Default::default(),
@@ -972,6 +993,18 @@ fn lingering_due(alive:bool,waited:Duration)->bool {alive&&waited>=Duration::fro
 #[cfg(test)]
 mod replica_tests {
     #[test]
+    fn skip_waits_for_enemies_and_in_a_party_for_the_host_after_engage() {
+        use super::skip_fight_due as due;
+        assert!(due(Some(3),Some(3),true,false,None));
+        assert!(!due(None,Some(3),true,false,None));
+        assert!(!due(Some(2),Some(3),true,false,None),"a stale request never skips another node");
+        assert!(!due(Some(3),Some(3),false,false,None),"wait for the enemies to appear");
+        assert!(!due(Some(3),Some(3),true,true,None),"not while dead");
+        assert!(due(Some(3),Some(3),true,false,Some((true,true))));
+        assert!(!due(Some(3),Some(3),true,false,Some((true,false))),"host waits for the party to engage");
+        assert!(!due(Some(3),Some(3),true,false,Some((false,true))),"members never judge victory");
+    }
+    #[test]
     fn ailments_are_cleared_once_a_second_only_while_an_overlay_locks_input() {
         use std::time::{Duration,Instant};
         let now=Instant::now();
@@ -1233,6 +1266,9 @@ fn tick_locked() {
     };
     PLAYER_READY.store(world.main_player.is_some()&&game.save_slot>=0,std::sync::atomic::Ordering::Relaxed);
     clear_ailments_under_overlay(&mut state,world,game);
+    if SKIP.swap(false,std::sync::atomic::Ordering::Relaxed) {
+        let message=request_skip(&mut state);super::log(format!("SKIP requested: {message}"));report(&mut state,message);
+    }
     state.hub_boundary.tick(world,game.warp_requested||game.save_slot<0);
     let chase_enabled=!game.warp_requested&&matches!(state.chariot_clock,Some(ChariotClock::Surviving(_)))
         &&state.view.run.as_ref().is_some_and(|r|r.regional_event.chariot&&r.regional_event.stormveil==Some(erdtree_tower::stormveil::Progress::Running));
@@ -2000,7 +2036,11 @@ fn tick_locked() {
     if let Some((started, mut next)) = state.reward_wait.take() {
         use super::reward_delay::ResultState;
         // 联机时摸传送门只登记“已进入”，等全员（倒下的除外）都进入后由房主发奖励
-        let touched=state.reward_portal.armed()&&super::native_talk::flag(45020971).unwrap_or(false);
+        let touched=state.reward_portal.armed()&&(state.skip_portal||super::native_talk::flag(45020971).unwrap_or(false));
+        // 跳过本关（房主）：不等队友摸传送门，直接通知全队领奖
+        if state.skip_portal&&state.reward_portal.armed()&&let Some(link)=state.party.as_mut()&&link.host()&&link.victory&&!link.rewards {
+            if let Err(error)=link.force_rewards(){report(&mut state,error);}else{super::log("SKIP party rewards opened by host");}
+        }
         let entered=state.party.as_mut().is_some_and(|p|touched&&!p.rewards&&!std::mem::replace(&mut p.portal,true));
         let portal_used=state.party.as_ref().map_or(touched,|p|p.rewards);
         // 最后一幕的 Boss：没有三选一，传送门直接结束旅程
@@ -2012,6 +2052,7 @@ fn tick_locked() {
                 return;
             }
             ResultState::PlayerDied => {
+                state.skip_portal=false;
                 let _ = super::native_talk::set_flag(45020970, false);
                 let _ = super::native_talk::set_flag(45020971, false);
                 let _ = next.observe_hp(0);
@@ -2025,6 +2066,7 @@ fn tick_locked() {
                 return;
             }
             ResultState::Ready => {
+                state.skip_portal=false;
                 if let Some(link)=state.party.as_mut(){if let Err(error)=link.open_rewards(){link.stop(error.clone());report(&mut state,error);return;}}
                 let _ = super::native_talk::set_flag(45020970, false);
                 let _ = super::native_talk::set_flag(45020971, false);
@@ -2161,8 +2203,14 @@ fn tick_locked() {
     };
     let party_mode=state.party.is_some();
     let stall_authority=state.party.as_ref().is_none_or(|p|p.host());
+    let skip_party=state.party.as_ref().map(|p|(p.host(),p.fighting));let skip_requested=state.skip_fight;
     let pending=state.pending.as_mut().unwrap();
     let (outcome, enemy_hp, bound) = poll_group(pending, world, player_dead&&!party_mode, block,stall_authority);
+    let node=if let Phase::Combat{id}=pending.next_run.phase {Some(id)}else{None};
+    let skipped=skip_fight_due(skip_requested,node,bound,player_dead,skip_party);
+    // 跳过本关：撤下还活着的敌人，视为胜利（没生成的不再生成）；联机成员收到胜利后照常清掉本地残留的敌人
+    let outcome=if skipped {retire_group(pending,world);Outcome::Victory}else{outcome};
+    let pending=state.pending.as_mut().unwrap();
     // 联机「精英成双」：还在等前一只的精英没请求过生成，不算未绑定（否则全队等不到开战）
     let all_bound=pending.foes.iter().all(|foe|foe.fight.handle().is_some()||foe.requested.is_none())&&pending.foes.iter().any(|foe|foe.fight.handle().is_some());
     if let Some(link)=state.party.as_mut(){link.bound=all_bound;}
@@ -2219,6 +2267,7 @@ fn tick_locked() {
         state.view.enemy_hp = enemy_hp;
         return;
     }
+    if outcome!=Outcome::Victory {state.skip_fight=None;}
     if outcome==Outcome::Victory {
         if let Some(link)=state.party.as_mut(){
             if let Err(error)=link.result(){
@@ -2270,6 +2319,7 @@ fn tick_locked() {
             world.summon_buddy_manager.disappear_requested=true;
             state.reward_wait = Some((Instant::now(), next));
             state.reward_portal=Default::default();
+            if state.skip_fight.take().is_some() {state.skip_portal=true;super::log("SKIP fight judged as victory");}
             state.view.busy = true;
             report(&mut state, format!("敌人已击败，传送门即将出现。{healed}"));
         }

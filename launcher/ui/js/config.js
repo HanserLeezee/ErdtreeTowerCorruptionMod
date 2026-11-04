@@ -251,6 +251,7 @@ window.HOYO_CONFIG = {
               { type: 'select', key: 'key.archive', label: '旅程档案', value: 'J', options: KEY_CHOICES },
               { type: 'select', key: 'key.build', label: '构筑面板（地图界面）', value: 'C', options: KEY_CHOICES },
               { type: 'select', key: 'key.debug', label: '调试菜单', value: 'Delete', options: KEY_CHOICES },
+              { type: 'select', key: 'key.skip', label: '跳过本关', hint: '战斗中视为胜利，直接到三选一；联机只有房主能用', value: 'End', options: KEY_CHOICES },
             ],
           },
         ],

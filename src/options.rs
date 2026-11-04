@@ -18,10 +18,12 @@ pub enum Hotkey {
     Archive,
     Build,
     Debug,
+    /// 跳过本关：视为本场战斗胜利，直接到三选一（联机只有房主能用）
+    Skip,
 }
 
 impl Hotkey {
-    pub const ALL: [Hotkey; 5] = [Hotkey::Settle, Hotkey::Overlay, Hotkey::Archive, Hotkey::Build, Hotkey::Debug];
+    pub const ALL: [Hotkey; 6] = [Hotkey::Settle, Hotkey::Overlay, Hotkey::Archive, Hotkey::Build, Hotkey::Debug, Hotkey::Skip];
     pub fn id(self) -> &'static str {
         match self {
             Hotkey::Settle => "settle",
@@ -29,6 +31,7 @@ impl Hotkey {
             Hotkey::Archive => "archive",
             Hotkey::Build => "build",
             Hotkey::Debug => "debug",
+            Hotkey::Skip => "skip",
         }
     }
     pub fn default_key(self) -> &'static str {
@@ -38,6 +41,7 @@ impl Hotkey {
             Hotkey::Archive => "J",
             Hotkey::Build => "C",
             Hotkey::Debug => "Delete",
+            Hotkey::Skip => "End",
         }
     }
 }
@@ -57,7 +61,7 @@ pub const KEYS: &[&str] = &[
 pub struct Options {
     pub debug: bool,
     pub dlc: crate::dlc::Mode,
-    keys: [&'static str; 5],
+    keys: [&'static str; 6],
     /// 界面音效音量（0–100）
     pub sfx: u8,
 }
@@ -115,7 +119,7 @@ mod tests {
     fn missing_or_empty_file_keeps_the_original_keys() {
         let options = parse("");
         assert!(!options.debug);
-        assert_eq!(Hotkey::ALL.map(|h| options.key(h)), ["Home", "Insert", "J", "C", "Delete"]);
+        assert_eq!(Hotkey::ALL.map(|h| options.key(h)), ["Home", "Insert", "J", "C", "Delete", "End"]);
     }
 
     #[test]

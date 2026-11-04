@@ -22,6 +22,7 @@ namespace Tower.Launcher
             ("archive", "旅程档案", "J"),
             ("build", "构筑面板", "C"),
             ("debug", "调试菜单", "Delete"),
+            ("skip", "跳过本关", "End"),
         };
 
         /// <summary>DLC 模式：设置页显示的文字 ↔ 文件里的 dlc= 值（src/dlc.rs 的 Mode）</summary>

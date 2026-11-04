@@ -6,13 +6,15 @@ use crate::native_settings_keys;
 static CONFIG: OnceLock<std::path::PathBuf> = OnceLock::new();
 static SAVED: Mutex<[u8; 8]> = Mutex::new([0; 8]);
 static LIVE_KEYS: OnceLock<[AtomicU8; 5]> = OnceLock::new();
+/// 游戏设置页（外部 tower_native_settings.dll，接口 v3 固定 5 个按键槽）管的键；「跳过本关」只在启动器里改键，由 imgui 读
+const NATIVE: [Hotkey; 5] = [Hotkey::Settle, Hotkey::Overlay, Hotkey::Archive, Hotkey::Build, Hotkey::Debug];
 static BINDINGS: AtomicBool = AtomicBool::new(false);
 static PENDING: AtomicU8 = AtomicU8::new(0);
 static FRAME: AtomicU8 = AtomicU8::new(0);
 pub fn begin_frame() {FRAME.store(PENDING.swap(0,Ordering::AcqRel),Ordering::Release);}
-pub fn take_pressed(key:Hotkey)->Option<bool> {BINDINGS.load(Ordering::Acquire).then(||FRAME.fetch_and(!(1 << key as u8),Ordering::AcqRel)&(1 << key as u8)!=0)}
+pub fn take_pressed(key:Hotkey)->Option<bool> {(BINDINGS.load(Ordering::Acquire)&&NATIVE.contains(&key)).then(||FRAME.fetch_and(!(1 << key as u8),Ordering::AcqRel)&(1 << key as u8)!=0)}
 unsafe extern "C" fn activate(slot:u32) {if slot<5 && !crate::input::active() {PENDING.fetch_or(1 << slot,Ordering::AcqRel);}}
-pub fn live_key(key: Hotkey) -> Option<&'static str> { LIVE_KEYS.get().and_then(|keys| KEYS.get(keys[key as usize].load(Ordering::Acquire) as usize).copied()) }
+pub fn live_key(key: Hotkey) -> Option<&'static str> { LIVE_KEYS.get().filter(|_|NATIVE.contains(&key)).and_then(|keys| KEYS.get(keys.get(key as usize)?.load(Ordering::Acquire) as usize).copied()) }
 const NAMES: [&str; 8] = ["debug", "sfx", "dlc", "key.settle", "key.overlay", "key.archive", "key.build", "key.debug"];
 
 #[link(name="kernel32")]
@@ -96,14 +98,14 @@ pub fn init(module: Option<std::path::PathBuf>) {
     let mut initial = [0u8; 8];
     initial[0] = u8::from(options.debug); initial[1] = options.sfx;
     initial[2] = match options.dlc.id() { "none" => 1, "weapons" => 2, _ => 0 };
-    for (i, key) in Hotkey::ALL.iter().enumerate() { initial[i+3] = KEYS.iter().position(|name| *name == options.key(*key)).unwrap_or(0) as u8; }
+    for (i, key) in NATIVE.iter().enumerate() { initial[i+3] = KEYS.iter().position(|name| *name == options.key(*key)).unwrap_or(0) as u8; }
     let folder = root.join("native-ui");
     for name in ["ERNativeUI.dll", "tower_native_settings.dll"] {
         if !folder.join(name).is_file() { crate::log(format!("NATIVE_SETTINGS unavailable: {name} missing")); return; }
     }
     let previous=initial;
-    let defaults: [u32;5]=Hotkey::ALL.map(|key|native_settings_keys::code(key.default_key()).unwrap());
-    for i in 0..5 {if native_settings_keys::code(KEYS[initial[i+3] as usize]).is_none(){initial[i+3]=KEYS.iter().position(|key|*key==Hotkey::ALL[i].default_key()).unwrap() as u8;}}
+    let defaults: [u32;5]=NATIVE.map(|key|native_settings_keys::code(key.default_key()).unwrap());
+    for i in 0..5 {if native_settings_keys::code(KEYS[initial[i+3] as usize]).is_none(){initial[i+3]=KEYS.iter().position(|key|*key==NATIVE[i].default_key()).unwrap() as u8;}}
     if previous!=initial {
         if let Err(error)=persist(&root.join(FILE),&previous,&initial){crate::log(format!("NATIVE_SETTINGS binding migration failed: {error}"));return;}
         crate::log("NATIVE_SETTINGS unsupported F/Pause/ScrollLock bindings migrated to native defaults");
@@ -131,7 +133,7 @@ mod tests {
     use super::*;
     fn initial_keys() -> [u8;8] {
         let mut values = [0;8];
-        for (i, key) in Hotkey::ALL.iter().enumerate() { values[i+3]=KEYS.iter().position(|name| *name==key.default_key()).unwrap() as u8; }
+        for (i, key) in NATIVE.iter().enumerate() { values[i+3]=KEYS.iter().position(|name| *name==key.default_key()).unwrap() as u8; }
         values
     }
     #[test]

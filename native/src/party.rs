@@ -243,6 +243,12 @@ impl Link {
         let order=self.gate.event_abort(wave)?;
         self.send(Send::Broadcast(order.clone()))?;self.accept(&order)?;Ok(())
     }
+    /// 跳过本关（房主）：不等队友摸传送门，直接通知全队领奖
+    pub fn force_rewards(&mut self)->Result<(),String>{
+        if let Some(error)=&self.stopped{return Err(error.clone());}
+        if !self.host(){return Err("只有房主可以跳过本关".into());}
+        if self.victory&&!self.rewards {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
+    }
     pub fn open_rewards(&mut self)->Result<(),String>{
         if let Some(error)=&self.stopped{return Err(error.clone());}
         if self.host()&&!self.rewards&&self.gate.rewards().is_some() {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
