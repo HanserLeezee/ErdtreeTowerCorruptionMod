@@ -548,6 +548,20 @@ mod tests {
         assert!(seen);
     }
     #[test]
+    fn act_two_casters_are_available_in_solo_and_coop_with_existing_slots() {
+        for model in [3702,4110,5311] {
+            let spec=*POOLS.iter().find(|e|e.model==model).unwrap();
+            assert_eq!((spec.act,spec.kind),(2,NodeKind::Monster));
+            assert!(!spec.retired);assert!(!spec.solo);
+            assert_eq!(spec.dlc,model==5311);
+            assert_eq!(map_entities(&[spec;4]).unwrap().len(),4);
+            if spec.dlc&&!erdtree_tower::dlc::enemies_allowed(){continue;}
+            for party in [false,true] {
+                assert!((0..800).any(|seed|roster_in(NodeKind::Monster,seed,seed as usize%24,0,2,party).iter().any(|e|e.model==model)),"caster {model}, party={party}");
+            }
+        }
+    }
+    #[test]
     fn trivial_weak_enemies_leave_the_act_two_and_three_pools() {
         for act in 2..=3 {for seed in 0..600 {
             for e in roster_in(NodeKind::Monster,seed,seed as usize%24,seed as usize%12,act,false) {
@@ -555,7 +569,7 @@ mod tests {
                 if e.kind==NodeKind::Monster {assert!(!["辉石矿工","巨蚁","罪人","圣树士兵","腐败野狗","梅瑟莫士兵"].contains(&e.name),"{}",e.name);}
             }
         }}
-        assert_eq!(POOLS.iter().filter(|e|e.retired&&e.kind==NodeKind::Monster&&e.act>=2).count(),32);
+        assert_eq!(POOLS.iter().filter(|e|e.retired&&e.kind==NodeKind::Monster&&e.act>=2).count(),29);
     }
     #[test]
     fn slow_enemies_leave_the_act_two_and_three_pools() {

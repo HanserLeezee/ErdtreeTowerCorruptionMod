@@ -48,9 +48,20 @@ modes=modes.Concat(new[]{"event-host-visibility-patch","event-host-visibility-te
 modes=modes.Append("event-host-entity-patch").ToArray();
 modes=modes.Append("event-host-name-patch").ToArray();
 modes=modes.Append("portal-persist-patch").ToArray();
+modes=modes.Append("slim-assets").ToArray();
+modes=modes.Append("mausoleum-patch").ToArray();
+modes=modes.Append("mausoleum-startup-fix").ToArray();
+modes=modes.Concat(new[]{"mausoleum-display-test","mausoleum-display-patch"}).ToArray();
+modes=modes.Concat(new[]{"dragonlord-arrival-test","dragonlord-arrival-patch"}).ToArray();
 if(args.Length<4||!modes.Contains(args[3])||args.Length!=4||args.Take(3).Any(modes.Contains)){Console.Error.WriteLine("Usage: SceneBuilder <game> <output> <cache> <mode>"+(args.Length>3?" (rejected: "+string.Join(" ",args.Skip(3))+")":"")+"\nModes: "+string.Join(" ",modes));Environment.Exit(2);}
 var game=args[0];var output=args[1];var cache=args[2];
+if(args[3]=="slim-assets") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(game,"oo2core_6_win64.dll"));
+    SlimAssets.Build(game,output,cache);return;
+}
 if(args.Contains("personal-events-test")){PersonalEvents.Test();return;}
+if(args.Contains("mausoleum-display-test")){MausoleumAssets.TestDisplay();return;}
+if(args.Contains("dragonlord-arrival-test")){DragonlordArrival.Test();return;}
 if(args.Contains("portal-reveal-test")){PortalReveal.Test();return;}
 if(args.Contains("portal-arch-test")){PortalArchTests.Test();return;}
 if(args.Contains("dormant-loading-test")){DormantLoadingAssets.Test();return;}
@@ -58,6 +69,10 @@ if(args.Contains("party-enemy-events-test")){PartyEnemyEvents.Test();return;}
 if(args.Contains("affix-text-test")){AffixTextFix.Test(cache);return;}
 if(args.Contains("boss-bar-name-test")){BossAssets.TestBarNames(cache);return;}
 Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(game,"oo2core_6_win64.dll"));
+if(args.Contains("mausoleum-patch")){MausoleumAssets.Patch(cache,output,Environment.GetEnvironmentVariable("TOWER_MAUSOLEUM_SOURCE")??throw new Exception("Set TOWER_MAUSOLEUM_SOURCE to the extracted native m12_03 resources"));return;}
+if(args.Contains("mausoleum-startup-fix")){MausoleumAssets.FixStartup(cache,output);return;}
+if(args.Contains("mausoleum-display-patch")){MausoleumAssets.PatchDisplay(cache,output,Environment.GetEnvironmentVariable("TOWER_MAUSOLEUM_SOURCE")??throw new Exception("Set TOWER_MAUSOLEUM_SOURCE"));return;}
+if(args.Contains("dragonlord-arrival-patch")){DragonlordArrival.Patch(cache,output);return;}
 if(args.Contains("portal-rise-patch")){PortalRiseAssets.Patch(game,cache,output);return;}
 if(args.Contains("portal-size-patch")){PortalSizeAssets.Patch(game,cache,output);return;}
 if(args.Contains("portal-arch-patch")){PortalArchAssets.Patch(game,cache,output);return;}

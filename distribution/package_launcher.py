@@ -13,7 +13,9 @@ from release_pack import build, collect
 
 def is_launcher(path):
     name = path.lower()
-    return name in ('erdtreetowerlauncher.exe', 'erdtreetowerlauncher.exe.config') or name.startswith('launcher/')
+    return name in ('erdtreetowerlauncher.exe', 'erdtreetowerlauncher.exe.config',
+                    'start-tower.ps1', 'launch-logged.ps1', 'tower-loader.ps1',
+                    'launch-preview.ps1', 'launch-seamless-tower.ps1') or name.startswith(('launcher/', 'loader/yafsml/'))
 
 
 def build_update(stage, previous, version, launcher_version, output, notes=''):
@@ -80,6 +82,11 @@ def main():
         shutil.copy2(published / 'runtimes/win-x64/native/WebView2Loader.dll', stage / 'launcher/WebView2Loader.dll')
         shutil.copytree(published / 'launcher/ui', stage / 'launcher/ui')
         shutil.copy2(published / 'launcher/sources.json', stage / 'launcher/sources.json')
+        for name in ('Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1'):
+            shutil.copy2(project / 'distribution' / name, stage / name)
+        for name in ('Launch-Preview.ps1', 'Launch-Seamless-Tower.ps1'):
+            shutil.copy2(project / name, stage / name)
+        shutil.copytree(project / 'loader/yafsml', stage / 'loader/yafsml')
         release = build_update(stage, args.previous, args.build_number, version, args.output,
                                args.notes.read_text(encoding='utf-8') if args.notes else '')
     mirror = args.output / 'mirror/releases'

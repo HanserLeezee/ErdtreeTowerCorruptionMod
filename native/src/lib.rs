@@ -24,6 +24,8 @@ mod blessings;
 mod pad;
 mod retry_item;
 mod options;
+mod native_settings;
+mod native_settings_keys;
 mod radahn_probe;
 mod radahn_entity;
 mod mausoleum;
@@ -86,6 +88,7 @@ mod bloodstain;
 mod run_screen;
 mod runtime;
 mod party;
+mod party_latency;
 mod travel;
 mod grace_travel;
 mod arenas;
@@ -335,9 +338,10 @@ impl ImguiRenderLoop for TowerPreview {
 
     fn render(&mut self, ui: &mut Ui) {
         diagnostics::frame();
+        native_settings::begin_frame();
         // 按键提示跟着最后用的设备切换（手柄 / 键鼠）
         pad::update(ui);
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Settle)) {
+        if options::pressed(ui,Hotkey::Settle) {
             if runtime::PLAYER_READY.load(Ordering::Relaxed) {
                 runtime::QUICK_END.store(true,Ordering::Relaxed);
                 log("Home: quick settlement requested");
@@ -349,7 +353,7 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let view = runtime::view();
         let map_open=self.visible&&view.as_ref().and_then(|v|v.run.as_ref()).or(self.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Map));
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Overlay))&&!map_open {
+        if options::pressed(ui,Hotkey::Overlay)&&!map_open {
             self.visible = !self.visible;
             log(format!("F10: visible={}", self.visible));
         }
@@ -363,10 +367,10 @@ impl ImguiRenderLoop for TowerPreview {
         }
         // J：旅程档案（往期旅程与图鉴），战斗中不响应；档案打开时同一个键负责关闭
         let fighting=view.as_ref().and_then(|v|v.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Archive))&&!fighting&&!ui.io().want_text_input&&!run_screen::active()&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
+        if !run_screen::active()&&options::pressed(ui,Hotkey::Archive)&&!fighting&&!ui.io().want_text_input&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
         let rewards=&mut self.rewards;
         let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Debug)) {debug_menu::toggle();}
+        if options::pressed(ui,Hotkey::Debug) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
         if self.visible&&!run_screen&&let Some(combat)=view.as_ref().filter(|v|v.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Combat{..}))) {
             let draw=ui.get_foreground_draw_list();
@@ -489,6 +493,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
             }
             return;
         }
+        native_settings::init(diagnostics::module_path(address));
         render_diagnostics::install();
         log("Executable version accepted; installing DX12 hooks");
         let result = Hudhook::builder()

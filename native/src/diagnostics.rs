@@ -63,15 +63,19 @@ pub fn watchdog() {
 #[derive(Default)]
 pub struct Changes {last:String,at:Option<Instant>}
 #[derive(Default)]
-pub struct LoadTrace {started:Option<Instant>,last_stage:String,last_sample:Option<Instant>,triggered:bool}
+pub struct LoadTrace {started:Option<Instant>,last_stage:String,last_state:String,last_sample:Option<Instant>,triggered:bool}
 impl LoadTrace {
+    #[cfg(test)]
     pub fn observe(&mut self,now:Instant,trigger:bool,stage:&str,detail:&str)->Option<String> {
-        if trigger&&!self.triggered {self.started=Some(now);self.last_stage.clear();self.last_sample=None;}
+        self.observe_state(now,trigger,stage,"",detail)
+    }
+    pub fn observe_state(&mut self,now:Instant,trigger:bool,stage:&str,state:&str,detail:&str)->Option<String> {
+        if trigger&&!self.triggered {self.started=Some(now);self.last_stage.clear();self.last_state.clear();self.last_sample=None;}
         self.triggered=trigger;
         let start=self.started?;let elapsed=now.saturating_duration_since(start).as_millis();
         let terminal=matches!(stage,"combat_ready"|"room_ready")||elapsed>=180_000;
-        if !terminal&&stage==self.last_stage&&self.last_sample.is_some_and(|t|now.saturating_duration_since(t)<Duration::from_secs(5)){return None;}
-        self.last_stage=stage.into();self.last_sample=Some(now);
+        if !terminal&&stage==self.last_stage&&state==self.last_state&&self.last_sample.is_some_and(|t|now.saturating_duration_since(t)<Duration::from_secs(5)){return None;}
+        self.last_stage=stage.into();self.last_state=state.into();self.last_sample=Some(now);
         if terminal{self.started=None;}
         Some(format!("LOAD_TRACE elapsed_ms={elapsed} stage={stage} end={terminal} {detail}"))
     }
@@ -84,6 +88,16 @@ impl Changes {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn load_state_changes_are_immediate_but_position_does_not_flood_log() {
+        use super::*;
+        let now=Instant::now(); let mut trace=LoadTrace::default();
+        assert!(trace.observe_state(now,true,"not_grounded","gravity=1","position=0").is_some());
+        assert!(trace.observe_state(now+Duration::from_millis(250),true,"not_grounded","gravity=1","position=1").is_none());
+        assert!(trace.observe_state(now+Duration::from_millis(500),true,"not_grounded","gravity=0","position=1").is_some());
+        assert!(trace.observe_state(now+Duration::from_millis(750),true,"not_grounded","gravity=0","position=2").is_none());
+        assert!(trace.observe_state(now+Duration::from_millis(5500),true,"not_grounded","gravity=0","position=3").is_some());
+    }
     use super::*;
     #[test]
     fn load_trace_separates_map_readiness_and_battle_and_limits_repeated_logs() {

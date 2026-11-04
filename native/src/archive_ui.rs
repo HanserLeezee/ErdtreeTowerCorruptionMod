@@ -98,7 +98,7 @@ pub fn draw(ui:&Ui,archive:&mut Archive,icon:&mut dyn FnMut(u32)->Option<Texture
     let opened=*archive.opened.get_or_insert(ui.time());let ready=ui.time()-opened>=0.3;
     let pressed=|keys:&[Key]|ready&&!ui.io().want_text_input&&keys.iter().any(|k|ui.is_key_pressed(*k));
     let mut action=None;
-    if pressed(&[Key::Escape,Key::GamepadFaceRight,crate::options::key(erdtree_tower::options::Hotkey::Archive),Key::GamepadBack]) {action=Some(ArchiveAction::Close);}
+    if pressed(&[Key::Escape,Key::GamepadFaceRight,Key::GamepadBack]) || (ready&&!ui.io().want_text_input&&crate::options::pressed(ui,erdtree_tower::options::Hotkey::Archive)) {action=Some(ArchiveAction::Close);}
     if pressed(&[Key::E,Key::GamepadR1]) {archive.tab=(archive.tab+1)%TABS.len();archive.follow=true;}
     if pressed(&[Key::Q,Key::GamepadL1]) {archive.tab=(archive.tab+TABS.len()-1)%TABS.len();archive.follow=true;}
     let layout=layout(archive);

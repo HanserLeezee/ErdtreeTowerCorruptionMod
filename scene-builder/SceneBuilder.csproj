@@ -5,5 +5,8 @@
     <ProjectReference Include="$(TowerDependencies)SoulsFormats/SoulsFormats/SoulsFormats.csproj" />
     <Compile Include="$(TowerDependencies)UXM/UXM/ArchiveKeys.cs" Link="ArchiveKeys.cs" />
     <Compile Include="$(TowerDependencies)UXM/UXM/CryptographyUtility.cs" Link="CryptographyUtility.cs" />
+    <Compile Include="../distribution/AssetRestore/AssetPatch.cs" Link="AssetPatch.cs" />
+    <Compile Include="../distribution/AssetRestore/Recipe.cs" Link="Recipe.cs" />
+    <Compile Include="../distribution/AssetRestore/IconCodec.cs" Link="IconCodec.cs" />
   </ItemGroup>
 </Project>

@@ -3,10 +3,10 @@
 //!   debug=1              打开调试菜单（和放一个 tower-debug.enable 文件效果相同）
 //!   dlc=full             DLC 内容：full 有 DLC；none 没有 DLC；weapons 没有 DLC 但保留 DLC 武器（实验）。只对单人生效，见 dlc.rs
 //!   key.settle=Home      快速结算（暂离结束本局）
-//!   key.overlay=F10      显示/隐藏爬塔界面
+//!   key.overlay=Insert   显示/隐藏爬塔界面
 //!   key.archive=J        旅程档案
 //!   key.build=C          构筑面板（地图界面）
-//!   key.debug=F8         调试菜单
+//!   key.debug=Delete     调试菜单；None 表示未绑定
 //!   sfx=70               界面音效音量（0–100，0 为关闭）
 
 pub const FILE: &str = "tower-options.ini";
@@ -34,16 +34,18 @@ impl Hotkey {
     pub fn default_key(self) -> &'static str {
         match self {
             Hotkey::Settle => "Home",
-            Hotkey::Overlay => "F10",
+            Hotkey::Overlay => "Insert",
             Hotkey::Archive => "J",
             Hotkey::Build => "C",
-            Hotkey::Debug => "F8",
+            Hotkey::Debug => "Delete",
         }
     }
 }
 
 /// 可以绑定的键（imgui 能识别的键盘键）；数字键写成 0–9，小键盘写成 Num0–Num9
 pub const KEYS: &[&str] = &[
+    "None", "Backspace", "Tab", "Enter", "LeftCtrl", "RightCtrl", "LeftShift", "RightShift", "LeftAlt", "RightAlt", "Space",
+    "Up", "Down", "Left", "Right", "NumEnter", "NumMultiply", "NumSubtract", "NumAdd", "NumDecimal", "NumDivide",
     "Home", "End", "Insert", "Delete", "PageUp", "PageDown", "Pause", "ScrollLock",
     "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
     "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
@@ -113,7 +115,7 @@ mod tests {
     fn missing_or_empty_file_keeps_the_original_keys() {
         let options = parse("");
         assert!(!options.debug);
-        assert_eq!(Hotkey::ALL.map(|h| options.key(h)), ["Home", "F10", "J", "C", "F8"]);
+        assert_eq!(Hotkey::ALL.map(|h| options.key(h)), ["Home", "Insert", "J", "C", "Delete"]);
     }
 
     #[test]

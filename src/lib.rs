@@ -8,6 +8,7 @@ pub mod party_law;
 pub mod party_vote;
 pub mod party_roster;
 pub mod party_handshake;
+pub mod party_latency;
 pub mod party_events;
 pub mod map_drawing;
 pub mod contracts;
@@ -464,8 +465,40 @@ mod map_compatibility {
                     NodeKind::Chest=>run.finish_chest().unwrap(),NodeKind::Event=>run.resolve_event(false).unwrap(),
                 }
             }
-            assert_eq!(run.act,2);assert_eq!(run.floors(),16);assert_eq!(run.schema,6);
+            assert_eq!(run.act,2);assert_eq!(run.floors(),16);assert_eq!(run.schema,7);
             assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+        }
+    }
+    #[test]
+    fn route_limits_cover_every_branch_and_all_acts() {
+        fn walk(nodes:&[Node],id:usize,shops:usize) {
+            let node=&nodes[id];let shops=shops+usize::from(node.kind==NodeKind::Shop);
+            assert!(shops<=3,"more than three shops on a route at {id}");
+            if node.layer<5 {assert_ne!(node.kind,NodeKind::Elite);}
+            for &next in &node.next {walk(nodes,next,shops);}
+        }
+        let mut later_elites=0;let mut shops=0;
+        for seed in 0..1000 {
+            let mut run=Run::new(seed,Class::Samurai);
+            for act in 1..=3 {
+                let old=camp_graph(run.seed);
+                for (id,node) in run.nodes.iter().enumerate() {
+                    assert_eq!(node.next,old[id].next);
+                    later_elites+=usize::from(node.kind==NodeKind::Elite);
+                    shops+=usize::from(node.kind==NodeKind::Shop);
+                }
+                for start in run.start_nodes() {walk(&run.nodes,start,0);}
+                assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+                if act<3 {run.finish(run.nodes.len()-1);}
+            }
+        }
+        assert!(later_elites>0&&shops>0);
+    }
+    #[test]
+    fn previous_camp_maps_remain_unchanged_on_load() {
+        for seed in 0..100 {
+            let mut old=Run::new(seed,Class::Samurai);old.schema=6;old.nodes=camp_graph(seed);
+            assert_eq!(Run::decode(&old.encode().unwrap()).unwrap(),old);
         }
     }
     #[test]
@@ -603,6 +636,19 @@ fn camp_graph(seed:u64)->Vec<Node> {
     space_rest_nodes(nodes)
 }
 
+fn route_graph(seed:u64)->Vec<Node> {
+    let mut nodes=camp_graph(seed);
+    let mut shops=vec![0usize;nodes.len()];
+    for id in 0..nodes.len() {
+        if (nodes[id].layer<5&&nodes[id].kind==NodeKind::Elite)
+            ||(nodes[id].kind==NodeKind::Shop&&shops[id]>=3) {nodes[id].kind=NodeKind::Monster;}
+        let count=shops[id]+usize::from(nodes[id].kind==NodeKind::Shop);
+        // Nodes are ordered by layer; merging routes inherit the largest shop count.
+        for &next in &nodes[id].next {shops[next]=shops[next].max(count);}
+    }
+    nodes
+}
+
 fn space_rest_nodes(mut nodes:Vec<Node>)->Vec<Node> {
     let rest=|kind|matches!(kind,NodeKind::Chest|NodeKind::Camp);
     for id in (0..nodes.len()).rev() {
@@ -620,7 +666,7 @@ impl Run {
     pub fn floors(&self)->usize {self.nodes.last().map_or(0,|n|n.layer+1)}
     pub fn new(seed: u64, class: Class) -> Self {
         Self {
-            schema: 6,
+            schema: 7,
             affix_equipment: true,
             affix_rules: 5,
             boss_reward_rules: 2,
@@ -655,7 +701,7 @@ impl Run {
             spirit_peak: Some(0),
             spirit_rules: 1,
             class,
-            nodes: camp_graph(seed),
+            nodes: route_graph(seed),
             phase: Phase::Map,
             visited: vec![],
             hp: 100,
@@ -730,7 +776,7 @@ impl Run {
         if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {
             return Err("已有旅程不能替换路线，请从大赐福开始共同旅程".into());
         }
-        let mut next=self.clone();next.seed=seed;next.initial_seed=Some(seed);next.schema=6;next.nodes=camp_graph(seed);
+        let mut next=self.clone();next.seed=seed;next.initial_seed=Some(seed);next.schema=7;next.nodes=route_graph(seed);
         next.validate()?;*self=next;Ok(())
     }
 
@@ -802,8 +848,8 @@ impl Run {
             self.flasks=self.flask_limit;
             self.seed=mix(self.seed^u64::from(self.act));
             if let Some(old)=&self.contract {self.contract=Some(old.next_act(self.reward_seed(),self.class,self.act));}
-            self.schema=6;
-            self.nodes=camp_graph(self.seed);
+            self.schema=7;
+            self.nodes=route_graph(self.seed);
             self.visited.clear();
             self.phase=Phase::Map;
             return;
@@ -1157,14 +1203,14 @@ impl Run {
         let fail = || Err("存档状态不合法或版本不受支持".into());
         if self.boss_test.is_some_and(|t|!self.debug||!(1..=3).contains(&t.act)||t.encounter>=4096){return fail();}
         if self.mausoleum_test.is_some_and(|(act,id)|!self.debug||!(1..=3).contains(&act)||act==self.act&&self.nodes.get(id).is_none_or(|n|n.kind!=NodeKind::Event)){return fail();}
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>2||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>2||self.scaling_rules>1
+        if ![1,2,3,4,5,6,7].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>2||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>2||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
             || self.elite_buffs.iter().collect::<std::collections::BTreeSet<_>>().len()!=self.elite_buffs.len()
             || !self.valid_regional_event()
             || !(1..=3).contains(&self.act)
-            || self.nodes != match self.schema {1=>legacy_graph(self.seed),2=>graph(self.seed),3=>balanced_graph(self.seed),4=>expedition_graph(self.seed),5=>spaced_graph(self.seed),_=>camp_graph(self.seed)}
+            || self.nodes != match self.schema {1=>legacy_graph(self.seed),2=>graph(self.seed),3=>balanced_graph(self.seed),4=>expedition_graph(self.seed),5=>spaced_graph(self.seed),6=>camp_graph(self.seed),_=>route_graph(self.seed)}
             || self.max_hp == 0
             || self.max_hp > 100
             || self.hp > self.max_hp

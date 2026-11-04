@@ -25,16 +25,25 @@ static OPTIONS:LazyLock<Options>=LazyLock::new(||std::fs::read_to_string(path())
 
 pub fn get()->&'static Options {&OPTIONS}
 /// 绑定到某个功能的键在界面上的写法（如 Home、F10、J）
-pub fn label(hotkey:Hotkey)->&'static str {OPTIONS.key(hotkey)}
-pub fn key(hotkey:Hotkey)->Key {to_key(OPTIONS.key(hotkey)).unwrap_or_else(||to_key(hotkey.default_key()).unwrap_or(Key::Home))}
+pub fn label(hotkey:Hotkey)->&'static str {crate::native_settings::live_key(hotkey).unwrap_or_else(||OPTIONS.key(hotkey))}
+pub fn key(hotkey:Hotkey)->Key {to_key(label(hotkey)).unwrap_or_else(||to_key(hotkey.default_key()).unwrap_or(Key::Home))}
+pub fn pressed(ui:&hudhook::imgui::Ui,hotkey:Hotkey)->bool {
+    if label(hotkey)=="None" {return false;}
+    if let Some(pressed)=crate::native_settings::take_pressed(hotkey) {
+        return pressed || (crate::input::active() && ui.is_key_pressed_no_repeat(key(hotkey)));
+    }
+    ui.is_key_pressed_no_repeat(key(hotkey))
+}
 
-fn to_key(name:&str)->Option<Key> {
+pub(crate) fn to_key(name:&str)->Option<Key> {
     use Key::*;
     const LETTERS:[Key;26]=[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z];
     const DIGITS:[Key;10]=[Alpha0,Alpha1,Alpha2,Alpha3,Alpha4,Alpha5,Alpha6,Alpha7,Alpha8,Alpha9];
     const PAD:[Key;10]=[Keypad0,Keypad1,Keypad2,Keypad3,Keypad4,Keypad5,Keypad6,Keypad7,Keypad8,Keypad9];
     const FUNCTION:[Key;12]=[F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12];
     Some(match name {
+        "Backspace"=>Backspace,"Tab"=>Tab,"Enter"=>Enter,"LeftCtrl"=>LeftCtrl,"RightCtrl"=>RightCtrl,"LeftShift"=>LeftShift,"RightShift"=>RightShift,"LeftAlt"=>LeftAlt,"RightAlt"=>RightAlt,"Space"=>Space,
+        "Up"=>UpArrow,"Down"=>DownArrow,"Left"=>LeftArrow,"Right"=>RightArrow,"NumEnter"=>KeypadEnter,"NumMultiply"=>KeypadMultiply,"NumSubtract"=>KeypadSubtract,"NumAdd"=>KeypadAdd,"NumDecimal"=>KeypadDecimal,"NumDivide"=>KeypadDivide,
         "Home"=>Home,"End"=>End,"Insert"=>Insert,"Delete"=>Delete,"PageUp"=>PageUp,"PageDown"=>PageDown,"Pause"=>Pause,"ScrollLock"=>ScrollLock,
         _ if name.len()==1&&name.as_bytes()[0].is_ascii_uppercase()=>LETTERS[(name.as_bytes()[0]-b'A') as usize],
         _ if name.len()==1&&name.as_bytes()[0].is_ascii_digit()=>DIGITS[(name.as_bytes()[0]-b'0') as usize],
@@ -48,6 +57,6 @@ fn to_key(name:&str)->Option<Key> {
 mod tests {
     #[test]
     fn every_bindable_name_maps_to_a_key() {
-        for name in erdtree_tower::options::KEYS {assert!(super::to_key(name).is_some(),"{name}");}
+        for name in erdtree_tower::options::KEYS {assert!(name==&"None"||super::to_key(name).is_some(),"{name}");}
     }
 }

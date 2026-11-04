@@ -86,7 +86,7 @@ mod tests {
     fn native_room_menus_never_capture_game_input() {
         let mut view = crate::runtime::View {
             shared_event:false,
-            ballots:vec![],
+            ballots:vec![],latencies:vec![],
             runes: 0,
             boss_affixes: None,
             boss_alert: None,
@@ -118,7 +118,7 @@ mod tests {
     fn initialization_blocks_actions_but_keeps_cursor_available() {
         let mut view = crate::runtime::View {
             shared_event:false,
-            ballots:vec![],
+            ballots:vec![],latencies:vec![],
             runes: 0,
             boss_affixes: None,
             boss_alert: None,

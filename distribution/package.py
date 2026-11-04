@@ -24,6 +24,7 @@ import re
 import xml.etree.ElementTree as ET
 from native_build import build_native
 from release_pack import build as build_release
+from resource_filter import include_scene_asset
 
 LATEST_MANIFEST = 'https://github.com/tamikip/erdtree-tower/releases/latest/download/tower-release.json'
 parser = argparse.ArgumentParser(description='Build the release folder, ZIP and launcher update pack')
@@ -34,6 +35,7 @@ parser.add_argument('--display-version', required=True, help='package version sh
 parser.add_argument('--build-number', type=int, help='explicit monotonically increasing release build')
 parser.add_argument('--upload', action='store_true', help='upload the mirror folder with ossutil afterwards (see upload_mirror.py)')
 parser.add_argument('--local-test', action='store_true', help='build a private test ZIP from local changes; never upload')
+parser.add_argument('--slim-game', type=Path, help='build a slim package using this verified local Game directory; first launch reconstructs large assets')
 args = parser.parse_args()
 if args.local_test and args.upload:
     parser.error('--local-test cannot be uploaded')
@@ -84,10 +86,13 @@ def copy_tree(src, relative):
                 continue
             if relative == 'scene-assets' and (item.name == 'generation.txt' or item.name.endswith('-build.json') or item.name.endswith('-audit.tsv') or item.suffix.lower() == '.png'):
                 continue
+            if relative == 'scene-assets' and not include_scene_asset(item.relative_to(src)):
+                continue
             copy_file(item, Path(relative) / item.relative_to(src))
 
 copy_file(built_native, native[0])
 copy_file(built_native.with_name('tower_transmog.dll'), 'tower_transmog.dll')
+copy_tree(built_native.parent / 'native-ui', 'native-ui')
 for name in ['LICENSE', 'ADDITIONAL-TERMS.md']:
     copy_file(source / name, name)
 (stage / 'preview.me3').write_text(profile, encoding='utf-8')
@@ -132,6 +137,9 @@ if args.local_test:
     (stage / 'BUILD-INFO.json').write_text(json.dumps({'localTest': True, 'gitHead': head, 'includesLocalChanges': bool(patch or extras), 'patchSha256': hashlib.sha256(patch).hexdigest(), 'additionalSourceHashes': extras}, ensure_ascii=False, indent=2), encoding='utf-8')
     if args.notes:
         (stage / '好友测试说明.txt').write_text(args.notes.read_text(encoding='utf-8'), encoding='utf-8-sig')
+if args.slim_game:
+    from slim_assets import prepare
+    prepare(project, stage, args.slim_game)
 files = sorted(p for p in stage.rglob('*') if p.is_file())
 for file in files:
     name = file.relative_to(stage).as_posix()

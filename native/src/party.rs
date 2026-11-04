@@ -14,6 +14,7 @@ struct Steam {
     transport:super::steam_messages::Transport,
     handshake:erdtree_tower::party_handshake::Handshake,
     roster:erdtree_tower::party_roster::Roster,
+    latency:super::party_latency::Tracker,
 }
 #[derive(Default)]
 pub struct EventSync {
@@ -146,7 +147,7 @@ impl Link {
         let config=Config{session,seed,player:roster.local,host:roster.host,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers};
         let (tx,_commands)=mpsc::sync_channel(1);let (_events,rx)=mpsc::sync_channel(1);
         let mut link=Self{gate:Gate::new(roster.members.clone()),config,epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
-            law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:Some(Steam{transport,handshake,roster}),queued:Default::default(),selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
+            law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:Some(Steam{transport,handshake,roster,latency:Default::default()}),queued:Default::default(),selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
         for (peer,packet) in packets {match steam_event(&link.config,peer,packet){Ok(Some(event))=>link.queued.push_back(event),Ok(None)=>{},Err(e)=>ignored(peer,&e)}}
         Ok(link)
     }
@@ -165,6 +166,10 @@ impl Link {
         self.ballots.retain(|b|!gone.contains(&b.player));
         steam.roster=next.clone();steam.transport.set_roster(next.clone());
         Some(gone)
+    }
+    pub fn latencies(&self)->Vec<erdtree_tower::party_latency::Row> {
+        if self.stopped.is_some(){return Vec::new();}
+        self.steam.as_ref().map_or_else(Vec::new,|s|s.latency.rows(&s.roster))
     }
     pub fn host(&self)->bool {self.config.player==self.config.host}
     pub fn chariot_pose(&mut self,pose:[f32;3])->Result<(),String> {
@@ -374,6 +379,7 @@ impl Link {
                     if guest&&peer!=host {ignored(peer,"非房主队员向队友发送消息");continue;}
                     let packet=match Payload::decode(&bytes){Ok(packet)=>packet,Err(e)=>{ignored(peer,&e);continue;}};
                     match packet {
+                        Payload::Latency{session,snapshot}=>{steam.latency.accept(&steam.roster,peer,session,self.config.session,snapshot);},
                         Payload::Handshake(message)=>for (target,response) in if lobby{steam.handshake.receive_lobby(peer,message)?}else{steam.handshake.receive(peer,message)?} {
                             steam.transport.send(target,&Payload::Handshake(response).encode()?)?;
                         },
@@ -387,6 +393,7 @@ impl Link {
                         },
                     }
                 }
+                steam.latency.poll(&steam.transport,&steam.roster,&self.last_seen,self.config.session);
         }
         Ok(())
     }

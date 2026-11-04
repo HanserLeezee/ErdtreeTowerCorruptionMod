@@ -1,12 +1,13 @@
 use serde::{Deserialize,Serialize};
 use crate::{party_roster::Roster,RuleResult};
-pub const VERSION:u32=67;
+pub const VERSION:u32=68;
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Payload {
     Handshake(Message),
     Report{session:u64,report:crate::party_game::Report},
     Order{session:u64,order:crate::party_game::Order},
     Fault{session:u64},
+    Latency{session:u64,snapshot:crate::party_latency::Snapshot},
 }
 #[derive(Serialize,Deserialize)]
 struct Envelope {magic:String,version:u32,payload:Payload}

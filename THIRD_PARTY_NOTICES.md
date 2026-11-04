@@ -48,3 +48,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+## YAFSML
+
+The optional YAFSML 0.11.0 loader by soarqin is bundled in loader/yafsml/ with its LICENSE and THIRD_PARTY_NOTICES.md.
+Source: https://github.com/soarqin/YAFSML
+
+## ERNativeUI
+
+The native System settings tab uses ERNativeUI 1.3.0 by Flammrock (MIT).
+Source: https://github.com/Flammrock/ERNativeUI/releases/tag/ERNativeUI-v1.3.0
+The unmodified host, localization files, LICENSE.txt and THIRD_PARTY_NOTICES.txt are shipped in native-ui/.
+The tower configuration provider is built from native/native-settings/; no example mods are shipped.
+
+## BC7 icon decoder
+
+Slim packages include Tower.IconCodec.dll, built from bcdec 0.985 by Sergii Kudlai, commit 80859ed3b7afb1c527a2a99d70c61457bea72d0c.
+Source: https://github.com/iOrange/bcdec. Used under the MIT license; see licenses/bcdec.txt.

@@ -105,6 +105,31 @@ public sealed class UpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task FullToSlimKeepsGeneratedOutputsUnmanagedAndCanReturnToFull()
+    {
+        const string asset = "scene-assets/menu/hi/01_common.tpf.dcx";
+        var install = Path.Combine(root, "install");
+        var full = new Dictionary<string, byte[]> { [asset] = Encoding.UTF8.GetBytes("original full asset") };
+        var v1 = Release(1, full, null); await Update(install);
+        var slim = new Dictionary<string, byte[]> {
+            ["asset-patches/manifest.json"] = Encoding.UTF8.GetBytes("recipe"),
+            ["asset-patches/hi.patch"] = Encoding.UTF8.GetBytes("patch") };
+        var v2 = Release(2, slim, v1);
+        await Assert.ThrowsAsync<IOException>(() => Update(install, failAfter: 1));
+        Assert.Equal(full[asset], File.ReadAllBytes(Path.Combine(install, asset)));
+        await Update(install);
+        Assert.False(File.Exists(Path.Combine(install, asset)));
+        Write(install, full); // Generated on launch; the download engine must leave it alone.
+        Assert.True((await Update(install)).UpToDate);
+        Assert.Equal(full[asset], File.ReadAllBytes(Path.Combine(install, asset)));
+        File.WriteAllText(Path.Combine(install, "asset-patches/hi.patch"), "damaged");
+        Assert.Single((await Update(install)).Writes);
+        Release(3, full, v2); await Update(install);
+        AssertInstalled(install, full, 3);
+        Assert.False(File.Exists(Path.Combine(install, "asset-patches/manifest.json")));
+    }
+
+    [Fact]
     public async Task FreshInstallThenOnlyChangedFilesAreDownloaded()
     {
         var install = Path.Combine(root, "install");

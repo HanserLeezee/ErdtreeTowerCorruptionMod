@@ -267,7 +267,7 @@ impl Menu {
             let mut held=run.embers.contains(&ember);
             if ui.checkbox(format!("{}##ember-{i}",ember.name()),&mut held) {send(Command::Ember(ember,held));}
         }
-        ui.text("双生的灵唤铃：保留第一组召唤物（单人试验）");
+        ui.text("双生的灵唤铃：保留第一组；召唤师按各组存活返还骨灰");
         ui.separator();
         ui.text(format!("苦难律法：{} 分 · 律法码 {}",run.law.score(),run.law.code()));
         ui.same_line();if ui.small_button("清空律法") {send(Command::Law(Law::default()));}

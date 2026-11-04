@@ -103,7 +103,7 @@ pub fn draw(ui:&Ui,screen:&mut LawScreen,record:Option<(u32,&str)>)->Option<LawA
     if key(Key::GamepadFaceUp)&&!screen.law.is_empty(){screen.law=Law::default();crate::sfx::play("close");}
     if ui.io().key_ctrl&&key(Key::V) {if let Some(law)=ui.clipboard_text().and_then(|text|Law::parse(&text)){screen.law=law;crate::sfx::play("confirm");}}
     let mut action=if key(Key::Enter)||key(Key::GamepadFaceLeft){Some(LawAction::Start(screen.law))}else if key(Key::Escape)||key(Key::GamepadFaceRight){Some(LawAction::Back)}
-        else if key(crate::options::key(erdtree_tower::options::Hotkey::Archive))||key(Key::GamepadBack){Some(LawAction::Archive)}else{None};
+        else if crate::options::pressed(ui,erdtree_tower::options::Hotkey::Archive)||key(Key::GamepadBack){Some(LawAction::Archive)}else{None};
     let score=screen.law.score();
     let shown=screen.shown.map_or(score as f32,|v|v+(score as f32-v)*(1.0-(-dt*12.0).exp()));
     screen.shown=Some(if (shown-score as f32).abs()<0.5 {score as f32}else{shown});

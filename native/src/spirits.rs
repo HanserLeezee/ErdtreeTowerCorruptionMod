@@ -2,6 +2,8 @@ use eldenring::{cs::{BlockId,ChrInsExt,TalkScript,WorldChrMan},ez_state::EzState
 use fromsoftware_shared::FromStatic;
 use std::{ffi::c_void,sync::{Mutex,atomic::{AtomicBool,AtomicUsize,Ordering}}};
 use hudhook::mh::{MhHook,MH_EnableHook};
+mod seamless_hook;
+pub(crate) mod refund;
 
 static ACTIVE:AtomicBool=AtomicBool::new(false);
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
@@ -103,8 +105,10 @@ unsafe extern "C" fn request(manager:*mut u8,effect:i32)->bool {
     let field=|offset|unsafe {manager.add(offset).cast::<i32>().read()};
     super::log(format!("Spirit use request: effect={effect} state={state} stone={} active_stone={} goods={} active_goods={} twin_armed={}",field(0x38),field(0x3c),field(0xe0),field(0xe4),TWIN_ARMED.load(Ordering::Acquire)));
     let twin=TWIN_ARMED.load(Ordering::Acquire)&&BOUND.load(Ordering::Acquire)==manager as usize;let goods=field(0xe0);
+    let usage=(BOUND.load(Ordering::Acquire)==manager as usize).then(||refund::capture(unsafe {&*manager.cast::<eldenring::cs::SummonBuddyManager>()},goods,effect)).flatten();
     if let Ok(mut gate)=REPLACEMENT.lock(){*gate=None;}
     let accepted=unsafe {original(manager,effect)};
+    if accepted&&let Some(usage)=usage {refund::accepted(usage);}
     TWIN_ARMED.store(false,Ordering::Release);
     if twin&&accepted {
         SECOND_ACCEPTED.store(true,Ordering::Release);
@@ -122,11 +126,9 @@ pub unsafe fn install()->Result<(),String> {
     CLEAR.store(phase.trampoline() as usize,Ordering::Release);
     unsafe {MH_EnableHook(clear)}.ok().map_err(|e|format!("Spirit phase enable: {e:?}"))?;
     super::log("Spirit summon-point refresh installed");
-    if let Err(error)=unsafe {install_trace()} {
-        super::log(format!("Spirit usage tracing skipped; summon-point refresh remains active: {error}"));
-    }
-    if ORIGINAL.load(Ordering::Acquire)!=0 {
-        if let Err(error)=unsafe {install_replacement_guard()} {super::log(format!("Twin replacement guard unavailable; second summon disabled: {error}"));}
+    match unsafe {install_trace()} {
+        Ok(())=>if let Err(error)=unsafe {install_replacement_guard()} {super::log(format!("Twin replacement guard unavailable; second summon disabled: {error}"));},
+        Err(error)=>super::log(format!("Spirit usage tracing skipped; summon-point refresh remains active: {error}")),
     }
     Ok(())
 }
@@ -140,15 +142,20 @@ unsafe fn install_replacement_guard()->Result<(),String> {
 }
 
 unsafe fn install_trace()->Result<(),String> {
-    let query=super::items::checked_function(0x4b73d0,&[0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20])?;
+    let expected=&[0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20];
+    let query=unsafe {seamless_hook::checked_function(0x4b73d0,expected)}?;
+    let address=unsafe {seamless_hook::checked_function(0x4b8690,expected)}? as *mut c_void;
     let query_hook=unsafe {MhHook::new(query as *mut c_void,use_state as *mut c_void)}.map_err(|e|format!("Twin use-state hook: {e:?}"))?;
-    USE_STATE.store(query_hook.trampoline() as usize,Ordering::Release);
-    unsafe {MH_EnableHook(query as *mut c_void)}.ok().map_err(|e|format!("Twin use-state enable: {e:?}"))?;
-    super::log("Twin use-state check installed: 4b73d0");
-    let address=super::items::checked_function(0x4b8690,&[0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20])? as *mut c_void;
     let hook=unsafe {MhHook::new(address,request as *mut c_void)}.map_err(|e|format!("Spirit request trace: {e:?}"))?;
+    USE_STATE.store(query_hook.trampoline() as usize,Ordering::Release);
     ORIGINAL.store(hook.trampoline() as usize,Ordering::Release);
-    unsafe {MH_EnableHook(address)}.ok().map_err(|e|format!("Spirit request trace enable: {e:?}"))?;
+    unsafe {MH_EnableHook(query as *mut c_void)}.ok().map_err(|e|format!("Twin use-state enable: {e:?}"))?;
+    if let Err(error)=unsafe {MH_EnableHook(address)}.ok() {
+        let rollback=unsafe {hudhook::mh::MH_DisableHook(query as *mut c_void)};
+        return Err(format!("Spirit request trace enable: {error:?}; use-state rollback: {rollback:?}"));
+    }
+    super::log("Twin use-state check installed: 4b73d0");
+    super::log("Spirit request trace installed: 4b8690");
     Ok(())
 }
 

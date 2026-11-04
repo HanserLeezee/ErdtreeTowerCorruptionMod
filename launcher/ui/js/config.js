@@ -76,7 +76,7 @@ window.HOYO_CONFIG = {
         { img: 'assets/img/tower-banner-5.webp', href: 'https://github.com/tamikip/erdtree-tower',
           detail: { name: '祷誓者', role: '祷告 · 治疗 · 辅助', mechanic: ['圣誓', '祷告专注消耗降低 15%；打赢一场战斗回复 25% 专注'], kit: '短矛、指头圣印记、治疗、招来火焰', bias: '圣印记、祷告与矛', accent: 'rgb(226, 196, 120)' } },
         { img: 'assets/img/tower-banner-6.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '召唤师', role: '骨灰为核心', mechanic: ['群灵', '战斗胜利时召唤物还活着，这次召唤不消耗骨灰；每页奖励都有骨灰，召唤流余烬必定可出'], kit: '短剑、熨斗形盾、圣印记、离群野狼与骸骨民兵的骨灰', bias: '骨灰、轻武器与祷告', accent: 'rgb(140, 196, 170)' } },
+          detail: { name: '召唤师', role: '骨灰为核心', mechanic: ['群灵', '胜利时每组召唤物独立判断，仍有成员存活就返还对应骨灰（含第二次召唤）；每页奖励都有骨灰，召唤流余烬必定可出'], kit: '短剑、熨斗形盾、圣印记、离群野狼与骸骨民兵的骨灰', bias: '骨灰、轻武器与祷告', accent: 'rgb(140, 196, 170)' } },
       ],
       /* 公告：宿主检查更新后换成最新版本的更新说明 */
       news: {

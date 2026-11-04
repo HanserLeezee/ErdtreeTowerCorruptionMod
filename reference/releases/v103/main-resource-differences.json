@@ -12,6 +12,36 @@
     "reason": "Preserve post-v103 main affix base-value descriptions."
   },
   {
+    "path": "scene-assets/arenas-resources.txt",
+    "releaseSha256": "7bf783281ae2e6efb2ed121a8dc7c9497c7680d4fcd9fef2295f5c445e5b436e",
+    "sha256": "3c1a09b7c59045a10ffe63135d44b00467d546ebf3872556b7b5273c396e1459",
+    "reason": "Regenerated fingerprints for the current mausoleum and Dragonlord arrival patches."
+  },
+  {
+    "path": "scene-assets/enemy-pools.txt",
+    "releaseSha256": "eb586ff2d31855f890ba15c8a7030121d7eea93edba30e06de02bb449499e990",
+    "sha256": "3463a3c5059b12b1cf74dba29305b3e8153a675ff4f9b4824feb87334a5b983f",
+    "reason": "Restore three act-two caster types with existing solo and co-op slots."
+  },
+  {
+    "path": "scene-assets/event/m10_00_00_00.emevd.dcx",
+    "releaseSha256": "023e141abaf39bd75a32ef45b4bd37fa96c027aa05d66784e84b7c4186b3219d",
+    "sha256": "35608f9345273db3dcf66b2b7689628da67823ae726b093dadc93cea285bcf40",
+    "reason": "Unregister seven Stormveil graces while preserving all unrelated events."
+  },
+  {
+    "path": "scene-assets/event/m13_00_00_00.emevd.dcx",
+    "releaseSha256": "64406c8ab3dcd7012adafd7fc865b10dfb88e44aa4591d5e28f8faf5e70f50b4",
+    "sha256": "ff632c5bc34b7177e3f2befdd620eb75432731701603c9e9ca830bdc84597704",
+    "reason": "Mausoleum 12-skull progression and native door; remove duplicate arrival warp without changing other events."
+  },
+  {
+    "path": "scene-assets/map/mapstudio/m13_00_00_00.msb.dcx",
+    "releaseSha256": "6f95ee65670d4a0858e68f21c5c8ebba4e63b43418e8280cc2b60ffb0c185ea3",
+    "sha256": "843d949ca4a91dd00de8bea799bd947e4e6668a74e42d5aa60a793fd1f04e596",
+    "reason": "Current standing mausoleum with skull and door interaction, plus 0.30m Dragonlord arrival adjustment."
+  },
+  {
     "path": "scene-assets/menu/hi/01_common.sblytbnd.dcx",
     "releaseSha256": "b976be74aae94bf12b0c27151b160020ffcef7d3d2862946ecbc55b1e86b64e4",
     "sha256": "009fae15da4560c45eb28ad7218576de2c5cf378bec6a11573a54a7f3875b9b2",
@@ -40,6 +70,12 @@
     "releaseSha256": "2f32bb1bd4cf0bc27633019aebfe4b393cd1e865ddf8b9d6857a5160a9f9bddf",
     "sha256": "733afda43547fca83a5bc19b606aea6292d22d85d56883baf1820aca7b9d96b2",
     "reason": "Add 26 native ember display names to the unchanged v103 message binder."
+  },
+  {
+    "path": "scene-assets/msg/zhocn/menu_dlc02.msgbnd.dcx",
+    "releaseSha256": "37ea2cd63e55286bc389cd1852bcc33c4e5193cda0afff35af1569c5545dd482",
+    "sha256": "dce737033cb8323b1df3b2c8fd93ef86143733684218af004ac2b8d80c133da9",
+    "reason": "Mausoleum event NPC choice, copy interaction and completion text."
   },
   {
     "path": "scene-assets/regulation.bin",
