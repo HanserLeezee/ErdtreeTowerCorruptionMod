@@ -38,6 +38,18 @@ fn victory_healing_allowed(player:&eldenring::cs::PlayerIns)->bool {
         &&!super::seamless_revival::finished(player as *const _ as usize)
 }
 /// 战斗胜利的回复（狂战士 8% 生命、祷誓者 25% 专注、苦修之誓）：写日志，返回给玩家看的提示（没有回复时为空）
+/// 地图、奖励、誓约界面打开时玩家没法吃药解毒（界面关不掉），战斗里带出来的中毒、腐败会一路掉血到死：
+/// 界面锁住操作期间（不在战斗、不在房间、不在传送）每秒清一次异常
+fn clear_ailments_under_overlay(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan) {
+    let journey=state.view.run.as_ref().is_some_and(|r|!matches!(r.phase,Phase::Dead|Phase::Won|Phase::Combat{..}));
+    if !overlay_cleanse_due(super::input::CAPTURE.load(std::sync::atomic::Ordering::Relaxed)&&journey&&!game.warp_requested,state.ailment_cleared,Instant::now()) {return;}
+    let Some(player)=world.main_player.as_mut().filter(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()) else {return;};
+    state.ailment_cleared=Some(Instant::now());
+    if let Err(error)=super::ailments::clear(&mut player.chr_ins){super::log_repeating(error);}
+}
+fn overlay_cleanse_due(captured:bool,last:Option<Instant>,now:Instant)->bool {
+    captured&&last.is_none_or(|t|now.saturating_duration_since(t)>=Duration::from_secs(1))
+}
 fn heal_victory(world:&mut WorldChrMan,run:&Run)->String {
     let Some(player)=world.main_player.as_mut() else{return String::new();};
     let data=&player.chr_ins.modules.data;let (hp,fp)=(data.hp,data.fp);
@@ -309,6 +321,8 @@ struct Runtime {
     lingering:Option<(Pending,Instant)>,
     /// 同一次死亡只扣一次赐福，等待原生复活后自动返回原房间。
     death_retry:bool,
+    /// 上次在地图 / 奖励界面里清除中毒、腐败等异常的时间
+    ailment_cleared:Option<Instant>,
     retry_ready_since:Option<Instant>,
     member_spawn_gaps:Option<MemberSpawnGaps>,
     /// 徘徊赐福实物道具：背包数量跟随旅程剩余次数
@@ -382,6 +396,7 @@ fn fresh_runtime()->Runtime {
         victory_cleanup:None,
         lingering:None,
         death_retry:false,
+        ailment_cleared:None,
         retry_ready_since:None,
         member_spawn_gaps:None,
         retry_item:Default::default(),
@@ -703,7 +718,16 @@ fn tick_auto_party(state:&mut Runtime)->Result<bool,String> {
     if let Some(link)=state.party.as_ref().filter(|p|p.roster().is_some()) {
         if !matches!(session.lobby_state,LobbyState::Host|LobbyState::Client) {return Err("无缝会话已退出，队伍同步已暂停".into());}
         if let Ok(roster)=super::seamless::roster(session) {
-            if link.roster()!=Some(&roster){return Err("无缝队伍成员已变化，暂停当前旅程同步".into());}
+            if link.roster()!=Some(&roster){
+                // 有队员中途退出（房主还在）：把他从队伍里去掉，其他人的旅程照常继续；房主退出或有人新加入仍暂停同步
+                if let Some(gone)=state.party.as_mut().and_then(|link|link.shrink(&roster)) {
+                    let names:Vec<String>=gone.iter().map(|id|super::seamless::player_name(*id).unwrap_or_else(||id.to_string())).collect();
+                    super::log(format!("Party member left mid-run: {gone:?}; continuing with {} players",roster.members.len()));
+                    report(state,format!("{} 已退出联机，旅程继续（剩 {} 人）。",names.join("、"),roster.members.len()));
+                    return Ok(false);
+                }
+                return Err("无缝队伍成员已变化，暂停当前旅程同步".into());
+            }
         }
         return Ok(false);
     }
@@ -935,6 +959,15 @@ fn return_to_retry_room(state:&mut Runtime,world:&mut WorldChrMan,game:&mut Game
 fn lingering_due(alive:bool,waited:Duration)->bool {alive&&waited>=Duration::from_secs(5)||waited>=Duration::from_secs(15)}
 #[cfg(test)]
 mod replica_tests {
+    #[test]
+    fn ailments_are_cleared_once_a_second_only_while_an_overlay_locks_input() {
+        use std::time::{Duration,Instant};
+        let now=Instant::now();
+        assert!(super::overlay_cleanse_due(true,None,now));
+        assert!(!super::overlay_cleanse_due(false,None,now),"never while the player can act (combat, rooms, travel)");
+        assert!(!super::overlay_cleanse_due(true,Some(now),now+Duration::from_millis(999)));
+        assert!(super::overlay_cleanse_due(true,Some(now),now+Duration::from_secs(1)));
+    }
     #[test]
     fn slow_members_count_enemies_killed_before_they_loaded() {
         use super::replica_seen as seen;
@@ -1185,6 +1218,7 @@ fn tick_locked() {
         return;
     };
     PLAYER_READY.store(world.main_player.is_some()&&game.save_slot>=0,std::sync::atomic::Ordering::Relaxed);
+    clear_ailments_under_overlay(&mut state,world,game);
     state.hub_boundary.tick(world,game.warp_requested||game.save_slot<0);
     let chase_enabled=!game.warp_requested&&matches!(state.chariot_clock,Some(ChariotClock::Surviving(_)))
         &&state.view.run.as_ref().is_some_and(|r|r.regional_event.chariot&&r.regional_event.stormveil==Some(erdtree_tower::stormveil::Progress::Running));
@@ -1361,6 +1395,25 @@ fn tick_locked() {
         let journey=state.view.run.as_ref().filter(|run|!state.hub.as_ref().is_some_and(|h|h.active)&&!matches!(run.phase,Phase::Dead|Phase::Won));
         let progress=journey.map_or_else(||"大赐福".to_string(),|run|format!("第 {} 幕",run.act));
         super::lobby::tick(&progress,journey.is_some());
+    }
+    // 武器强化基准 = 本局历史最高（Run::weapon_peak，只升不降）：每帧把记录交给 smith；背包里出现更高的武器时（强化、拿到奖励）
+    // 每秒检查一次，不在战斗流程里就立刻记进存档，之后卖掉、丢掉或存进仓库都不会让基准掉下来
+    {
+        let recorded=state.view.run.as_ref().filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)).and_then(|r|r.weapon_peak).unwrap_or(0);
+        super::smith::set_run_peak(recorded);
+        static CHECKED:std::sync::Mutex<Option<Instant>>=std::sync::Mutex::new(None);
+        let due=CHECKED.lock().is_ok_and(|mut at|{let due=at.is_none_or(|t|t.elapsed()>=Duration::from_secs(1));if due{*at=Some(Instant::now());}due});
+        let steady=state.pending.is_none()&&!state.view.travelling&&state.view.run.as_ref().is_some_and(|r|matches!(r.phase,Phase::Map|Phase::Node{..}));
+        if due&&steady&&let Some(player)=world.main_player.as_ref()&&let Ok(params)=unsafe {SoloParamRepository::instance()} {
+            let live=super::smith::inventory_peak(unsafe {player.player_game_data.as_ref()},params).clamp(0,i32::from(erdtree_tower::contracts::MAX_PEAK)) as u8;
+            if live>recorded&&let Some(run)=state.view.run.as_ref() {
+                let mut next=run.clone();next.weapon_peak=Some(live);
+                match record_checked(&next) {
+                    Ok(())=>{super::log(format!("Weapon peak recorded: {recorded} -> {live}"));super::smith::set_run_peak(live);state.view.run=Some(next);},
+                    Err(error)=>super::log_repeating(format!("Weapon peak not recorded: {error}")),
+                }
+            }
+        }
     }
     if !game.warp_requested {member_combat(&mut state,world);}
     // [fix] Diagnostic switch: ERDTREE_TOWER_NO_ATTENDANT=1 skips the arena-side NPC entirely, to test
@@ -1944,7 +1997,11 @@ fn tick_locked() {
                 let _ = super::native_talk::set_flag(45020971, false);
                 next.flasks = state.flasks.as_ref().map_or(next.flasks, |f| f.total());
                 next.casting_tools=Some(super::loot::casting_tools(player_data));
-                if let Ok(params)=unsafe {SoloParamRepository::instance()} {next.weapon_peak=Some(super::smith::inventory_peak(player_data,params).clamp(0,i32::from(erdtree_tower::contracts::MAX_PEAK)) as u8);}
+                // 本局历史最高：只升不降（原来直接换成当前背包最高，卖掉或存仓后会掉下来）
+                if let Ok(params)=unsafe {SoloParamRepository::instance()} {
+                    let live=super::smith::inventory_peak(player_data,params).clamp(0,i32::from(erdtree_tower::contracts::MAX_PEAK)) as u8;
+                    next.weapon_peak=Some(next.weapon_peak.unwrap_or(0).max(live));
+                }
                 next.spirit_peak=Some(spirit_peak(&next,super::spirit_tune::inventory_peak(player_data)));
                 let result = next
                     .observe_hp(normalized_hp(hp, max_hp))
@@ -2170,6 +2227,10 @@ fn tick_locked() {
                 }
             }
             state.view.run=Some(next.clone());
+            // 敌人全灭后先把战斗里沾上的中毒、腐败清掉：之后是奖励与路线界面，玩家没法自己解
+            if let Some(player)=world.main_player.as_mut().filter(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()) {
+                if let Err(error)=super::ailments::clear(&mut player.chr_ins){super::log(error);}
+            }
             let healed=heal_victory(world,&next);
             if keep_summoned_ash(world,&next,state.summon_seen,&state.ash_before,state.ash_used) {state.ash_guard=Some(Instant::now());}
             world.summon_buddy_manager.disappear_requested=true;
@@ -2793,6 +2854,19 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 let count=state.view.run.as_ref().and_then(|r|r.shop_stock.as_ref()).filter(|s|s.node==room.node).ok_or("新商店货单未准备完成")?.items.len();
                 super::native_shop::reset_arrived_stock(count)?;room.shop_refresh_pending=false;
             }
+            // 诊断：售出计数每秒比一次，变了就记下（本机买东西时卢恩会同时减少；卢恩没变而计数变了，说明是别人的旗标同步过来的）
+            if room.shop_counters.as_ref().is_none_or(|(at,_)|at.elapsed()>=Duration::from_secs(1)) {
+                let count=state.view.run.as_ref().and_then(|r|r.shop_stock.as_ref()).filter(|s|s.node==room.node).map_or(0,|s|s.items.len());
+                if let Ok(counts)=super::native_shop::sold_counts(count) {
+                    if let Some((_,before))=&room.shop_counters&&*before!=counts {
+                        let changed:Vec<_>=before.iter().zip(&counts).enumerate().filter(|(_,(a,b))|a!=b).map(|(i,(a,b))|(i,*a,*b)).collect();
+                        let runes=world.main_player.as_ref().map(|p|unsafe {p.player_game_data.as_ref()}.rune_count);
+                        super::log(format!("SHOP_STOCK counters changed role={} runes={runes:?} (slot,before,after)={changed:?}",
+                            state.party.as_ref().map_or("solo",|p|if p.host(){"host"}else{"member"})));
+                    }
+                    room.shop_counters=Some((Instant::now(),counts));
+                }
+            }
         }
         if (storm_order.is_some()||trial_order.is_some())&&(game.warp_requested||!world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.physics.standing_on_solid_ground)){return Ok(false);}
         if state.view.run.as_ref().is_some_and(|r|r.regional_event.trial) {
@@ -3000,6 +3074,13 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
     use erdtree_tower::regional_events::Outcome as EventOutcome;
     use super::native_talk::{flag,set_flag};
     let run=state.view.run.as_ref().ok_or("旅程未绑定")?;
+    if run.regional_event.settled {
+        set_flag(45010965,false)?;set_flag(45010960,false)?;
+        set_flag(45010941,true)?;set_flag(45010940,true)?;
+        set_flag(45010942,false)?;set_flag(45010995,true)?;
+        room.view.message="徘徊赐福：这个事件已经做过选择或领过奖，不能重选、不能再领，请从传送门离开。".into();
+        return Ok(());
+    }
     if run.regional_event.trial {
         clear_chariot()?;
         set_flag(45010965,false)?;set_flag(45010960,false)?;

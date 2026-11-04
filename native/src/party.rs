@@ -151,6 +151,21 @@ impl Link {
         Ok(link)
     }
     pub fn roster(&self)->Option<&erdtree_tower::party_roster::Roster> {self.steam.as_ref().map(|s|&s.roster)}
+    /// 有队员退出了无缝会话：新名单是旧名单去掉几个人、房主和本机都还在时，把这些人从队伍里去掉，旅程照常继续；
+    /// 返回去掉的人。房主退出、有新人加入、或名单对不上时返回 None（仍按原来的“名单变化”处理）
+    pub fn shrink(&mut self,next:&erdtree_tower::party_roster::Roster)->Option<Vec<u64>> {
+        let steam=self.steam.as_mut()?;
+        let old=&steam.roster;
+        if next.host!=old.host||next.local!=old.local||next.members.len()>=old.members.len()
+            ||!next.members.iter().all(|id|old.members.contains(id))||!next.members.contains(&next.host) {return None;}
+        let gone:Vec<u64>=old.members.iter().copied().filter(|id|!next.members.contains(id)).collect();
+        for &id in &gone {self.gate.remove(id);}
+        self.config.peers.retain(|p|!gone.contains(&p.player));
+        self.last_seen.retain(|(id,_)|!gone.contains(id));
+        self.ballots.retain(|b|!gone.contains(&b.player));
+        steam.roster=next.clone();steam.transport.set_roster(next.clone());
+        Some(gone)
+    }
     pub fn host(&self)->bool {self.config.player==self.config.host}
     pub fn chariot_pose(&mut self,pose:[f32;3])->Result<(),String> {
         if !self.host()||self.event.storm_decision!=Some(erdtree_tower::stormveil::Decision::Engage){return Ok(());}

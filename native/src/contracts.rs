@@ -86,7 +86,8 @@ pub fn observe_peak(data:&PlayerGameData,state:&mut State) {
             let Some(base)=params.get::<EquipParamWeapon>(id/100*100)else{continue;};
             if base.origin_equip_wep1()<0 {continue;}
             let cap=if base.origin_equip_wep16()<0{10}else{25};
-            state.peak=state.peak.max(((id%100).min(cap)*50/cap) as u8);
+            // 等效等级不再在原版满级（+25 / +10）处截断：强化上限已解除，最高 MAX_PEAK
+            state.peak=state.peak.max(((id%100)*50/cap).min(u32::from(erdtree_tower::contracts::MAX_PEAK)) as u8);
         }
     };
     scan(&data.equipment.equip_inventory_data);if let Some(storage)=data.storage.as_ref(){scan(storage);}

@@ -18,6 +18,14 @@ pub struct Progress {
     #[serde(default)] pub recovery: bool,
     #[serde(default)] pub stormveil: Option<crate::stormveil::Progress>,
     #[serde(default)] pub chariot: bool,
+    /// 死亡重试回到已经动过的事件（选了挑战、领了奖、开了宝箱、用过服务）：不能重选、不能再领，只能从传送门离开
+    #[serde(default,skip_serializing_if="std::ops::Not::not")] pub settled: bool,
+}
+impl Progress {
+    /// 和刚进房间时抽到的状态不同，即玩家已经在这里做过选择或领过东西
+    pub fn touched(&self)->bool {
+        *self!=Progress{trial:self.trial,locked:self.locked,scarabs:self.scarabs,recovery:self.recovery,..Progress::default()}
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,6 +120,7 @@ impl Run {
     }
     pub fn open_regional_event(&mut self, slot: usize) -> RuleResult<Outcome> {
         let node=self.active_node(NodeKind::Event)?;
+        if self.regional_event.settled {return Err("这里的事件已经结束，请从传送门离开".into());}
         if self.regional_event.trial || self.regional_event.locked || self.regional_event.scarabs || self.regional_event.descent || self.regional_event.recovery || self.regional_event.stormveil.is_some() {return Err("请与事件交互物交互".into());}
         let altar=self.altar(node);
         if slot >= 3 || self.regional_event.guards || (altar && self.regional_event.opened != 0) || self.regional_event.opened & (1 << slot) != 0 {
@@ -132,6 +141,11 @@ impl Run {
         self.finish(node);Ok(())
     }
     pub(crate) fn valid_regional_event(&self) -> bool {
+        if self.regional_event.settled {
+            let event=|id:usize|self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Event);
+            return self.regional_event==Progress{settled:true,..Progress::default()}
+                &&match self.phase {Phase::Dead=>true,Phase::Node{id}=>event(id),Phase::Map=>self.retry_node.is_some_and(event),_=>false};
+        }
         if self.regional_event.trial {
             return self.regional_event==Progress{trial:true,..Progress::default()}
                 &&match self.phase {Phase::Dead=>true,Phase::Node{id}=>self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Event),_=>false};
@@ -184,6 +198,58 @@ impl Run {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn trial_run()->(Run,usize) {
+        let mut run=Run::new(42,crate::Class::Samurai);
+        let id=(0..run.nodes.len()).find(|&id|run.nodes[id].kind==NodeKind::Event&&run.event_draw(id)==crate::events::Draw::Trial).unwrap();
+        run.debug_jump(id).unwrap();run.enter(id).unwrap();run.retries=2;
+        (run,id)
+    }
+    /// 死亡重试回来：存档能读、只能离开、什么都领不到
+    fn assert_settled_after_retry(mut run:Run,id:usize) {
+        let gold=run.gold;
+        assert!(run.retry_floor());
+        assert_eq!(run.regional_event,Progress{settled:true,..Progress::default()});
+        run=Run::decode(&run.encode().unwrap()).unwrap();run.validate().unwrap();
+        run.enter(id).unwrap();run.validate().unwrap();
+        assert!(run.regional_event.settled&&!run.regional_event.trial,"the trial is not drawn again");
+        for choice in [Trial::Skip,Trial::Descent,Trial::Stormveil,Trial::Chariot] {assert!(run.clone().choose_trial(choice).is_err());}
+        assert!(run.clone().accept_descent().is_err());
+        assert!(run.clone().open_regional_event(0).is_err());
+        assert!(run.clone().recover_at_spring(2).is_err());
+        assert!(run.clone().resolve_story(0).is_err());
+        run.leave_regional_event().unwrap();run.validate().unwrap();
+        assert_eq!(run.gold,gold,"no 800 runes after the retry");
+        assert_eq!(run.regional_event,Progress::default());
+    }
+    #[test]
+    fn a_claimed_descent_cannot_be_claimed_again_after_a_death_retry() {
+        let (mut run,id)=trial_run();
+        run.choose_trial(Trial::Descent).unwrap();
+        run.begin_descent(3150000,0).unwrap();run.complete_descent().unwrap();
+        assert_settled_after_retry(run,id);
+    }
+    #[test]
+    fn dying_mid_trial_does_not_reopen_the_choice() {
+        for choice in [Trial::Descent,Trial::Stormveil,Trial::Chariot] {
+            let (mut run,id)=trial_run();run.choose_trial(choice).unwrap();
+            assert_settled_after_retry(run,id);
+        }
+    }
+    #[test]
+    fn an_opened_chest_room_stays_settled_after_a_death_retry() {
+        let (mut run,id)=(0..200).find_map(|seed|{let run=Run::new(seed,crate::Class::Samurai);
+            (0..run.nodes.len()).find(|&id|run.nodes[id].kind==NodeKind::Event&&run.event_draw(id)==crate::events::Draw::Chests).map(|id|(run,id))}).unwrap();
+        run.debug_jump(id).unwrap();run.enter(id).unwrap();run.retries=1;
+        run.open_regional_event(0).unwrap();
+        assert_settled_after_retry(run,id);
+    }
+    #[test]
+    fn an_untouched_event_is_drawn_fresh_after_a_death_retry() {
+        let (mut run,id)=trial_run();
+        assert!(run.retry_floor());assert_eq!(run.regional_event,Progress::default());
+        run.enter(id).unwrap();assert!(run.regional_event.trial);
+        run.choose_trial(Trial::Skip).unwrap();
+    }
     #[test]
     fn spring_is_free_personal_exclusive_and_survives_reload() {
         let mut run=Run::new(42,crate::Class::Samurai);

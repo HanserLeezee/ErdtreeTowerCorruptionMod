@@ -678,6 +678,7 @@ namespace Tower.Launcher
                 form.Post("lobby", "rooms", new
                 {
                     version,
+                    mine = OwnRoom(),
                     rooms = rooms.Select(r => new
                     {
                         id = r.Id.ToString(), name = r.Name, host = r.Host, players = r.Players, max = r.Max, state = r.State,
@@ -691,6 +692,31 @@ namespace Tower.Launcher
                 CloseLobby();
                 form.Post("lobby", "rooms", new { error = e.Message });
             }
+        }
+        /// <summary>
+        /// 自己开的房间（模组目录里的 tower-lobby.json 与 DLL 写的 tower-lobby-status.txt）：Steam 的大厅查询不一定列出自己开的房间，
+        /// 这里单独显示房间名与状态（正在创建 / 已上线 / 创建失败及原因）；游戏没在运行时不显示
+        /// </summary>
+        object? OwnRoom()
+        {
+            if (!GameRunning() || !File.Exists(LobbyFile)) return null;
+            string name;
+            try { using var doc = JsonDocument.Parse(File.ReadAllText(LobbyFile)); name = Text(doc.RootElement, "name"); }
+            catch (Exception e) when (e is JsonException || e is IOException) { return null; }
+            var statusFile = Path.Combine(paths.InstallDir, "tower-lobby-status.txt");
+            var line = File.Exists(statusFile) && File.GetLastWriteTimeUtc(statusFile) >= File.GetLastWriteTimeUtc(LobbyFile) ? File.ReadAllText(statusFile).Trim() : "";
+            var space = line.IndexOf(' ');
+            var state = space > 0 ? line.Substring(0, space) : line;
+            var detail = space > 0 ? line.Substring(space + 1) : "";
+            return new
+            {
+                name,
+                state = state.Length == 0 ? "missing" : state,
+                detail = state == "open"
+                    ? (detail == "1" ? "已在 Steam 上线，队友可以加入" : "已在 Steam 上线，但你还没用无缝联机的道具开启联机，队友暂时连不上")
+                    : state.Length == 0 ? "游戏里还没有开始创建：确认游戏用的是新版模组，并已进入游戏" : detail,
+                ready = state == "open" && detail == "1",
+            };
         }
         /// <summary>写入这个房间的无缝联机密码，并切到无缝联机模式</summary>
         bool UseSeamlessPassword(string password)
@@ -716,6 +742,8 @@ namespace Tower.Launcher
             if (!UseSeamlessPassword(seamlessPassword)) return;
             var room = new Dictionary<string, object> { ["name"] = name, ["max"] = max, ["locked"] = locked, ["salt"] = salt, ["password"] = locked ? "" : seamlessPassword, ["version"] = LobbyVersion() };
             File.WriteAllText(LobbyFile, JsonSerializer.Serialize(room), new UTF8Encoding(false));
+            var statusFile = Path.Combine(paths.InstallDir, "tower-lobby-status.txt");
+            if (File.Exists(statusFile)) File.Delete(statusFile);
             Log.Write($"大厅开房：{name}，{max} 人，{(locked ? "私密" : "公开")}");
             Toast($"房间「{name}」已创建，正在启动游戏；进游戏后用无缝联机的道具开启联机，队友就能从大厅加入", "success", 8000);
             await LaunchAsync(lobbyHost: true);

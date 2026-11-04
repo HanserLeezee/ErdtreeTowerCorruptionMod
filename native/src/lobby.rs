@@ -82,6 +82,15 @@ struct Host {room:Option<HostRoom>,api:Option<Api>,stage:Stage}
 static HOST:std::sync::Mutex<Host>=std::sync::Mutex::new(Host{room:None,api:None,stage:Stage::Unread});
 
 fn room_file()->std::path::PathBuf {super::options::dir().join(erdtree_tower::lobby::FILE)}
+/// 房间状态写给启动器（只在状态变化时写）
+fn status(text:&str) {
+    static LAST:std::sync::Mutex<String>=std::sync::Mutex::new(String::new());
+    let Ok(mut last)=LAST.lock() else{return};
+    if *last==text {return;}
+    *last=text.to_owned();
+    let path=super::options::dir().join(erdtree_tower::lobby::STATUS_FILE);
+    if let Err(error)=std::fs::write(&path,text) {super::log(format!("LOBBY status not written to {path:?}: {error}"));}
+}
 
 /// 每帧调用（游戏任务线程）：state 为进度说明（大赐福 / 第 N 幕）。人数与“已开启联机”从无缝联机的会话里读
 pub fn tick(state:&str,started:bool) {
@@ -93,8 +102,9 @@ pub fn tick(state:&str,started:bool) {
         match std::fs::read_to_string(room_file()) {
             Ok(text)=>match HostRoom::parse(&text) {
                 Ok(room)=>{super::log(format!("LOBBY room file read: name={:?} max={} locked={} version={}",room.name,room.max,room.locked,room.version));
+                    status("creating 正在创建房间");
                     host.room=Some(room);host.stage=Stage::Starting{retry_at:Instant::now(),attempts:0};},
-                Err(error)=>super::log(format!("LOBBY room file ignored: {error}")),
+                Err(error)=>{super::log(format!("LOBBY room file ignored: {error}"));status(&format!("failed 房间文件无效：{error}"));},
             },
             Err(_)=>{},
         }
@@ -107,14 +117,14 @@ pub fn tick(state:&str,started:bool) {
             if now<retry_at {return;}
             if host.api.is_none() {
                 match Api::load() {Ok(api)=>host.api=Some(api),Err(error)=>{
-                    super::log_repeating(format!("LOBBY Steam unavailable: {error}"));
+                    super::log_repeating(format!("LOBBY Steam unavailable: {error}"));status(&format!("creating 等待 Steam：{error}"));
                     host.stage=Stage::Starting{retry_at:now+Duration::from_secs(10),attempts};return;
                 }}
             }
             let api=host.api.as_ref().unwrap();
             let call=unsafe {(api.create)(api.matchmaking,PUBLIC,i32::from(room.max))};
             if call==0 {
-                super::log("LOBBY CreateLobby returned no call handle");
+                super::log("LOBBY CreateLobby returned no call handle");status("failed Steam 拒绝创建房间");
                 host.stage=if attempts>=3 {Stage::Off}else{Stage::Starting{retry_at:now+Duration::from_secs(15),attempts:attempts+1}};return;
             }
             host.stage=Stage::Creating{call,since:now,attempts};
@@ -124,7 +134,7 @@ pub fn tick(state:&str,started:bool) {
             let mut failed=false;
             if !unsafe {(api.completed)(api.utils,call,&mut failed)} {
                 if now.duration_since(since)>Duration::from_secs(20) {
-                    super::log("LOBBY CreateLobby timed out");
+                    super::log("LOBBY CreateLobby timed out");status("failed 创建房间超时");
                     host.stage=if attempts>=3 {Stage::Off}else{Stage::Starting{retry_at:now+Duration::from_secs(15),attempts:attempts+1}};
                 }
                 return;
@@ -133,11 +143,11 @@ pub fn tick(state:&str,started:bool) {
             let ok=unsafe {(api.result)(api.utils,call,(&mut created as *mut LobbyCreated).cast(),std::mem::size_of::<LobbyCreated>() as i32,LOBBY_CREATED,&mut failed)};
             // EResult 1 = k_EResultOK
             if !ok||failed||created.result!=1||created.lobby==0 {
-                super::log(format!("LOBBY CreateLobby failed: ok={ok} failed={failed} result={}",created.result));
+                super::log(format!("LOBBY CreateLobby failed: ok={ok} failed={failed} result={}",created.result));status(&format!("failed Steam 创建房间失败（错误 {}）",created.result));
                 host.stage=if attempts>=3 {Stage::Off}else{Stage::Starting{retry_at:now+Duration::from_secs(15),attempts:attempts+1}};
                 return;
             }
-            super::log(format!("LOBBY room open: lobby={:#x}",created.lobby));
+            super::log(format!("LOBBY room open: lobby={:#x}",created.lobby));status("open 0");
             host.stage=Stage::Open{lobby:created.lobby,sent:vec![],at:now-Duration::from_secs(60)};
         },
         Stage::Open{lobby,ref mut sent,ref mut at}=>{
@@ -150,6 +160,8 @@ pub fn tick(state:&str,started:bool) {
                 let open=session.lobby_state==LobbyState::Host;
                 ((if open {session.players.len()}else{1}).clamp(1,8) as u8,open)
             });
+            // 状态文件第二段：房主是否已用无缝联机的道具开启联机（启动器据此提示房主）
+            status(&format!("open {}",u8::from(open)));
             let data=room.data(&api.persona(),players,state,open,started);
             for (key,value) in &data {
                 if sent.iter().any(|(k,v)|k==key&&v==value) {continue;}

@@ -210,6 +210,8 @@ impl Gate {
         self.events.as_ref().is_some_and(|q|q.busy()||q.completed().is_some_and(|j|!self.all(|r|r.event_applied==Some(j.wave))))
     }
     pub fn disconnect(&mut self,id:u64){if let Some(p)=self.peers.iter_mut().find(|p|p.0==id){p.1=None;}}
+    /// 队员退出了无缝会话（不是房主）：从队伍里去掉，之后的“全员”判断（出发、开战、胜利、领奖、投票）不再等他
+    pub fn remove(&mut self,id:u64)->bool {let before=self.peers.len();self.peers.retain(|p|p.0!=id);self.peers.len()<before}
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
         if report.visited.len()>64||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
@@ -538,6 +540,16 @@ mod tests {
         assert!(gate.victory().is_err());
         assert!(matches!(gate.engage(),Some(Order::Engage{epoch:0})));
         assert!(gate.engage().is_none());assert!(gate.victory().is_ok());
+    }
+    #[test]
+    fn a_member_who_quits_mid_fight_no_longer_blocks_the_party() {
+        let run=Run::new(42,crate::Class::Samurai);let mut gate=Gate::new(vec![1,2,3]);gate.stage=Stage::Combat;
+        gate.report(1,Report::new(&run,0,true,true,true)).unwrap();
+        gate.report(2,Report::new(&run,0,true,true,true)).unwrap();
+        assert!(gate.engage().is_none(),"member 3 never reported");
+        assert!(gate.remove(3));assert!(!gate.remove(3));assert_eq!(gate.members(),vec![1,2]);
+        assert!(matches!(gate.engage(),Some(Order::Engage{epoch:0})));
+        assert!(gate.victory().is_ok(),"victory no longer waits for the player who left");
     }
     #[test]
     fn a_slow_member_delays_the_fight_by_at_most_the_grace_window() {

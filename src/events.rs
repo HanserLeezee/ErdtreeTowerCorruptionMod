@@ -107,7 +107,7 @@ impl Run {
         let id = self.active_node(NodeKind::Event)?;
         let index=self.story_index()?;
         if choice > 1 {return Err("无效事件选项".into());}
-        if self.regional_event.opened!=0 {return Err("这里的事件已经用过".into());}
+        if self.regional_event.opened!=0||self.regional_event.settled {return Err("这里的事件已经用过".into());}
         let mut next = self.clone();
         let mut effect = StoryEffect::default();
         let mut price = 0;

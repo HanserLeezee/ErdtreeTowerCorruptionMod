@@ -21,7 +21,7 @@ pub fn upgrade(data: &mut PlayerGameData) -> Result<(), String> {
     };
     let max = super::smith::level_max(params, base.reinforce_type_id()) as u32;
     let minimum = next_id(old as u32, cap, max, base.origin_equip_wep1() >= 0)?;
-    let next = super::smith::target_with_peak(old,cap as i32,max as i32,super::smith::inventory_peak(data,params))
+    let next = super::smith::target_with_peak(old,cap as i32,max as i32,super::smith::effective_peak(data,params))
         .map(|id|id as u32).unwrap_or(minimum);
     let reinforcement = i32::from(base.reinforce_type_id()) + (next % 100) as i32;
     if reinforcement < 0

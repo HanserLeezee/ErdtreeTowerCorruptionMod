@@ -7,6 +7,8 @@ use serde::Deserialize;
 
 /// 启动器写给 DLL 的房间文件（模组目录里）；不是房主启动时启动器会删掉它
 pub const FILE:&str="tower-lobby.json";
+/// DLL 写给启动器的房间状态（同一目录）：一行“状态 详情”，状态为 creating / open / failed；启动器据此显示“你开的房间”
+pub const STATUS_FILE:&str="tower-lobby-status.txt";
 /// 大厅筛选标记：只列出爬塔的房间
 pub const TAG_KEY:&str="tower";
 pub const TAG:&str="erdtree-tower";

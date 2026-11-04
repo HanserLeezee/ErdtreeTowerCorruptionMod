@@ -64,6 +64,8 @@ pub struct Room {
     merchant_hit_logged:bool,
     pub merchant_down:bool,
     pub shop_refresh_pending:bool,
+    /// 上次读到的商品售出计数（诊断：联机客机商品无故变空）
+    pub shop_counters:Option<(std::time::Instant,Vec<u8>)>,
     pub hunter:Option<super::map_guards::Guards>,
     hub: bool,
     event_host:usize,
@@ -116,6 +118,12 @@ impl Room {
     pub fn event_menu(&mut self,run:&erdtree_tower::Run,party_ready:bool,party_busy:bool,solo:bool) {
         self.event_host=super::event_hosts::index(run.event_draw(self.node));
         let progress=&run.regional_event;
+        // 死亡重试回到已结束的事件：引导者不再提供任何选项
+        if progress.settled {
+            let menu=super::native_talk::EventMenu{trial:true,used:true,..Default::default()};
+            for talk in &mut self.talks {talk.set_event_menu(menu);}
+            return;
+        }
         let menu=super::native_talk::EventMenu{gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
             altar:run.altar(self.node),used:progress.opened!=0||progress.stormveil.is_some_and(|s|s!=erdtree_tower::stormveil::Progress::Choosing),
             busy:progress.guards||self.scarabs.active()||party_busy,ready:self.scarabs.ready()||party_ready,attempts:progress.attempts};
@@ -173,7 +181,7 @@ impl Room {
         }
         super::log(format!("Native room {node}: {title}, block={block:x}"));
         Ok(Self {
-            merchant_down:false,shop_refresh_pending:false,hunter:None,merchant_hit_logged:false,
+            merchant_down:false,shop_refresh_pending:false,shop_counters:None,hunter:None,merchant_hit_logged:false,
             scarabs:Default::default(),
             chest_attempt:None,
             hub,event_host:0,

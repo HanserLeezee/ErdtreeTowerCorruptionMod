@@ -479,7 +479,7 @@ pub fn prepare(run: &Run, node: usize, refresh: bool, data:&mut PlayerGameData) 
     for flag in (0..stock.len() as u32).flat_map(|i|stock_flag(i)..stock_flag(i)+8).filter(|_|refresh) {
         flags.virtual_memory_flag.set_flag(flag, false);
     }
-    let peak=super::smith::inventory_peak(data,params);
+    let peak=super::smith::effective_peak(data,params);
     let granted:Vec<_>=stock.iter().map(|item|if item.kind==0 {super::smith::acquisition_id(item.id as u32,peak,params).map(|id|id as i32)}else{Ok(item.id)}).collect::<Result<_,String>>()?;
     let mut shop_items=Vec::with_capacity(stock.len());
     for (i,item) in stock.iter().enumerate() {
@@ -517,9 +517,17 @@ pub fn reset_arrived_stock(count:usize)->Result<(),String> {
     for flag in counters {flags.virtual_memory_flag.set_flag(flag,false);}
     super::log(format!("SHOP_STOCK arrival reset slots={count} stale_bits={stale}"));Ok(())
 }
+/// 每个商品槽的售出计数（8 个旗标一组的位），诊断联机客机商品变空用
+pub fn sold_counts(count:usize)->Result<Vec<u8>,String> {
+    let flags=unsafe {CSEventFlagMan::instance()}.map_err(|_|"商店库存标记未加载")?;
+    (0..count.min(MAX_STOCK as usize) as u32).map(|i|{
+        if flags.virtual_memory_flag.flag_block_descriptors.find(&(stock_flag(i)/1000)).is_none(){return Err("商店库存旗标尚未加载".to_string());}
+        Ok((0..8).fold(0u8,|bits,b|bits|(u8::from(flags.virtual_memory_flag.get_flag(stock_flag(i)+b))<<b)))
+    }).collect()
+}
 pub fn refresh_weapon_levels(data:&PlayerGameData)->Result<(),String> {
     let params=unsafe {SoloParamRepository::instance_mut()}.map_err(|_|"商店参数未加载")?;
-    let peak=super::smith::inventory_peak(data,params);
+    let peak=super::smith::effective_peak(data,params);
     let mut updates=Vec::new();
     let mut custom_updates=Vec::new();
     for id in GOODS..GOODS+MAX_STOCK {

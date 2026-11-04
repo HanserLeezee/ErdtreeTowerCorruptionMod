@@ -113,6 +113,8 @@ impl Transport {
             })
         }
     }
+    /// 队员退出后换成缩小后的名单（之后不再给他发消息，也不收他的）
+    pub fn set_roster(&mut self,roster:Roster) {self.roster=roster;}
     pub fn send(&self,peer:u64,data:&[u8])->Result<(),String> {
         if !allowed(&self.roster,peer,data.len()){return Err("无效队伍消息目标或长度".into());}
         let mut identity=Identity{bytes:[0;136]};

@@ -61,7 +61,14 @@ pub fn acquisition_id(id:u32,peak:i32,params:&SoloParamRepository)->Result<u32,S
 pub fn reward_id(data:&PlayerGameData,id:u32)->Result<u32,String> {
     if id>>28!=0 {return Ok(id);}
     let params=unsafe {SoloParamRepository::instance()}.map_err(|_|"武器参数未就绪")?;
-    acquisition_id(id,inventory_peak(data,params),params)
+    acquisition_id(id,effective_peak(data,params),params)
+}
+/// 本局历史最高等效等级（Run::weapon_peak，只升不降）；每帧由 runtime 按当前旅程写入，没有旅程时为 0
+static RUN_PEAK:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
+pub fn set_run_peak(peak:u8) {RUN_PEAK.store(peak,Ordering::Relaxed);}
+/// 强化与获得武器的基准：本局历史最高与当前背包最高中较高的——卖掉、丢掉或存进仓库的高等级武器不会让基准掉下来
+pub fn effective_peak(data:&PlayerGameData,params:&SoloParamRepository)->i32 {
+    inventory_peak(data,params).max(i32::from(RUN_PEAK.load(Ordering::Relaxed)))
 }
 pub fn inventory_peak(data:&PlayerGameData,params:&SoloParamRepository)->i32 {
     data.equipment.equip_inventory_data.items_data.items()
@@ -84,7 +91,7 @@ unsafe extern "C" fn build_offers(list:*mut Offers,id:i32)->usize {
     }
     let cap=if base.origin_equip_wep16()<0 {10}else{25};
     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.ok();
-    let peak=player.as_ref().map(|p|inventory_peak(unsafe {p.player_game_data.as_ref()},params)).unwrap_or(0);
+    let peak=player.as_ref().map(|p|effective_peak(unsafe {p.player_game_data.as_ref()},params)).unwrap_or(0);
     let max=level_max(params,base.reinforce_type_id());
     let Some(next)=target_with_peak(id,cap,max,peak) else{log_offer(format!("Smith bypass: id={id} at max +{max}"));return count;};
     let Some(reinforce)=params.get::<eldenring::cs::ReinforceParamWeapon>((i32::from(base.reinforce_type_id())+next%100) as u32) else{log_offer(format!("Smith bypass: id={id} next={next} reinforcement parameter missing"));return count;};

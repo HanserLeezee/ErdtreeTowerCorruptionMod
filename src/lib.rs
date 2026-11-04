@@ -750,10 +750,12 @@ impl Run {
         if !self.available().contains(&id) {
             return Err("节点不可达".into());
         }
+        // 死亡重试回到已经动过的事件：保留“已结束”，不重新抽事件（否则能重选试炼、再领一次奖）
+        let settled=self.retry_node==Some(id)&&self.regional_event.settled;
         self.retry_node=None;
         self.reached_layer=self.nodes[id].layer+1;
         self.shop_purchased = 0;self.shop_stock=None;
-        if self.nodes[id].kind==NodeKind::Event {
+        if self.nodes[id].kind==NodeKind::Event&&!settled {
             let draw=self.event_draw(id);
             self.regional_event.scarabs=draw==events::Draw::Scarabs;
             self.regional_event.locked=draw==events::Draw::Locked;
@@ -1096,7 +1098,8 @@ impl Run {
         self.retries-=1;
         if let Some(checkpoint)=self.checkpoint.take() {self.hp=checkpoint.hp;self.flasks=checkpoint.flasks;}
         if self.hp==0 {self.hp=self.max_hp;}
-        self.regional_event=Default::default();
+        let settled=self.nodes[id].kind==NodeKind::Event&&self.regional_event.touched();
+        self.regional_event=crate::regional_events::Progress{settled,..Default::default()};
         self.shop_purchased=0;self.shop_stock=None;
         self.phase=Phase::Map;
         self.retry_node=Some(id);

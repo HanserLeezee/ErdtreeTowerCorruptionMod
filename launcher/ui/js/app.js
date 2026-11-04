@@ -873,7 +873,7 @@
   /* ================= 联机大厅 =================
      房间列表由宿主用 Steam 大厅查询（TowerHost.LobbyListAsync），开房 / 加入时宿主写好无缝联机密码再启动游戏。
      lobbyState.view：'list' 房间列表 | 'host' 开房表单 */
-  var lobbyState = { view: 'list', loading: false, error: '', rooms: [], version: '', joining: null };
+  var lobbyState = { view: 'list', loading: false, error: '', rooms: [], version: '', joining: null, mine: null };
 
   function openLobby() {
     closeModal();
@@ -911,6 +911,10 @@
         (L.version ? '你的版本 ' + esc(L.version) + ' · 版本不同的房间不能加入' : '同一版本的队友开的房间会显示在这里') + '</span>' +
         '<span><button class="btn-ghost" data-lobby="refresh"' + (L.loading ? ' disabled' : '') + '>' + (L.loading ? '刷新中…' : '刷新') + '</button> ' +
         '<button class="btn-ghost primary" data-lobby="host">开房</button></span></div>';
+      if (L.mine) {
+        html += '<div class="lobby-mine lobby-mine-' + esc(L.mine.state) + (L.mine.state === 'open' && !L.mine.ready ? ' lobby-mine-wait' : '') + '">你开的房间「' + esc(L.mine.name) + '」：' + esc(L.mine.detail) +
+          (L.mine.state === 'open' ? '<span class="lobby-hint">（自己的房间在下面的列表里可能看不到，请让队友刷新确认）</span>' : '') + '</div>';
+      }
       if (L.error) {
         html += '<div class="lobby-empty">' + esc(L.error) + '</div>';
       } else if (L.loading && !L.rooms.length) {
@@ -1989,6 +1993,7 @@
         lobbyState.error = p.error || '';
         lobbyState.rooms = p.rooms || [];
         if (p.version) lobbyState.version = p.version;
+        lobbyState.mine = p.mine || null;
         if (lobbyState.joining && !lobbyState.rooms.some(function (r) { return r.id === lobbyState.joining; })) lobbyState.joining = null;
         renderLobby();
         return;
