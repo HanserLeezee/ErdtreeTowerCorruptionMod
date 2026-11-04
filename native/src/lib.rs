@@ -26,6 +26,7 @@ mod retry_item;
 mod options;
 mod radahn_probe;
 mod radahn_entity;
+mod mausoleum;
 mod stats;
 mod enemies;
 mod chariot;

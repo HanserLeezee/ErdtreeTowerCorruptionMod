@@ -16,6 +16,7 @@ pub mod elite;
 pub mod encounter;
 pub mod events;
 pub mod regional_events;
+pub mod mausoleum;
 pub mod stormveil;
 pub mod rewards;
 pub mod affixes;
@@ -257,6 +258,8 @@ pub struct Run {
     pub debug: bool,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub boss_test: Option<debug::BossTest>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub mausoleum_test: Option<(u8,usize)>,
     /// 2：问号房的每个事件按权重单独抽取，加入骰子赌徒、盲盒商人与词条重铸台三个房间事件（0、1 为旧分配）
     /// 3：九个问号房事件权重相同（2 为试炼 4、其余 2）
     #[serde(default)]
@@ -638,7 +641,8 @@ impl Run {
             ember_stacks: Default::default(),
             debug: false,
             boss_test: None,
-            event_rules: 3,
+            mausoleum_test: None,
+            event_rules: 4,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -759,8 +763,9 @@ impl Run {
             let draw=self.event_draw(id);
             self.regional_event.scarabs=draw==events::Draw::Scarabs;
             self.regional_event.locked=draw==events::Draw::Locked;
-            self.regional_event.trial=draw==events::Draw::Trial;
+            self.regional_event.trial=matches!(draw,events::Draw::Trial|events::Draw::Mausoleum);
             self.regional_event.recovery=draw==events::Draw::Spring;
+            self.regional_event.mausoleum=(draw==events::Draw::Mausoleum).then(Default::default);
 
         }
         if self.nodes[id].kind.combat() {
@@ -1113,7 +1118,14 @@ impl Run {
         if json.len() > 128 * 1024 {
             return Err("存档过大".into());
         }
-        let mut run: Self = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let mut value:serde_json::Value=serde_json::from_str(json).map_err(|e|e.to_string())?;
+        let offer=value.get_mut("regional_event").and_then(|p|p.get_mut("mausoleum")).and_then(|m|m.as_object_mut()).is_some_and(|copy|{
+            if copy.contains_key("accepted"){return false;}
+            let used=copy.get("completed").and_then(|v|v.as_bool())==Some(true)||copy.get("receipt").is_some_and(|v|!v.is_null());
+            copy.insert("accepted".into(),serde_json::Value::Bool(used));!used
+        });
+        if offer {value["regional_event"]["trial"]=serde_json::Value::Bool(true);}
+        let mut run: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
         if run.ruby_spells {
             run.ruby_spells=false;
             if let Phase::Reward{id,..}=run.phase {run.phase=Phase::Reward{id,offers:run.offers(id)};}
@@ -1144,6 +1156,7 @@ impl Run {
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
         if self.boss_test.is_some_and(|t|!self.debug||!(1..=3).contains(&t.act)||t.encounter>=4096){return fail();}
+        if self.mausoleum_test.is_some_and(|(act,id)|!self.debug||!(1..=3).contains(&act)||act==self.act&&self.nodes.get(id).is_none_or(|n|n.kind!=NodeKind::Event)){return fail();}
         if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>2||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>2||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
@@ -1160,7 +1173,7 @@ impl Run {
             || !self.valid_start_talisman()
             || self.weapon_preference.is_some_and(|p|!p.valid())
             || !weapon_training::valid_preferences(&self.weapon_preferences)
-            || self.event_rules>3
+            || self.event_rules>4
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()

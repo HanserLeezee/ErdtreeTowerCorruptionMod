@@ -26,7 +26,7 @@ impl Drop for NativeTalk {
     }
 }
 #[derive(Clone,Copy,Default)]
-pub struct EventMenu {pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
+pub struct EventMenu {pub mausoleum_offer:bool,pub gamble:Option<u8>,pub trial:bool,pub chariot:bool,pub stormveil:bool,pub descent:bool,pub recovery:bool,pub scarabs:bool,pub locked:bool,pub altar:bool,pub used:bool,pub busy:bool,pub ready:bool,pub attempts:u8}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum EventRequest {Gamble(usize),Trial(erdtree_tower::regional_events::Trial),Altar(usize),Scarabs,Recovery(usize),Descent,Stormveil(bool)}
 /// 问号房赌运事件的对话文字（scene-builder RecoveryText.GambleEntries）：
@@ -54,8 +54,10 @@ impl EventMenu {
         match self.request(choice)? {
             EventRequest::Gamble(option)=>Some(GAMBLE_CONFIRM+i32::from(self.gamble?)*2+option as i32),
             EventRequest::Trial(Trial::Descent)|EventRequest::Descent=>Some(9500118),
+            EventRequest::Trial(Trial::Mausoleum)=>Some(9500165),
             EventRequest::Trial(Trial::Stormveil)=>Some(9500119),
             EventRequest::Trial(Trial::Chariot)=>Some(9500120),
+            EventRequest::Trial(Trial::Skip) if self.mausoleum_offer=>Some(9500167),
             EventRequest::Trial(Trial::Skip)|EventRequest::Stormveil(false)=>Some(9500121),
             EventRequest::Stormveil(true)=>Some(if self.chariot{9500120}else{9500119}),
             _=>None,
@@ -66,6 +68,10 @@ impl EventMenu {
         let choice=choice?;self.confirmation(choice)?;self.request(choice)
     }
     fn request(self,choice:i32)->Option<EventRequest> {
+        if self.mausoleum_offer {
+            if self.used||self.busy{return None;}
+            return match choice {1=>Some(EventRequest::Trial(erdtree_tower::regional_events::Trial::Mausoleum)),2=>Some(EventRequest::Trial(erdtree_tower::regional_events::Trial::Skip)),_=>None};
+        }
         if self.gamble.is_some() {return (!self.used&&!self.busy&&(1..=2).contains(&choice)).then(||EventRequest::Gamble((choice-1) as usize));}
         if self.trial {
             return (!self.used&&!self.busy).then(||[erdtree_tower::regional_events::Trial::Descent,erdtree_tower::regional_events::Trial::Stormveil,erdtree_tower::regional_events::Trial::Chariot,erdtree_tower::regional_events::Trial::Skip].get(choice.wrapping_sub(1) as usize).copied()).flatten().map(EventRequest::Trial);
@@ -127,7 +133,13 @@ impl NativeTalk {
     pub fn poll(&mut self) -> Result<(), String> {
         match self.state {
             0 => {
-                if self.query(56, &[if self.service == 1 {9500001} else {6000}])? == 0 { return Ok(()); }
+                if self.query(56, &[if self.service==7 {6430}else if self.service == 1 {9500001} else {6000}])? == 0 { return Ok(()); }
+                if self.service==7 {
+                    self.event(110,&[])?;self.event(20,&[])?;
+                    if !self.event_menu.used&&!self.event_menu.busy {self.event(19,&[1,9500160,-1])?;}
+                    if !self.event_menu.busy {self.event(19,&[2,9500162,-1])?;}
+                    self.event(19,&[99,9500003,-1])?;self.event(10,&[1])?;self.state=1;return Ok(());
+                }
                 super::log(format!("Native NPC interaction: service={}", self.service));
                 if self.service==4 {
                     self.event(110,&[])?;
@@ -135,6 +147,12 @@ impl NativeTalk {
                     return Ok(());
                 }
                 if self.service==6 && self.event_menu.trial {
+                    if self.event_menu.mausoleum_offer {
+                        if self.event_menu.busy||self.event_menu.used{return Ok(());}
+                        self.event(110,&[])?;self.event(20,&[])?;
+                        for (choice,text) in [(1,9500164),(2,9500166),(99,9500003)]{self.event(19,&[choice,text,-1])?;}
+                        self.event(10,&[1])?;self.state=1;return Ok(());
+                    }
                     if self.event_menu.busy||self.event_menu.used {return Ok(());}
                     self.event(110,&[])?;self.event(20,&[])?;
                     for (i,text) in [9500094,9500115,9500117,9500116].into_iter().enumerate(){self.event(19,&[i as i32+1,text,-1])?;}
@@ -216,6 +234,13 @@ impl NativeTalk {
             1 => {
                 if self.query(59, &[1, 0])? != 0 { return Ok(()); }
                 let choice = self.query(23, &[])?;
+                if self.service==7 {
+                    self.state=0;
+                    if choice==1&&!self.event_menu.used&&!self.event_menu.busy {
+                        self.event(17,&confirmation_dialog(9500161))?;self.event_confirmation=Some(1);self.state=19;
+                    }else if choice==2&&!self.event_menu.busy {self.choice=Some(2);}
+                    return Ok(());
+                }
                 if self.service==6 {
                     self.state=0;
                     if self.event_menu.scarabs&&choice==2 {return self.dialog(9500085);}
@@ -318,6 +343,7 @@ impl NativeTalk {
             19 => if self.query(58,&[0])?==0 {
                 let choice=self.event_confirmation.take();
                 let answer=self.query(22,&[])?;
+                if self.service==7 {self.choice=choice.filter(|_|answer==1);self.state=0;return Ok(());}
                 self.event_request=self.event_menu.confirmed(choice,answer);self.state=0;
             },
             2 => {},
@@ -400,6 +426,17 @@ pub fn flag(id: u32) -> Result<bool, String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]fn mausoleum_offer_has_only_go_or_800_and_requires_confirmation(){
+        use erdtree_tower::regional_events::Trial;
+        let menu=super::EventMenu{mausoleum_offer:true,trial:true,..Default::default()};
+        for (choice,expected) in [(1,Trial::Mausoleum),(2,Trial::Skip)] {
+            assert_eq!(menu.confirmed(Some(choice),1),Some(super::EventRequest::Trial(expected)));
+            assert_eq!(menu.confirmed(Some(choice),0),None);
+            assert_eq!(super::EventMenu{used:true,..menu}.request(choice),None);
+            assert_eq!(super::EventMenu{busy:true,..menu}.request(choice),None);
+        }
+        for choice in [0,3,4,99]{assert_eq!(menu.request(choice),None);}
+    }
     #[test]
     fn gamble_menus_confirm_each_option_and_close_once_used() {
         use super::{EventMenu,EventRequest,GAMBLE_CONFIRM};

@@ -138,7 +138,7 @@ impl Gate {
         if self.stage!=Stage::Service||self.trial.is_some()||!self.all(|r|r.trial&&r.arrived&&r.alive&&r.trial_choice.is_some()){return None;}
         let first=self.peers.first()?.1.as_ref()?;
         if !self.all(|r|r.seed==first.seed&&r.act==first.act&&r.visited==first.visited){return None;}
-        let options=[Trial::Descent,Trial::Stormveil,Trial::Chariot,Trial::Skip];
+        let options=[Trial::Descent,Trial::Stormveil,Trial::Chariot,Trial::Skip,Trial::Mausoleum];
         let counts=options.map(|c|self.peers.iter().filter(|(_,r)|r.as_ref().is_some_and(|r|r.trial_choice==Some(c))).count());
         let best=*counts.iter().max()?;
         let tied:Vec<_>=options.into_iter().zip(counts).filter_map(|(c,n)|(n==best).then_some(c)).collect();
@@ -411,6 +411,20 @@ mod tests {
             assert!(matches!(gate.rest_end(),Some(Order::Defeat{epoch:0})));
             assert!(gate.rest_end().is_none());assert_eq!(gate.stage,Stage::Stopped);
         }}}
+    }
+    #[test]
+    fn mausoleum_votes_wait_for_all_peers_and_emit_one_shared_decision(){
+        use crate::regional_events::Trial;
+        for count in 2..=8 {for choice in [Trial::Mausoleum,Trial::Skip] {
+            let mut run=Run::new(42,crate::Class::Samurai);run.regional_event.trial=true;
+            let mut gate=Gate::new((1..=count).collect());gate.stage=Stage::Service;
+            let mut report=Report::new(&run,0,true,false,true);report.trial_choice=Some(choice);
+            for id in 1..count {gate.report(id,report.clone()).unwrap();}
+            assert!(gate.trial_order().is_none());
+            let mut loading=report.clone();loading.arrived=false;gate.report(count,loading).unwrap();assert!(gate.trial_order().is_none());
+            gate.report(count,report).unwrap();assert!(matches!(gate.trial_order(),Some(Order::Trial{choice:c,..}) if c==choice));
+            assert!(gate.trial_order().is_none());
+        }}
     }
     #[test]
     fn chariot_vote_requires_same_trial_for_two_to_eight_players() {

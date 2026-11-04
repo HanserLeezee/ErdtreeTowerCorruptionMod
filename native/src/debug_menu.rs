@@ -4,7 +4,7 @@ use hudhook::imgui::{Condition,Ui};
 use erdtree_tower::{NodeKind,Run,contracts::Kind,embers::Ember,law::{Law,NODES}};
 use crate::enemies::Enemy;
 
-pub enum Command {BossTest(u16),RadahnTest,EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool)}
+pub enum Command {MausoleumTest,BossTest(u16),RadahnTest,EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool)}
 
 // tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
 static ENABLED:LazyLock<bool>=LazyLock::new(||crate::LOG_PATH.with_file_name("tower-debug.enable").exists()||crate::options::get().debug);
@@ -65,10 +65,10 @@ fn ime_here(ui:&Ui) {
     if ui.is_item_active() {let min=ui.item_rect_min();let max=ui.item_rect_max();hudhook::set_ime_position(min[0],max[1]);}
 }
 fn send(command:Command) {if let Ok(mut queue)=QUEUE.lock(){queue.push_back(command);}}
-pub fn take()->Option<Command> {let mut queue=QUEUE.lock().ok()?;let index=queue.iter().position(|c|!matches!(c,Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;queue.remove(index)}
+pub fn take()->Option<Command> {let mut queue=QUEUE.lock().ok()?;let index=queue.iter().position(|c|!matches!(c,Command::MausoleumTest|Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;queue.remove(index)}
 pub fn take_test()->Option<Command> {
     let mut queue=QUEUE.lock().ok()?;
-    let index=queue.iter().position(|c|matches!(c,Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;
+    let index=queue.iter().position(|c|matches!(c,Command::MausoleumTest|Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;
     queue.remove(index)
 }
 static PARTY_ROLE:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
@@ -145,6 +145,12 @@ impl Menu {
                 if let Some(_tab)=ui.tab_item("构筑") {self.build(ui,run);}
                 if let Some(_tab)=ui.tab_item("物品") {self.items(ui);}
                 if let Some(_tab)=ui.tab_item("状态") {self.state(ui,run);}
+                if let Some(_tab)=ui.tab_item("灵庙测试") {
+                    ui.text_wrapped("单人快捷测试：进入引路人问号房，再选择前往龙王平台灵庙或领取 800 卢恩。此旅程计为调试，不计入正式解锁。");
+                    ui.text_wrapped("复制前在右手装备目标武器；可先在物品页用拼音搜索领取测试武器。");
+                    let _disabled=ui.begin_disabled(PARTY_ROLE.load(Ordering::Relaxed)!=0||run.phase!=erdtree_tower::Phase::Map||view.busy||view.travelling);
+                    if ui.button("进入灵庙事件测试（单人）"){send(Command::MausoleumTest);}
+                }
                 if let Some(_tab)=ui.tab_item("场地") {arenas(ui,run);}
             }
         });
@@ -285,11 +291,11 @@ impl Menu {
         let mut preview=crate::weapon_glow::preview();
         if ui.checkbox("预览：手上任意近战武器都发光",&mut preview) {crate::weapon_glow::set_preview(preview);}
         ui.separator();
-        ui.text("按名称或说明搜索，例如：葛孚雷、致命一击、传说·");
+        ui.text_wrapped("支持中文、拼音和首字母，例如：长剑 / changjian / cj；也可搜索物品说明。");
         ui.set_next_item_width(320.0);
         let enter=ui.input_text("##item-query",&mut self.item_query).enter_returns_true(true).build();ime_here(ui);
         ui.same_line();
-        if (ui.button("搜索")||enter)||self.searched!=self.item_query&&self.item_query.chars().count()>=2 {
+        if (ui.button("搜索")||enter)||self.searched!=self.item_query {
             self.items=crate::reward_ui::search_items(&self.item_query,80);self.searched=self.item_query.clone();
         }
         ui.text(format!("{} 条结果（最多显示 80 条）",self.items.len()));

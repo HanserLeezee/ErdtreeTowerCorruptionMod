@@ -1,5 +1,20 @@
-﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly, [string]$PartyConfig)
+﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly, [string]$PartyConfig, [ValidateSet('ME3','YAFSML')][string]$Loader='ME3')
 $ErrorActionPreference = 'Stop'
+$loaderSupport=Join-Path $PSScriptRoot 'Tower-Loader.ps1'
+if(!(Test-Path -LiteralPath $loaderSupport)){$loaderSupport=Join-Path $PSScriptRoot 'distribution/Tower-Loader.ps1'}
+. $loaderSupport
+function Assert-TowerLobbyPassword([string]$RoomText, [string]$Settings) {
+    $room = $RoomText | ConvertFrom-Json
+    $entries = [regex]::Matches($Settings, '(?mi)^[ \t]*cooppassword[ \t]*=[ \t]*([^\r\n;#]*)')
+    if ($entries.Count -ne 1) { throw 'Lobby password setting is missing or duplicated. Recreate the room in the launcher.' }
+    $password = $entries[0].Groups[1].Value.Trim()
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { $actual = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($password))).Replace('-', '').ToLowerInvariant() }
+    finally { $hash.Dispose() }
+    if (!$room.password_sha256 -or $actual -cne $room.password_sha256 -or (!$room.locked -and $password -cne $room.password)) {
+        throw 'Lobby password does not match this launch configuration. Close the game and recreate the room in the launcher.'
+    }
+}
 function Set-TowerSpectatorMode([string]$Settings) {
     $section = [regex]'(?m)^\[GAMEPLAY\][ \t]*(\r?\n|$)'
     $newline = if ($Settings.Contains("`r`n")) {"`r`n"} else {"`n"}
@@ -68,7 +83,7 @@ function Get-TowerPluginSections([string]$PackageRoot) {
     }
 }
 # End extra plugins
-$base = & (Join-Path $PSScriptRoot 'Launch-Preview.ps1') -GameDir $GameDir -CheckOnly
+$base = & (Join-Path $PSScriptRoot 'Launch-Preview.ps1') -GameDir $GameDir -Loader $Loader -CheckOnly
 $root = $base.PackageDirectory
 if ($PartyConfig) {
     $PartyConfig = (Resolve-Path -LiteralPath $PartyConfig -ErrorAction Stop).Path
@@ -111,6 +126,16 @@ $modified = Set-TowerMultiplayerPreset $modified ([IO.File]::ReadAllText($preset
 $modified = Set-TowerSpectatorMode $modified
 if ($CheckOnly) {[pscustomobject]@{Entry=$launcher;SaveExtension=$saveExtension;Assets= (Join-Path $root 'scene-assets');MultiplayerVerified=$false};return}
 if (Get-Process eldenring,ersc_launcher -ErrorAction SilentlyContinue) {throw 'Exit the game and Seamless launcher first.'}
+$assetMode = Join-Path $root 'asset-mode.txt'
+if ((Test-Path -LiteralPath $assetMode) -and [IO.File]::ReadAllText($assetMode).Trim() -notin @('full', 'local-v1')) {throw 'Invalid asset mode; verify and repair the package.'}
+if (-not (Test-Path -LiteralPath $assetMode) -and (Test-Path -LiteralPath (Join-Path $root 'asset-patches\manifest.json'))) {throw 'Missing asset mode; verify and repair the package.'}
+if ((Test-Path -LiteralPath $assetMode) -and [IO.File]::ReadAllText($assetMode).Trim() -eq 'local-v1') {
+    if (-not (Test-Path -LiteralPath (Join-Path $root 'asset-patches\manifest.json'))) {throw 'Missing asset patch manifest; verify and repair the package.'}
+    $restore = Join-Path $root 'Tower.AssetRestore.exe'
+    if (-not (Test-Path -LiteralPath $restore)) {throw 'Missing asset generator; verify and repair the package.'}
+    & $restore $root $GameDir
+    if ($LASTEXITCODE -ne 0) {throw 'Local asset generation failed; see logs or use the full package.'}
+}
 $native = $base.DllPath
 $assets = Join-Path $root 'scene-assets'
 $runtime = Join-Path $entry $(if ($PartyConfig) {'party-runtime'} else {'runtime'})
@@ -188,16 +213,22 @@ $environment = @{
     ERDTREE_TOWER_LOG_DIR=$runtime
 }
 $previous = @{}
+$roomGuard = $null
 try {
+    $roomPath = Join-Path $root 'tower-lobby.json'
+    if (Test-Path -LiteralPath $roomPath) {
+        $roomGuard = [IO.File]::Open($roomPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        Assert-TowerLobbyPassword ([IO.File]::ReadAllText($roomPath)) ([IO.File]::ReadAllText((Join-Path $private 'ersc_settings.ini')))
+    }
     foreach ($key in $environment.Keys) {
         $previous[$key]=[Environment]::GetEnvironmentVariable($key)
         if ([string]::IsNullOrEmpty($environment[$key])) { Remove-Item -LiteralPath "Env:$key" -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable($key,$environment[$key]) }
     }
-    Write-Host "ME3: Seamless + tower. Separate save: $saveExtension."
-    & $launcher launch --exe (Join-Path $GameDir 'eldenring.exe') --profile $configPath --auto-detect --online false --skip-steam-init true
-    if ($LASTEXITCODE -ne 0) {throw "ME3 loader exit: $LASTEXITCODE"}
+    Write-Host "${Loader}: Seamless + tower. Separate save: $saveExtension."
+    Invoke-TowerLoader $root $Loader (Join-Path $GameDir 'eldenring.exe') $configPath
 } finally {
+    if ($roomGuard) { $roomGuard.Dispose() }
     foreach ($key in $previous.Keys) {
         if ($null -eq $previous[$key]) { Remove-Item -LiteralPath "Env:$key" -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable($key,$previous[$key]) }

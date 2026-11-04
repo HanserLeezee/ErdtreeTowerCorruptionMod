@@ -1,5 +1,10 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3] is "mausoleum-patch" or "mausoleum-flow-patch" or "mausoleum-flow-verify") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    if(args[3]=="mausoleum-flow-verify")MausoleumFlowAssets.Verify(args[2]);
+    else MausoleumFlowAssets.Patch(args[2],args[1],Environment.GetEnvironmentVariable("TOWER_MAUSOLEUM_SOURCE")??throw new Exception("Set TOWER_MAUSOLEUM_SOURCE"));return;
+}
 if(args.Length==4&&args[3]=="v103-service-audit") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     ReleaseSourceAudit.Verify(args[2]);return;

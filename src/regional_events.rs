@@ -6,6 +6,7 @@ pub const SPRING_GOLD:u32=800;
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Progress {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub mausoleum:Option<crate::mausoleum::CopyState>,
     #[serde(default)] pub trial:bool,
     pub opened: u8, pub guards: bool,
     #[serde(default)] pub guard_slot:Option<u8>,
@@ -33,7 +34,7 @@ pub struct Receipt { pub item:u32, pub key_target:u64, pub reward_target:u64 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome { Explosion, Guards, Item }
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Serialize,Deserialize)]
-pub enum Trial {Descent,Stormveil,Chariot,Skip}
+pub enum Trial {Descent,Stormveil,Chariot,Skip,Mausoleum}
 pub fn chest_roll(roll: u64) -> Outcome {
     match roll % 100 { 0..=19 => Outcome::Explosion, 20..=39 => Outcome::Guards, _ => Outcome::Item }
 }
@@ -49,9 +50,12 @@ impl Run {
     pub fn choose_trial(&mut self,choice:Trial)->RuleResult<()> {
         self.active_node(NodeKind::Event)?;
         if !self.regional_event.trial {return Err("试炼已经选择".into());}
+        let mausoleum=self.regional_event.mausoleum.is_some();
+        if mausoleum&&!matches!(choice,Trial::Mausoleum|Trial::Skip)||!mausoleum&&choice==Trial::Mausoleum{return Err("当前事件不提供此选项".into());}
         let gold=if choice==Trial::Skip {self.gold.checked_add(800).ok_or("卢恩数量超限")?}else{self.gold};
         self.regional_event=Progress::default();
         match choice {
+            Trial::Mausoleum=>{self.regional_event.mausoleum=Some(crate::mausoleum::CopyState::accepted());},
             Trial::Descent=>{self.regional_event.descent=true;self.regional_event.descent_started=true;},
             Trial::Stormveil|Trial::Chariot=>{
                 self.regional_event.stormveil=Some(crate::stormveil::Progress::Running);
@@ -133,6 +137,7 @@ impl Run {
         Ok(result)
     }
     pub fn leave_regional_event(&mut self) -> RuleResult<()> {
+        if self.regional_event.mausoleum.as_ref().is_some_and(|m|m.receipt.is_some()){return Err("请等待武器复制到账".into());}
         if self.regional_event.trial {return Err("请先完成试炼选择".into());}
         let node=self.active_node(NodeKind::Event)?;
         if self.regional_event.chariot&&self.regional_event.stormveil==Some(crate::stormveil::Progress::Complete)&&self.regional_event.opened==0{return Err("请先领取传说宝箱".into());}
@@ -145,6 +150,10 @@ impl Run {
             let event=|id:usize|self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Event);
             return self.regional_event==Progress{settled:true,..Progress::default()}
                 &&match self.phase {Phase::Dead=>true,Phase::Node{id}=>event(id),Phase::Map=>self.retry_node.is_some_and(event),_=>false};
+        }
+        if let Some(copy)=&self.regional_event.mausoleum {
+            return copy.valid()&&self.regional_event==Progress{trial:!copy.accepted,mausoleum:Some(copy.clone()),..Progress::default()}
+                &&match self.phase {Phase::Dead=>true,Phase::Node{id}=>self.nodes.get(id).is_some_and(|n|n.kind==NodeKind::Event)&&self.event_draw(id)==crate::events::Draw::Mausoleum,_=>false};
         }
         if self.regional_event.trial {
             return self.regional_event==Progress{trial:true,..Progress::default()}

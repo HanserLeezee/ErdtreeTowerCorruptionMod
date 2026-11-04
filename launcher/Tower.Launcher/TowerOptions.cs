@@ -18,10 +18,10 @@ namespace Tower.Launcher
         public static readonly (string Id, string Label, string Default)[] Hotkeys =
         {
             ("settle", "快速结算", "Home"),
-            ("overlay", "显示/隐藏爬塔界面", "F10"),
+            ("overlay", "显示/隐藏爬塔界面", "Insert"),
             ("archive", "旅程档案", "J"),
             ("build", "构筑面板", "C"),
-            ("debug", "调试菜单", "F8"),
+            ("debug", "调试菜单", "Delete"),
         };
 
         /// <summary>DLC 模式：设置页显示的文字 ↔ 文件里的 dlc= 值（src/dlc.rs 的 Mode）</summary>

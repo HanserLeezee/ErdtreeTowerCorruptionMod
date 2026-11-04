@@ -35,7 +35,7 @@ pub const STORIES: [Story; 3] = [
 ];
 /// 问号房抽到的事件。event_rules 2 起每个事件按权重表单独抽取（3 起用 EVENT_WEIGHTS）；更早的旅程沿用 8 格分配，没有赌运事件
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
-pub enum Draw {Trial,Chests,Altar,Locked,Scarabs,Spring,Dice,Mystery,Reforge}
+pub enum Draw {Trial,Chests,Altar,Locked,Scarabs,Spring,Dice,Mystery,Reforge,Mausoleum}
 /// 问号房事件权重（event_rules 3 起）：九个事件相同，各 1/9
 pub const EVENT_WEIGHTS:[(Draw,u32);9]=[
     (Draw::Trial,1),(Draw::Chests,1),(Draw::Altar,1),(Draw::Locked,1),(Draw::Scarabs,1),(Draw::Spring,1),
@@ -49,13 +49,15 @@ pub const EVENT_WEIGHTS_V2:[(Draw,u32);9]=[
 impl Run {
     /// 本旅程第 id 个节点（问号房）的事件，由种子与节点决定，读档不变
     pub fn event_draw(&self,id:usize)->Draw {
+        if self.debug&&self.mausoleum_test==Some((self.act,id)){return Draw::Mausoleum;}
         if self.event_rules<2 {
             return match crate::mix(self.seed^id as u64^0x10cced)%8 {
                 0=>Draw::Locked,3=>Draw::Scarabs,4|6|7=>Draw::Trial,5=>Draw::Spring,
                 _=>if crate::regional_events::kind(self.seed,id)==1 {Draw::Altar}else{Draw::Chests},
             };
         }
-        let weights=if self.event_rules<3 {EVENT_WEIGHTS_V2}else{EVENT_WEIGHTS};
+        let mut weights=if self.event_rules<3 {EVENT_WEIGHTS_V2.to_vec()}else{EVENT_WEIGHTS.to_vec()};
+        if self.event_rules>=4 {weights.push((Draw::Mausoleum,1));}
         let total:u32=weights.iter().map(|(_,w)|w).sum();
         let mut roll=(crate::mix(self.seed^(id as u64).wrapping_mul(0x9e37)^0xe7e27)%total as u64) as u32;
         for (draw,weight) in weights {if roll<weight {return draw;} roll-=weight;}
@@ -146,7 +148,7 @@ mod gamble_tests {
                 let mut v2=run.clone();v2.event_rules=2;*counts_v2.entry(v2.event_draw(id)).or_insert(0u32)+=1;
                 let mut entered=run.clone();entered.debug_jump(id).unwrap();entered.enter(id).unwrap();
                 let p=&entered.regional_event;
-                assert_eq!((p.trial,p.locked,p.scarabs,p.recovery),(draw==Draw::Trial,draw==Draw::Locked,draw==Draw::Scarabs,draw==Draw::Spring));
+                assert_eq!((p.trial,p.locked,p.scarabs,p.recovery),(matches!(draw,Draw::Trial|Draw::Mausoleum),draw==Draw::Locked,draw==Draw::Scarabs,draw==Draw::Spring));
                 match draw {
                     Draw::Altar=>assert!(run.altar(id)),Draw::Chests=>assert!(!run.altar(id)),
                     // 赌运事件：用一次后留在房间（读档校验通过、不能再用），从传送门离开

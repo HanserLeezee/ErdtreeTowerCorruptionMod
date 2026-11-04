@@ -61,6 +61,8 @@ pub struct RoomView {
 }
 
 pub struct Room {
+    pub mausoleum:bool,
+    pub copy_requested:bool,
     merchant_hit_logged:bool,
     pub merchant_down:bool,
     pub shop_refresh_pending:bool,
@@ -116,7 +118,12 @@ impl Room {
         self.talks.iter_mut().find_map(|talk|talk.take_refill())
     }
     pub fn event_menu(&mut self,run:&erdtree_tower::Run,party_ready:bool,party_busy:bool,solo:bool) {
-        self.event_host=super::event_hosts::index(run.event_draw(self.node));
+        if self.mausoleum {
+            let copy=run.regional_event.mausoleum.as_ref();
+            let menu=super::native_talk::EventMenu{used:copy.is_some_and(|c|c.completed),busy:copy.is_some_and(|c|c.receipt.is_some()),..Default::default()};
+            for talk in &mut self.talks {talk.set_event_menu(menu);}return;
+        }
+        self.event_host=super::event_hosts::index(if run.regional_event.mausoleum.is_some(){erdtree_tower::events::Draw::Altar}else{run.event_draw(self.node)});
         let progress=&run.regional_event;
         // 死亡重试回到已结束的事件：引导者不再提供任何选项
         if progress.settled {
@@ -124,7 +131,7 @@ impl Room {
             for talk in &mut self.talks {talk.set_event_menu(menu);}
             return;
         }
-        let menu=super::native_talk::EventMenu{gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
+        let menu=super::native_talk::EventMenu{mausoleum_offer:progress.mausoleum.is_some(),gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
             altar:run.altar(self.node),used:progress.opened!=0||progress.stormveil.is_some_and(|s|s!=erdtree_tower::stormveil::Progress::Choosing),
             busy:progress.guards||self.scarabs.active()||party_busy,ready:self.scarabs.ready()||party_ready,attempts:progress.attempts};
         for talk in &mut self.talks {talk.set_event_menu(menu);}
@@ -137,6 +144,19 @@ impl Room {
     }
     pub fn new(node: usize, kind: NodeKind, hp: i32, fp: i32) -> Result<Self, String> {
         Self::create(node,kind,hp,fp,None,false)
+    }
+    pub fn for_run(run:&erdtree_tower::Run,node:usize,kind:NodeKind,hp:i32,fp:i32)->Result<Self,String> {
+        let mut room=Self::new(node,kind,hp,fp)?;
+        if kind==NodeKind::Event&&run.regional_event.mausoleum.as_ref().is_some_and(|copy|copy.accepted) {
+            super::mausoleum::restore_flow(run.regional_event.mausoleum.as_ref().unwrap())?;
+            let arena=super::arenas::for_block(0x0d000000).ok_or("龙王平台资源未接入")?;
+            room.mausoleum=true;
+            room.block=arena.block;room.entry=arena.entry;
+            room.view.message="正在前往灵庙……".into();
+            super::log(format!("MAUSOLEUM room node={node} block={:08x} entry={}",room.block,room.entry));
+        }
+        super::native_talk::set_flag(45011859,room.mausoleum)?;
+        Ok(room)
     }
     pub fn attendant(block:i32)->Result<Self,String> {
         let arena=super::arenas::for_block(block).ok_or("未知竞技场")?;
@@ -181,6 +201,7 @@ impl Room {
         }
         super::log(format!("Native room {node}: {title}, block={block:x}"));
         Ok(Self {
+            mausoleum:false,copy_requested:false,
             merchant_down:false,shop_refresh_pending:false,shop_counters:None,hunter:None,merchant_hit_logged:false,
             scarabs:Default::default(),
             chest_attempt:None,
@@ -225,7 +246,7 @@ impl Room {
             return Ok(());
         }
         let flags = unsafe { CSEventFlagMan::instance() }.map_err(|_| "场景事件系统未就绪")?;
-        if !self.hub && self.kind!=NodeKind::Monster && !flags.virtual_memory_flag.get_flag(ready_flag(self.kind)) {
+        if !self.hub && !self.mausoleum && self.kind!=NodeKind::Monster && !flags.virtual_memory_flag.get_flag(ready_flag(self.kind)) {
             self.view.message = "正在等待房间地图和交互物件就绪……".into();
             if self.started.elapsed() > Duration::from_secs(60) {
                 return Err("服务房间事件未加载，请使用包含 scene-assets 的新启动包".into());
@@ -242,6 +263,22 @@ impl Room {
                 "Native room {} arrived; event handshake received",
                 self.node
             ));
+        }
+        if self.mausoleum {
+            let (lowered,opened)=super::mausoleum::flow()?;
+            super::mausoleum::trace(world,self.node);
+            self.view.loading=false;
+            if !lowered||!opened {
+                self.view.message=if lowered{"灵庙已经跪下：靠近大门，使用原生交互开门。".into()}else{format!("骷髅清除：{}/{}（共 44 块）。达标后等待灵庙跪下，再开门进入。",super::mausoleum::broken_skulls()?,super::mausoleum::REQUIRED_SKULLS)};
+                return Ok(());
+            }
+            if self.talks.is_empty() {
+                if let Some(chr)=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).find(|c|c.event_entity_id==45011860&&c.npc_id==4450&&!c.debug_flags.character_disabled()&&loaded(unsafe {c.chr_set_entry.as_ref()}.chr_load_status)) {
+                    self.talks.push(super::native_talk::NativeTalk::new(self.block,chr.field_ins_handle,7));
+                }else{return Err("等待灵庙祭台加载".into());}
+            }
+            self.view.loading=false;
+            self.talks[0].poll()?;return Ok(());
         }
         let specs = if self.hub {vec![(0,[-329.5,-21.9,-309.0]),(0,[-329.5,-21.9,-302.0])]} else {npcs(self.kind)};
         if let Some(index)=first_stale(&self.handles,|handle|world.chr_ins_by_handle(handle)
@@ -440,6 +477,7 @@ impl Room {
         ready_flag(self.kind) - 991
     }
     pub fn retire(&self, world: &mut WorldChrMan) {
+        if self.mausoleum {let _=super::native_talk::set_flag(45011859,false);}
         if let Some(hunter)=&self.hunter {hunter.retire();}
         self.scarabs.retire(world);
         if !self.hub && self.kind!=NodeKind::Monster && let Ok(flags) = unsafe { CSEventFlagMan::instance_mut() } {

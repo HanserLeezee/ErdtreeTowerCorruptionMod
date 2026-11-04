@@ -170,12 +170,67 @@ pub fn weapon_type_icon(kind:u8)->Option<u32> {
     erdtree_tower::rewards::CATALOG.iter().filter(|i|i.kind==erdtree_tower::rewards::ItemKind::Weapon&&i.id/1_000_000==u32::from(kind))
         .find_map(|i|DETAILS.get(&i.id).map(|d|d.icon))
 }
-/// 调试菜单：按名称或说明搜索可以直接发放的奖励物品（含词条装备）
+fn search_key(text:&str)->String {text.chars().filter(|c|!c.is_whitespace()).flat_map(char::to_lowercase).collect()}
+fn pinyin_keys(text:&str)->(String,String) {
+    use pinyin::ToPinyin;
+    let (mut full,mut initials)=(String::new(),String::new());
+    for c in text.chars() {
+        if let Some(py)=c.to_pinyin() {let syllable=py.plain();full.push_str(syllable);initials.push(syllable.as_bytes()[0] as char);}
+        else if !c.is_whitespace() {for lower in c.to_lowercase(){full.push(lower);initials.push(lower);}}
+    }
+    (full,initials)
+}
+static ITEM_SEARCH:LazyLock<HashMap<u32,(String,String)>>=LazyLock::new(||DETAILS.iter()
+    .filter(|(id,_)|erdtree_tower::rewards::lookup(**id).is_some())
+    .map(|(id,d)|(*id,pinyin_keys(&format!("{}\n{}",d.name,d.info)))).collect());
+fn alternate_pinyin_matches(text:&str,query:&str,initials:bool)->bool {
+    use pinyin::ToPinyinMulti;
+    if query.is_empty()||!query.is_ascii(){return false;}
+    let (mut positions,mut next)=(Vec::new(),Vec::new());
+    for c in text.chars().filter(|c|!c.is_whitespace()) {
+        next.clear();
+        let mut advance=|token:&str| {
+            for &pos in &positions {
+                let rest=&query[pos..];
+                if token.starts_with(rest){return true;}
+                if rest.starts_with(token){next.push(pos+token.len());}
+            }
+            for (offset,_) in token.char_indices() {
+                let suffix=&token[offset..];
+                if suffix.starts_with(query){return true;}
+                if query.starts_with(suffix){next.push(suffix.len());}
+            }
+            false
+        };
+        if let Some(choices)=c.to_pinyin_multi() {
+            for py in choices {let token=py.plain();if advance(if initials{&token[..1]}else{token}){return true;}}
+        }else {let mut buf=[0u8;4];if advance(c.to_ascii_lowercase().encode_utf8(&mut buf)){return true;}}
+        next.sort_unstable();next.dedup();std::mem::swap(&mut positions,&mut next);
+    }
+    false
+}
+/// 调试菜单：中文、全拼或首字母搜索名称和说明。
 pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
     let query=query.trim();if query.is_empty() {return vec![];}
-    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|erdtree_tower::rewards::lookup(**id).is_some()&&(d.name.contains(query)||d.info.contains(query)))
+    let key=search_key(query);
+    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|erdtree_tower::rewards::lookup(**id).is_some()&&(d.name.contains(query)||d.info.contains(query)
+        ||ITEM_SEARCH.get(id).is_some_and(|(full,initials)|full.contains(&key)||initials.contains(&key))
+        ||alternate_pinyin_matches(&d.name,&key,false)||alternate_pinyin_matches(&d.name,&key,true)
+        ||alternate_pinyin_matches(&d.info,&key,false)||alternate_pinyin_matches(&d.info,&key,true)))
         .map(|(id,d)|(*id,format!("{}　{}",d.name,d.info.replace("\\n","　").replace('\n',"　")))).collect();
     hits.sort_by_key(|(id,_)|*id);hits.truncate(limit);hits
+}
+#[test]
+fn item_search_accepts_pinyin_initials_and_keeps_chinese() {
+    let chinese=search_items("长剑",usize::MAX);
+    assert!(!chinese.is_empty());
+    for query in ["changjian","CHANG JIAN","cj"] {
+        let hits=search_items(query,usize::MAX);
+        assert!(chinese.iter().all(|(id,_)|hits.iter().any(|(found,_)|found==id)),"{query}");
+    }
+    assert!(search_items("  ",80).is_empty());
+    assert!(search_items("zzzzzznotanitem",80).is_empty());
+    assert!(search_items("jian",3).len()<=3);
 }
 pub fn talisman_description(id:u32)->(String,String) {
     DETAILS.get(&(0x20000000|id)).map(|d|(d.name.clone(),d.info.clone()))

@@ -5,6 +5,13 @@ use crate::{Phase,Run,RuleResult,contracts::{Kind,Oath,MAX_LEVEL},embers::Ember,
 pub struct BossTest {pub encounter:u16,pub act:u8}
 
 impl Run {
+    pub fn debug_mausoleum_test(&mut self)->RuleResult<usize> {
+        let mut next=self.clone();next.debug_begin()?;
+        if let Some(contract)=next.contract.as_mut(){if contract.pending(){contract.skip()?;}}
+        let node=next.nodes.iter().position(|n|n.kind==crate::NodeKind::Event).ok_or("本幕没有问号房")?;
+        next.debug_jump(node)?;next.boss_test=None;next.mausoleum_test=Some((next.act,node));
+        next.validate()?;*self=next;Ok(node)
+    }
     pub fn debug_boss_test(&mut self,encounter:u16,act:u8)->RuleResult<usize> {
         if encounter>=4096{return Err("Boss 测试编号无效".into());}
         let mut next=self.clone();
@@ -88,6 +95,22 @@ impl Run {
 #[cfg(test)]
 mod tests {
     use crate::{Class,NodeKind,Phase,Run,contracts::Kind,embers::Ember,law::Law};
+    #[test]
+    fn mausoleum_test_keeps_seed_and_build_and_tests_both_choices() {
+        for seed in 0..100 {
+            let mut run=Run::new(seed,Class::Samurai);run.event_rules=3;run.gold=1234;
+            let before=run.clone();let node=run.debug_mausoleum_test().unwrap();
+            assert_eq!((run.seed,&run.nodes,run.gold,run.event_rules),(before.seed,&before.nodes,1234,3));
+            assert_eq!(run.event_draw(node),crate::events::Draw::Mausoleum);
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+            run.enter(node).unwrap();let mut skip=run.clone();skip.choose_trial(crate::regional_events::Trial::Skip).unwrap();
+            assert_eq!(skip.gold,2034);skip.leave_regional_event().unwrap();
+            run.choose_trial(crate::regional_events::Trial::Mausoleum).unwrap();
+            assert!(run.regional_event.mausoleum.as_ref().unwrap().accepted);
+            assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+            let before=run.clone();assert!(run.debug_mausoleum_test().is_err());assert_eq!(run,before);
+        }
+    }
     #[test]
     fn boss_test_prepares_an_available_boss_and_survives_save() {
         for act in 1..=3 {

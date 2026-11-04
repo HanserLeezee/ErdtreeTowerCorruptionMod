@@ -1005,7 +1005,7 @@ fn trial_revival_destination(choice:Option<erdtree_tower::regional_events::Trial
         Trial::Descent=>(0x23000000,[125.644,-408.535,-61.213]),
         Trial::Stormveil=>{let route=parkour_route(false);(route.block,route.goal)},
         Trial::Chariot=>(0x2d010000,[0.0,0.2,0.0]),
-        Trial::Skip=>return None,
+        Trial::Skip|Trial::Mausoleum=>return None,
     };
     Some(super::party_death::Position{block,xyz})
 }
@@ -1167,6 +1167,7 @@ pub fn tick() {
     if let Ok(mut state)=STATE.try_lock() {
         if let Ok(world)=unsafe {WorldChrMan::instance_mut()}{sync_action_guard(&mut state,world);}
         sync_map(&mut state);
+        super::mausoleum::sync_visibility(state.view.run.as_ref());
         let scope=state.view.run.as_ref().map(|run|(run.seed,run.act));
         let ready=state.view.ready&&!state.view.travelling;
         state.ember_notice.tick(scope,ready);
@@ -1807,7 +1808,7 @@ fn tick_locked() {
                         }
                     }
                     if kind==erdtree_tower::NodeKind::Chest {if let Err(error)=super::loot::prepare(&run,id,player_data){report(&mut state,error);return;}}
-                    match super::rooms::Room::new(id,kind,hp,player.chr_ins.modules.data.fp) {
+                    match super::rooms::Room::for_run(&run,id,kind,hp,player.chr_ins.modules.data.fp) {
                         Ok(room)=>{game.move_map_target=BlockId::from(room.block);game.initial_area_entity_id=room.entry;game.warp_requested=true;state.view.room=Some(room.view.clone());state.room=Some(room);},
                         Err(error)=>report(&mut state,error),
                     }
@@ -2367,6 +2368,18 @@ fn configure_chain_test(run:&mut Run,level:u32)->Result<(),String> {
 }
 fn debug_boss_command(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan,command:super::debug_menu::Command)->Result<(),String> {
     if !super::debug_menu::enabled(){return Err("请先开启调试模式".into());}
+    if matches!(command,super::debug_menu::Command::MausoleumTest) {
+        if state.party.is_some()||state.party_pending.is_some()||game.event_world_type==EventWorldType::Remote{return Err("灵庙快捷测试仅限单人".into());}
+        if game.warp_requested||state.view.busy||state.travel.is_some()||state.reward_wait.is_some()||state.pending.as_ref().is_some_and(|p|!p.completed){return Err("请等战斗、传送或领奖结束".into());}
+        let mut next=state.view.run.clone().ok_or("请先开始旅程")?;
+        let node=next.debug_mausoleum_test()?;
+        let previous=state.view.run.replace(next);
+        if let Err(error)=request_travel(state,world,game,node){state.view.run=previous;return Err(error);}
+        if let Some(run)=state.view.run.as_ref(){record_checked(run)?;}
+        super::debug_menu::close();
+        super::log(format!("MAUSOLEUM_TEST entered offer node={node}"));
+        report(state,"灵庙测试：与引路人交谈，选择前往或领取 800 卢恩。");return Ok(());
+    }
     if let super::debug_menu::Command::ChainTest(level)=command {
         if game.warp_requested||state.travel.is_some()||state.reward_wait.is_some(){return Err("请等待传送或结算结束再开启测试".into());}
         if world.main_player.as_ref().is_none_or(|p|p.chr_ins.modules.data.hp<=0){return Err("角色尚未就绪".into());}
@@ -2883,6 +2896,15 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 next.gold=unsafe {world.main_player.as_ref().ok_or("角色未加载")?.player_game_data.as_ref()}.rune_count;
                 let mut next=prepare_regional_decision(&next,|r|r.choose_trial(choice),||room.suspend_dialogues())?;
                 match choice {
+                    Trial::Mausoleum=>{
+                        let player=world.main_player.as_ref().ok_or("角色未加载")?;
+                        let next_room=super::rooms::Room::for_run(&next,room.node,erdtree_tower::NodeKind::Event,player.chr_ins.modules.data.hp,player.chr_ins.modules.data.fp)?;
+                        record_checked(&next)?;
+                        game.move_map_target=BlockId::from(next_room.block);game.initial_area_entity_id=next_room.entry;game.warp_requested=true;
+                        if let Some(scene)=state.party_scene.as_mut(){scene.run=next.clone();scene.block=next_room.block;}
+                        state.view.run=Some(next);state.view.room=Some(next_room.view.clone());state.view.busy=true;
+                        state.room=Some(next_room);transferred=true;
+                    },
                     Trial::Descent=>{start_descent(state,world,game,next)?;transferred=true;},
                     Trial::Stormveil|Trial::Chariot=>{start_stormveil(state,world,game,next)?;transferred=true;},
                     Trial::Skip=>{
@@ -3081,12 +3103,41 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         room.view.message="徘徊赐福：这个事件已经做过选择或领过奖，不能重选、不能再领，请从传送门离开。".into();
         return Ok(());
     }
+    if room.mausoleum {
+        let mut next=run.clone();
+        let copy=next.regional_event.mausoleum.as_mut().ok_or("灵庙进度缺失")?;
+        let (lowered,opened)=super::mausoleum::flow()?;
+        if copy.observe_flow(lowered,opened) {
+            super::log(format!("MAUSOLEUM_FLOW lowered={} opened={}",copy.lowered,copy.opened));
+            record_checked(&next)?;state.view.run=Some(next.clone());
+        }
+        let copy=next.regional_event.mausoleum.as_mut().unwrap();
+        if !copy.lowered||!copy.opened{return Ok(());}
+        let data=unsafe {world.main_player.as_ref().ok_or("角色未加载")?.player_game_data.as_ref()};
+        if let Some((_,choice))=room.hub_choice() {
+            if choice==2&&copy.receipt.is_none(){set_flag(room.base()+994,true)?;return Ok(());}
+            if choice==1 {
+                let weapon=super::mausoleum::equipped(data)?;
+                let owned=super::mausoleum::count(&super::mausoleum::inventory(data)?,weapon);
+                copy.begin(weapon,owned)?;record_checked(&next)?;
+                state.view.run=Some(next.clone());room.copy_requested=false;
+            }
+        }
+        let copy=next.regional_event.mausoleum.as_mut().unwrap();
+        if let Some(receipt)=copy.receipt.clone() {
+            let owned=super::mausoleum::count(&super::mausoleum::inventory(data)?,receipt.weapon);
+            if copy.confirm(owned) {record_checked(&next)?;state.view.run=Some(next.clone());room.notice(9500163)?;}
+            else if !room.copy_requested {super::mausoleum::request_copy(data,&receipt)?;room.copy_requested=true;}
+        }
+        room.view.message="灵庙：在右手装备想复制的武器，与原祭台交互。每人可免费复制一次，原武器保留。".into();
+        return Ok(());
+    }
     if run.regional_event.trial {
         clear_chariot()?;
         set_flag(45010965,false)?;set_flag(45010960,false)?;
         set_flag(45010941,true)?;set_flag(45010940,true)?;
         set_flag(45010942,false)?;set_flag(45010995,false)?;
-        room.view.message="试炼岔路：是男人就下一百层、男生女生向前冲、泥头车，或领取 800 卢恩离开。选择后查看说明并确认，联机提交投票。".into();
+        room.view.message=if run.regional_event.mausoleum.is_some(){"灵庙引路人：前往龙王平台的灵庙复制武器，或领取 800 卢恩离开。联机提交全队投票。"}else{"试炼岔路：是男人就下一百层、男生女生向前冲、泥头车，或领取 800 卢恩离开。选择后查看说明并确认，联机提交投票。"}.into();
         return Ok(());
     }
     if run.regional_event.stormveil.is_some() {
@@ -3928,7 +3979,8 @@ fn request_travel(
         if kind == erdtree_tower::NodeKind::Chest {
             super::loot::prepare(run, id,unsafe {player.player_game_data.as_ref()})?;
         }
-        let mut room = super::rooms::Room::new(
+        let mut room = super::rooms::Room::for_run(
+            run,
             id,
             kind,
             player.chr_ins.modules.data.hp,
