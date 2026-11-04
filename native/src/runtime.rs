@@ -257,7 +257,16 @@ fn tick_party_scarabs(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->
     Ok(())
 }
 
+struct MaterialAward {
+    action:Action,old:Run,owner:(u32,i32),item:u32,before:u64,started:Instant,path:std::path::PathBuf,
+}
+impl MaterialAward {
+    fn matches(&self,owner:(u32,i32),run:Option<&Run>)->bool {
+        owner==self.owner&&run.is_some_and(|r|(r.seed,r.act,&r.phase)==(self.old.seed,self.old.act,&self.old.phase))
+    }
+}
 struct Runtime {
+    material_award:Option<MaterialAward>,
     radahn_probe:Option<super::radahn_probe::Probe>,
     ember_notice:super::ember_notice::Notice,
     load_trace:super::diagnostics::LoadTrace,
@@ -341,6 +350,7 @@ fn fresh_runtime()->Runtime {
     super::seamless_revival::cancel();
     let (party,party_error)=match super::party::Link::load(){Ok(p)=>(p,None),Err(e)=>(None,Some(e))};
     Runtime {
+        material_award:None,
         radahn_probe:None,
         drawing:Default::default(),drawing_owner:None,
         rest_end:Default::default(),
@@ -776,7 +786,7 @@ fn tick_party(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Resu
     }
     if let Some(player)=world.main_player.as_ref(){
         let identity=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot);
-        if super::hub::path(identity,"party-award").exists(){return Err("上次联机领奖中断，已停止自动重发；请保留日志和 party-award 记录核对背包".into());}
+        if super::hub::path(identity,"party-award").exists(){return Err("上次联机领奖中断，未自动重发；请按结束本局快捷键（默认 Home）返回大赐福，旧记录会备份后解除联机阻塞".into());}
     }
     let alive=world.main_player.as_ref().is_some_and(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag());
     let present=world.main_player.is_some()&&!game.warp_requested;
@@ -1151,7 +1161,7 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
         let mut departure=super::party::Departure::new(link);departure.tick();
         state.departure=Some(departure);
     }
-    state.party_pending=None;state.party_error=None;state.command=None;
+    state.party_pending=None;state.party_error=None;state.command=None;state.material_award=None;
     state.rest_end=Default::default();state.host_death=Default::default();
     state.party_death=Default::default();state.party_death_wave=None;super::seamless_revival::cancel();
     state.reward_wait=None;state.travel=None;state.flasks=None;state.event_start=None;state.descent=None;state.stormveil=None;state.chariot_clock=None;
@@ -1237,6 +1247,30 @@ fn tick_locked() {
             Ok(true)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);},
             Ok(false)=>{sync_action_guard(&mut state,world);return;},
             Err(error)=>{QUICK_END.store(false,std::sync::atomic::Ordering::Relaxed);report(&mut state,format!("结算失败：{error}；可再次按 {} 重试",super::options::label(erdtree_tower::options::Hotkey::Settle)));sync_action_guard(&mut state,world);return;},
+        }
+    }
+    if state.material_award.is_some() {
+        if let Err(error)=tick_material_award(&mut state,world,game) {
+            state.material_award=None;state.command=None;state.view.busy=false;
+            if let Some(link)=state.party.as_mut(){link.stop(error.clone());}
+            report(&mut state,error);
+        }
+        sync_action_guard(&mut state,world);return;
+    }
+    if state.view.run.is_none()&&!game.warp_requested&&state.hub.as_ref().is_some_and(|h|h.ready_for_party_restart()) {
+        if let Some(player)=world.main_player.as_ref().filter(|p|i32::from(p.current_block_id)==super::hub::BLOCK) {
+            let owner=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot);
+            if state.hub.as_ref().is_some_and(|h|h.owner==owner) {
+                let path=super::hub::path(owner,"party-award");
+                match super::material_award::archive_closed(&path) {
+                    Ok(Some(backup))=>{
+                        state.party=None;state.party_pending=None;state.party_error=None;state.command=None;state.view.busy=false;
+                        super::log(format!("PARTY_AWARD archived without replay; rebuilding handshake: {backup:?}"));
+                        report(&mut state,"旧局领奖记录已备份，未重复补发物品；正在重新建立联机握手。");
+                    },
+                    Ok(None)=>{},Err(error)=>{report(&mut state,format!("领奖记录备份失败，保留原记录：{error}"));},
+                }
+            }
         }
     }
     let now=Instant::now();
@@ -2090,12 +2124,13 @@ fn tick_locked() {
                     run.and_then(|run|state.party.as_mut().unwrap().enter(&run,id))
                 }else {request_travel(&mut state, world, game, id)}
             },
-            Action::KeepCurrency => transact(&mut state, world, action, journaled),
+            Action::KeepCurrency => transact(&mut state, world, action, journaled, false),
             Action::Contract(_) | Action::Gear(_) | Action::SkipGear | Action::SkipContract => contract_action(&mut state,world,action),
             Action::Story(_) | Action::Claim(_) | Action::Camp(_) => {
-                transact(&mut state, world, action, journaled)
+                transact(&mut state, world, action, journaled, false)
             }
         };
+        if result.is_ok()&&state.material_award.is_some(){state.view.busy=true;return;}
         let result=result.and_then(|_|if journaled&&award_path().is_ok_and(|p|p.exists()) {finish_party_award()}else{Ok(())});
         if let Err(error) = result {
             if journaled&&award_path().is_ok_and(|p|p.exists()) {state.party.as_mut().unwrap().stop(format!("奖励执行中断，已停止重发：{error}"));}
@@ -2624,7 +2659,30 @@ fn enemy_loaded(status: ChrLoadStatus) -> bool {
     )
 }
 
-fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journaled: bool) -> Result<(), String> {
+fn tick_material_award(state:&mut Runtime,world:&mut WorldChrMan,game:&GameMan)->Result<(),String> {
+    let pending=state.material_award.as_ref().ok_or("材料领奖状态丢失")?;
+    let Some(player)=world.main_player.as_ref() else{return Ok(());};
+    let data=unsafe {player.player_game_data.as_ref()};
+    if !pending.matches((data.character_id,game.save_slot),state.view.run.as_ref()) {
+        return Err("材料领奖上下文已变化，保留记录且不再发放；请结束旧局后重新组队".into());
+    }
+    if game.warp_requested{return Ok(());}
+    let quantity=super::items::stack_count(data,pending.item);
+    match super::material_award::status(pending.before,quantity,pending.started.elapsed()) {
+        super::material_award::Status::Waiting=>Ok(()),
+        super::material_award::Status::TimedOut=>Err("材料发放后 5 秒仍未确认到账，未重复发放；请检查背包，按结束本局快捷键返回大赐福解除阻塞".into()),
+        super::material_award::Status::Confirmed=>{
+            if award_path()?!=pending.path{return Err("材料领奖记录不属于当前角色，已停止处理".into());}
+            let pending=state.material_award.take().unwrap();
+            super::log(format!("MATERIAL_AWARD confirmed item={} before={} current={} elapsed_ms={}",pending.item,pending.before,quantity,pending.started.elapsed().as_millis()));
+            transact(state,world,pending.action,false,true)?;
+            finish_party_award()?;state.view.busy=false;
+            report(state,"材料已到账，奖励已保存，请选择下一层节点。");Ok(())
+        },
+    }
+}
+
+fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journaled: bool, material_ready:bool) -> Result<(), String> {
     let old = state.view.run.clone().ok_or("角色尚未绑定")?;
     let mut next = old.clone();
     let player = world.main_player.as_mut().ok_or("角色尚未就绪")?;
@@ -2668,7 +2726,19 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         let Phase::Node{id:node}=old.phase else {return Err("当前不在事件节点".into());};
         Some(super::weapons::reforge_target(unsafe {player.player_game_data.as_ref()},&old,node,effect.reforge_upgrade)?)
     }else{None};
-    if journaled {write_award_journal(&award_path()?,&old)?;}
+    if (sacred_tear||upgrade_stone)&&!material_ready {
+        let item=if upgrade_stone{super::smith::VOUCHER}else{erdtree_tower::elite::TEAR};
+        let data=unsafe {player.player_game_data.as_ref()};
+        let path=award_path()?;
+        let owner=state.identity.ok_or("角色存档尚未绑定")?;
+        let before=super::items::stack_count(data,item);
+        write_award_journal(&path,&old)?;
+        super::items::give(&[((0x40000000|item) as i32,1,-1)])?;
+        state.material_award=Some(MaterialAward{action,old,owner,item,before,started:Instant::now(),path});
+        super::log(format!("MATERIAL_AWARD requested item={item} before={before}; waiting for inventory confirmation"));
+        report(state,"正在等待材料到账，请稍候……");return Ok(());
+    }
+    if journaled&&!material_ready {write_award_journal(&award_path()?,&old)?;}
     if next.act > old.act {
         next_hp=vitals.max_hp;
         next_fp=vitals.max_fp;
@@ -2695,8 +2765,6 @@ fn transact(state: &mut Runtime, world: &mut WorldChrMan, action: Action, journa
         super::blessings::Blessings::deliver(unsafe {player.player_game_data.as_mut()}, &mut next)?;
     }
     if let Some(id)=item_reward {super::items::give_reward_with_ash(unsafe {player.player_game_data.as_mut()},id,reward_ash)?;}
-    if sacred_tear {super::items::give_stack(unsafe {player.player_game_data.as_mut()},erdtree_tower::elite::TEAR)?;}
-    if upgrade_stone {super::items::give_stack(unsafe {player.player_game_data.as_mut()},super::smith::VOUCHER)?;}
     if next.flask_bonus!=old.flask_bonus {
         state.flasks.as_mut().ok_or("圣杯瓶未绑定")?.set_bonus(unsafe {player.player_game_data.as_mut()},next.class,next.flask_bonus,next.law.flask_cut())?;
     }
@@ -2971,7 +3039,7 @@ fn tick_room(state: &mut Runtime, world: &mut WorldChrMan, game: &mut GameMan, d
                 let result = if room.view.completed {
                     Err("篝火服务已用完".to_string())
                 } else {
-                    transact(state, world, Action::Camp(choice), false)
+                    transact(state, world, Action::Camp(choice), false, false)
                 };
                 if let Err(error) = &result {
                     super::log(error);
@@ -3184,7 +3252,7 @@ fn tick_regional_event(state:&mut Runtime,world:&mut WorldChrMan,room:&mut super
         if run.regional_event.opened==0 {room.view.message=format!("{title}：与 NPC 交谈。");}
         if let Some(super::native_talk::EventRequest::Gamble(choice))=room.take_event_request() {
             let message=state.view.run.as_ref().map(|r|erdtree_tower::events::story_outcome(r,choice)).unwrap_or_default();
-            match transact(state,world,Action::Story(choice),false) {
+            match transact(state,world,Action::Story(choice),false,false) {
                 Ok(())=>{room.notice(gamble_result(index,choice,wins))?;room.view.message=format!("{message}使用传送门继续旅程。");},
                 Err(error)=>{super::log(format!("Gamble not resolved: {error}"));room.notice(gamble_refusal(&error))?;room.view.message=error;},
             }
@@ -4391,6 +4459,20 @@ mod tests {
         assert!(!super::release_closed_party(true,true,false,None));
         assert!(!super::release_closed_party(true,true,false,Some(&Phase::Map)));
         assert!(!super::release_closed_party(true,true,true,Some(&Phase::Map)));
+    }
+    #[test]
+    fn material_confirmation_never_applies_to_another_character_or_reward() {
+        let mut old=Run::new(42,erdtree_tower::Class::Samurai);
+        old.enter(old.available()[0]).unwrap();old.win_combat().unwrap();
+        let pending=MaterialAward{action:Action::Claim(0),old:old.clone(),owner:(2,0),item:7500100,before:0,started:Instant::now(),path:std::path::PathBuf::new()};
+        assert!(pending.matches((2,0),Some(&old)));
+        assert!(!pending.matches((2,1),Some(&old)));
+        assert!(!pending.matches((3,0),Some(&old)));
+        assert!(!pending.matches((2,0),None));
+        let mut claimed=old.clone();claimed.claim_reward(0).unwrap();
+        assert!(!pending.matches((2,0),Some(&claimed)));
+        let mut other=old.clone();other.seed+=1;assert!(!pending.matches((2,0),Some(&other)));
+        other=old.clone();other.act+=1;assert!(!pending.matches((2,0),Some(&other)));
     }
     #[test]
     fn interrupted_award_is_never_overwritten_by_a_retry() {

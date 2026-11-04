@@ -111,6 +111,7 @@ mod name_tags;
 mod auras;
 mod throw_guard;
 mod lobby;
+mod material_award;
 mod law_art;
 mod scenery;
 mod spirit_tune;
