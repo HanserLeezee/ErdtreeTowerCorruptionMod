@@ -25,6 +25,17 @@ class TitleTextures(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<H',cycle,2)[0],720)
         self.assertEqual(sum(c==1 for c,b in gb.read_tags(cycle,4,len(cycle))),720)
         self.assertEqual(tt.loading_underlay(fixed),fixed)
+        single=tt.single_tip_cycle(fixed)
+        _,tags=gb.parse(single)
+        cycle=next(b for c,b in tags if c==39)
+        active={};seen=set();frames=0
+        for code,body in gb.read_tags(cycle,4,len(cycle)):
+            if code==26:active[struct.unpack_from('<H',body,1)[0]]=struct.unpack_from('<H',body,3)[0]
+            elif code==28:active.pop(struct.unpack_from('<H',body)[0])
+            elif code==1:
+                self.assertEqual(set(active),{1,2})
+                seen.add(active[2]);frames+=1
+        self.assertEqual((len(seen),frames),(12,2880))
 
     def test_title_background_is_below_native_controls_without_frame_scripts(self):
         inner = [(26, gb.place(2, 10, 'CommandList')), (26, gb.place(13, 11, 'PressStart')),

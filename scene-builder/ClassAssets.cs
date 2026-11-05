@@ -7,12 +7,12 @@ static class ClassAssets {
     static (string,object)[] Cuts(float rate)=>AllCuts.Select(k=>(k+"DamageCutRate",(object)rate)).ToArray();
     static (string,object)[] VersusEnemies(float rate)=>new[]{"Physics","Magic","Fire","Thunder","Dark"}.Select(e=>($"atkEnemyDmgCorrectRate_{e}",(object)rate)).ToArray();
     // (编号, 名字, 复制的原版行, 攻击倍率（0 为不改）, 保留原图标, 其他字段)
-    // 守誓骑士复制珍珠盾护符的“举盾时”判定（常驻每 0.06 秒检查 → 举盾时生效 → 状态图标），连物理伤害一起减；
+    // 守誓骑士沿用珍珠盾的举盾判定；图标放在常驻行，避免 0.1 秒的触发行反复闪烁。
     // 影刃复制介错刀的三段触发（常驻监视致命一击 → 触发 → 增伤），编号保持相邻
     static (int id,string name,int template,float attack,bool icon,(string,object)[] fields)[] Rows=>[
-        (First+0,"Tower class oathsworn guard watch",20380900,0f,false,[("cycleOccurrenceSpEffectId",First+1)]),
+        (First+0,"Tower class oathsworn guard watch",20380900,0f,true,[("cycleOccurrenceSpEffectId",First+1)]),
         (First+1,"Tower class oathsworn guarding",20380901,0f,false,[..Cuts(0.75f),("cycleOccurrenceSpEffectId",First+2)]),
-        (First+2,"Tower class oathsworn guarding icon",20380902,0f,true,[("effectEndurance",0.1f)]),
+        (First+2,"Tower class oathsworn guarding icon",20380902,0f,false,[("effectEndurance",0.1f)]),
         (First+3,"Tower class oathsworn guard stamina",341000,1f,false,[("guardStaminaMult",0.7f)]),
         (First+10,"Tower class berserker low health guard",9600011,0f,false,[..Cuts(0.85f),("artsConsumptionRate",1f)]),
         (First+11,"Tower class berserker poise",9600011,0f,false,[("toughnessDamageCutRate",0.7f),("artsConsumptionRate",1f)]),
@@ -37,6 +37,10 @@ static class ClassAssets {
         return row;
     }
     static void Verify(PARAM effects) {
+        var guardRows=effects.Rows.Where(r=>r.ID>=First&&r.ID<=First+2).ToArray();
+        var guardIcons=guardRows.Where(r=>Convert.ToInt32(r["iconId"].Value)>=0).ToArray();
+        if(guardIcons.Length!=1||guardIcons[0].ID!=First||Convert.ToSingle(guardIcons[0]["effectEndurance"].Value)!=-1f)
+            throw new Exception("Guard HUD must use one resident icon, not the repeatedly recreated short effects");
         foreach(var spec in Rows) {
             var row=effects.Rows.Single(r=>r.ID==spec.id);var expected=Create(effects,spec);
             foreach(var cell in expected.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,row[cell.Def.InternalName].Value))throw new Exception($"Class effect mismatch: {spec.id} {cell.Def.InternalName}");

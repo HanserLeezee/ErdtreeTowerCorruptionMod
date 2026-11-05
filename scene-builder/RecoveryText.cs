@@ -1,6 +1,8 @@
 using SoulsFormats;
 
 static class RecoveryText {
+    static readonly (int,string)[] MausoleumEntries=[(9500160,"复制当前右手武器（免费）"),(9500161,"复制当前右手武器，保留强化、质变、战灰和词条。\n原武器不会消耗，每人每次事件限一次。\n确定复制？"),(9500162,"离开灵庙，继续旅程"),(9500163,"武器复制完成，副本已放入背包。"),(9500164,"前往灵庙"),(9500165,"前往龙王平台上的灵庙，免费复制一把武器。\n强化、质变、战灰和词条保留。\n联机确认后提交全队投票。确定前往？"),(9500166,"放弃前往，领取 800 卢恩"),(9500167,"放弃本次灵庙复制，领取 800 卢恩并继续旅程。\n联机确认后提交全队投票。确定领取？")];
+    static readonly (int,string)[] PriceEntries=[(9500080,"捕捉粪金龟 · 500 卢恩"),(9500084,"需要 500 卢恩。"),(9500158,"领取 800 卢恩（放弃恢复）")];
     static readonly (int,string)[] StormEntries=[(9500115,"男生女生向前冲"),(9500116,"领取 800 卢恩，跳过挑战"),(9500117,"泥头车跑酷")];
     static readonly (int,string)[] Entries=[(9500106,"补给：3 红＋灵药"),(9500107,"补给：3 蓝＋灵药"),(9500091,"回满生命"),(9500092,"回满专注"),(9500093,"泉水已使用。"),(9500094,"是男人就下一百层"),(9500085,"付费后等待三秒，三只粪金龟会现身。你有六秒时间，每击败一只可得一件宝物。每人最多玩三次。")];
     static readonly (int,string)[] TrialEntries=[
@@ -11,14 +13,14 @@ static class RecoveryText {
     // 问号房的赌运事件（骰子赌徒、盲盒商人、词条重铸台）：原版对话菜单的选项、确认说明、结果与提示；编号与 native/src/native_talk.rs 的 GAMBLE_* 对应
     public static readonly (int,string)[] GambleEntries=[
         (9500130,"押 1000 卢恩"),(9500131,"押 3000 卢恩"),
-        (9500132,"普通盲盒（2000 卢恩）"),(9500133,"高级盲盒（5000 卢恩）"),
-        (9500134,"重铸右手武器（2000 卢恩）"),(9500135,"精炼右手武器（6000 卢恩）"),
+        (9500132,"普通盲盒（1000 卢恩）"),(9500133,"高级盲盒（2500 卢恩）"),
+        (9500134,"重铸右手武器（1000 卢恩）"),(9500135,"精炼右手武器（3000 卢恩）"),
         (9500136,"赌徒把两枚骨骰在掌心摇得作响。\n押 1000 卢恩：赢了拿回 2000，输了全归赌徒。\n确定下注？"),
         (9500137,"赌徒把两枚骨骰在掌心摇得作响。\n押 3000 卢恩：赢了拿回 6000，输了全归赌徒。\n确定下注？"),
-        (9500138,"支付 2000 卢恩，随机获得一件本职业可用的武器或防具。\n稀有 65%　史诗 30%　传说 5%\n确定购买？"),
-        (9500139,"支付 5000 卢恩，随机获得一件本职业可用的武器或防具。\n稀有 15%　史诗 55%　传说 30%\n确定购买？"),
-        (9500140,"支付 2000 卢恩，把右手的词条武器换成同一把武器的另一种词条组合，1/5 的概率品质 +1。\n强化等级与战灰保留。确定重铸？"),
-        (9500141,"支付 6000 卢恩，把右手的词条武器换成另一种词条组合，品质必定 +1；传说品质的武器不能精炼。\n强化等级与战灰保留。确定精炼？"),
+        (9500138,"支付 1000 卢恩，随机获得一件本职业可用的武器或防具。\n稀有 65%　史诗 30%　传说 5%\n确定购买？"),
+        (9500139,"支付 2500 卢恩，随机获得一件本职业可用的武器或防具。\n稀有 15%　史诗 55%　传说 30%\n确定购买？"),
+        (9500140,"支付 1000 卢恩，把右手的词条武器换成同一把武器的另一种词条组合，1/5 的概率品质 +1。\n强化等级与战灰保留。确定重铸？"),
+        (9500141,"支付 3000 卢恩，把右手的词条武器换成另一种词条组合，品质必定 +1；传说品质的武器不能精炼。\n强化等级与战灰保留。确定精炼？"),
         (9500142,"骰子落定，你赢了 1000 卢恩。"),(9500143,"骰子落定，你赢了 3000 卢恩。"),
         (9500144,"骰子落定，你输掉了 1000 卢恩。"),(9500145,"骰子落定，你输掉了 3000 卢恩。"),
         (9500146,"商人掀开黑布，把箱子里的装备交给你。"),
@@ -37,7 +39,7 @@ static class RecoveryText {
     static readonly (int,string)[] EndEntries=[(9500108,"结束本局"),(9500109,"结束本局并返回大赐福？联机时，全队将结束本局。"),(9500110,"当前无法结束本局。联机时请由房主操作。"),(9500111,"出售武器")];
     public static void Add(BND4 menu,bool chestOnly=false) {
         var file=menu.Files.Single(f=>f.ID==33);var fmg=FMG.Read(file.Bytes);
-        foreach(var (id,text) in chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries)){fmg.Entries.RemoveAll(e=>e.ID==id);fmg.Entries.Add(new FMG.Entry(id,text));}
+        foreach(var (id,text) in chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).Concat(PriceEntries).Concat(MausoleumEntries)){fmg.Entries.RemoveAll(e=>e.ID==id);fmg.Entries.Add(new FMG.Entry(id,text));}
         file.Bytes=fmg.Write();
     }
     public static void AddTalismans(BND4 menu,BND4 regulation,BND4 item) {
@@ -66,7 +68,7 @@ static class RecoveryText {
         Console.WriteLine("Verified talisman choice and confirmation text roundtrip");
     }
     public static void Patch(string input,string output,bool chestOnly=false) {
-        var entries=chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).ToArray();
+        var entries=chestOnly?ChestEntries:Entries.Concat(EndEntries).Concat(StormEntries).Concat(TrialEntries).Concat(GambleEntries).Concat(TuneEntries).Concat(PriceEntries).Concat(MausoleumEntries).ToArray();
         const string name="msg/zhocn/menu_dlc02.msgbnd.dcx";
         var original=BND4.Read(Path.Combine(input,name));
         var menu=BND4.Read(Path.Combine(input,name));Add(menu,chestOnly);

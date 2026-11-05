@@ -140,6 +140,10 @@ namespace Tower.Launcher
                 case "game.pause": Stop(true); break;
                 case "game.cancel": Stop(false); break;
                 case "game.launch": _ = LaunchAsync(); break;
+                case "lobby.list": _ = LobbyListAsync(); break;
+                case "lobby.host": _ = LobbyHostAsync(payload); break;
+                case "lobby.join": _ = LobbyJoinAsync(payload); break;
+                case "lobby.close": CloseLobby(); break;
                 case "game.locate": OpenFolder(paths.InstallDir); break;
                 case "settings.change":
                     Change(Text(payload, "key"), payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("value", out var value) ? value : default);
@@ -169,6 +173,11 @@ namespace Tower.Launcher
             }
             switch (key)
             {
+                case "loader":
+                    settings.Loader = value.ValueKind == JsonValueKind.String && value.GetString() == HostSettings.Yafsml ? HostSettings.Yafsml : HostSettings.Me3;
+                    settings.Save(paths.SettingsFile);
+                    PushStatus();
+                    return;
                 case "mode":
                     settings.Mode = value.ValueKind == JsonValueKind.String && value.GetString() == "无缝联机" ? HostSettings.Seamless : HostSettings.Solo;
                     settings.Save(paths.SettingsFile);
@@ -208,6 +217,7 @@ namespace Tower.Launcher
 
         void ChangeSeamless(string key, JsonElement value)
         {
+            if (key == SeamlessSettings.Password && !CanPrepareLaunch()) return;
             var seamless = Seamless();
             if (seamless == null) { Toast("先在「游戏」里设置游戏目录", "warn"); return; }
             var text = value.ValueKind switch
@@ -382,6 +392,7 @@ namespace Tower.Launcher
             var installed = IsInstalled(state);
             var updateTo = installed && latest != null && (state == null || latest.Version > state.Version) ? Label(latest) : null;
             var note = settings.Mode == HostSettings.Seamless ? "无缝联机模式" : "单人模式";
+            note += " · " + settings.Loader;
             form.Post("game", "status", new { game = Game, installed, version = PackageVersion(state), updateTo, note });
             PushValues(state);
         }
@@ -395,6 +406,7 @@ namespace Tower.Launcher
                 ["dlc"] = TowerOptions.DlcLabel(options),
                 ["plugins"] = plugins.List().Select(p => new Dictionary<string, object?> { ["path"] = p.Path, ["name"] = p.Name, ["enabled"] = p.Enabled, ["exists"] = p.Exists }).ToList(),
                 ["mode"] = settings.Mode == HostSettings.Seamless ? "无缝联机" : "单人",
+                ["loader"] = settings.Loader,
                 ["route"] = settings.Route == HostSettings.GitHubFirst ? "GitHub" : "国内镜像",
                 ["mirrorInfo"] = mirror == null ? "未配置（只从 GitHub 更新）" : new Uri(mirror).Host,
                 ["autoCheck"] = settings.AutoCheck,
@@ -485,6 +497,7 @@ namespace Tower.Launcher
         async Task UpdateAsync(bool verify)
         {
             if (running != null) return;
+            if (launching || LocalAssetPreparationBusy()) { Toast("正在启动游戏或生成本地资源，完成后再更新", "warn"); return; }
             var kind = IsInstalled(InstallState.Load(paths.InstallDir)) ? "update" : "install";
             if (GameRunning())
             {
@@ -515,7 +528,8 @@ namespace Tower.Launcher
                     Progress(kind, "finished");
                     SetStatus($"已是最新版本（{Label(target)} · {lines.Chosen}）");
                     PushStatus();
-                    Toast(verify ? "校验完成：文件都完整" : "已是最新版本", "success");
+                    var generatedAssets = UsesLocalAssets();
+                    Toast(verify ? (generatedAssets ? "下载文件校验完成；本地生成资源将在启动前检查并修复" : "校验完成：文件都完整") : "已是最新版本", "success");
                     return;
                 }
                 if (sessionTotal < plan.DownloadBytes) sessionTotal = plan.DownloadBytes;
@@ -552,6 +566,7 @@ namespace Tower.Launcher
                 : kind == "install" ? $"安装完成：{version}"
                 : $"已更新到 {version}，只下载了 {Size(plan.DownloadBytes)}";
             var restart = plan.Writes.Any(w => LauncherPaths.IsLauncherBinary(w.Path));
+            if (UsesLocalAssets()) text += "。本地资源将在启动前生成或修复";
             if (restart) text += "。启动器本身也更新了，重启后生效";
             int? ms = restart ? 0 : 6000;
             if (plan.Writes.Any(w => LauncherPaths.IsLauncherUi(w.Path)))
@@ -642,33 +657,174 @@ namespace Tower.Launcher
             return processes.Length > 0;
         }
 
+        // ---------------- 联机大厅 ----------------
+        // 房主：在这里开房（房间名、人数、可选房间密码），启动器生成无缝联机密码写进配置，再把房间信息写进模组目录的
+        // tower-lobby.json，游戏里的 DLL 用 Steam 大厅公开房间（native/src/lobby.rs）。其他人：列出房间，点加入时
+        // 启动器写入这个房间的无缝联机密码再启动游戏。玩家全程不用看、也不用填无缝联机密码。
+
+        SteamLobby? steam;
+        List<LobbyRoom> rooms = new List<LobbyRoom>();
+        string LobbyFile => Path.Combine(paths.InstallDir, "tower-lobby.json");
+        string LobbyVersion()
+        {
+            var state = InstallState.Load(paths.InstallDir);
+            if (state == null) return "dev";
+            return state.DisplayVersion.Length > 0 ? state.DisplayVersion : "v" + state.Version;
+        }
+        void CloseLobby()
+        {
+            if (steam == null) return;
+            try { steam.Dispose(); } catch (Exception e) { Log.Write("关闭 Steam 大厅连接：" + e.Message); }
+            steam = null;
+        }
+        async Task LobbyListAsync()
+        {
+            var gameDir = GameDir() ?? FindGameDir();
+            if (gameDir == null) { form.Post("lobby", "rooms", new { error = "没有找到游戏目录，请先在设置里选择" }); return; }
+            try
+            {
+                steam ??= SteamLobby.Open(gameDir);
+                rooms = await steam.ListAsync();
+                var version = LobbyVersion();
+                form.Post("lobby", "rooms", new
+                {
+                    version,
+                    mine = OwnRoom(),
+                    rooms = rooms.Select(r => new
+                    {
+                        id = r.Id.ToString(), name = r.Name, host = r.Host, players = r.Players, max = r.Max, state = r.State,
+                        locked = r.Locked, open = r.Open, started = r.Started, version = r.Version, sameVersion = r.Version == version, full = r.Max > 0 && r.Players >= r.Max,
+                    }).ToArray(),
+                });
+            }
+            catch (Exception e) when (e is InvalidOperationException || e is TimeoutException || e is DllNotFoundException || e is EntryPointNotFoundException || e is BadImageFormatException)
+            {
+                Log.Write("大厅列表失败：" + e.Message);
+                CloseLobby();
+                form.Post("lobby", "rooms", new { error = e.Message });
+            }
+        }
+        /// <summary>
+        /// 自己开的房间（模组目录里的 tower-lobby.json 与 DLL 写的 tower-lobby-status.txt）：Steam 的大厅查询不一定列出自己开的房间，
+        /// 这里单独显示房间名与状态（正在创建 / 已上线 / 创建失败及原因）；游戏没在运行时不显示
+        /// </summary>
+        object? OwnRoom()
+        {
+            if (!GameRunning() || !File.Exists(LobbyFile)) return null;
+            string name;
+            try { using var doc = JsonDocument.Parse(File.ReadAllText(LobbyFile)); name = Text(doc.RootElement, "name"); }
+            catch (Exception e) when (e is JsonException || e is IOException) { return null; }
+            var statusFile = Path.Combine(paths.InstallDir, "tower-lobby-status.txt");
+            var line = File.Exists(statusFile) && File.GetLastWriteTimeUtc(statusFile) >= File.GetLastWriteTimeUtc(LobbyFile) ? File.ReadAllText(statusFile).Trim() : "";
+            var space = line.IndexOf(' ');
+            var state = space > 0 ? line.Substring(0, space) : line;
+            var detail = space > 0 ? line.Substring(space + 1) : "";
+            return new
+            {
+                name,
+                state = state.Length == 0 ? "missing" : state,
+                detail = state == "open"
+                    ? (detail == "1" ? "已在 Steam 上线，队友可以加入" : "已在 Steam 上线，但你还没用无缝联机的道具开启联机，队友暂时连不上")
+                    : state.Length == 0 ? "游戏里还没有开始创建：确认游戏用的是新版模组，并已进入游戏" : detail,
+                ready = state == "open" && detail == "1",
+            };
+        }
+        /// <summary>写入这个房间的无缝联机密码，并切到无缝联机模式</summary>
+        bool UseSeamlessPassword(string password)
+        {
+            if (!(Seamless() is { } seamless) || !seamless.Installed) { Toast("没有找到无缝联机：请先安装无缝联机（设置 → 联机）", "error", 0); return false; }
+            seamless.Write(SeamlessSettings.Password, password);
+            settings.Mode = HostSettings.Seamless;
+            settings.Save(paths.SettingsFile);
+            PushStatus();
+            return true;
+        }
+        async Task LobbyHostAsync(JsonElement payload)
+        {
+            var name = Text(payload, "name").Trim();
+            var roomPassword = Text(payload, "password");
+            var max = payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("max", out var m) && m.TryGetInt32(out var n) ? n : 4;
+            if (name.Length == 0 || name.Length > 32) { Toast("房间名请填 1–32 个字", "warn"); return; }
+            if (max < 2 || max > 8) { Toast("房间人数为 2–8", "warn"); return; }
+            if (roomPassword.Length > 32) { Toast("房间密码最多 32 个字", "warn"); return; }
+            var locked = roomPassword.Length > 0;
+            var salt = locked ? SteamLobby.RandomSalt() : "";
+            var seamlessPassword = locked ? SteamLobby.Derive(salt, roomPassword) : SteamLobby.RandomPassword();
+            await LaunchAsync(lobbyHost: true, prepare: () =>
+            {
+                if (!UseSeamlessPassword(seamlessPassword)) return false;
+                var room = new Dictionary<string, object> { ["name"] = name, ["max"] = max, ["locked"] = locked, ["salt"] = salt, ["password"] = locked ? "" : seamlessPassword, ["version"] = LobbyVersion(), ["password_sha256"] = LobbyLaunch.Fingerprint(seamlessPassword) };
+                File.WriteAllText(LobbyFile, JsonSerializer.Serialize(room), new UTF8Encoding(false));
+                var statusFile = Path.Combine(paths.InstallDir, "tower-lobby-status.txt");
+                if (File.Exists(statusFile)) File.Delete(statusFile);
+                Log.Write($"大厅开房：{name}，{max} 人，{(locked ? "私密" : "公开")}");
+                return true;
+            });
+        }
+        async Task LobbyJoinAsync(JsonElement payload)
+        {
+            var id = Text(payload, "id");
+            var room = rooms.FirstOrDefault(r => r.Id.ToString() == id);
+            if (room == null) { Toast("房间已经不在了，请刷新列表", "warn"); return; }
+            if (room.Version != LobbyVersion()) { Toast($"版本不同（房间 {room.Version}，你是 {LobbyVersion()}），请先更新到同一版本", "warn", 6000); return; }
+            if (room.Max > 0 && room.Players >= room.Max) { Toast("房间已满", "warn"); return; }
+            // 旅程中途加入会让队伍状态对不上：只能在房主回到大赐福时加入
+            if (room.Started) { Toast("这个房间的旅程已经开始，等房主回到大赐福后再加入", "warn", 6000); return; }
+            string password;
+            if (room.Locked)
+            {
+                var roomPassword = Text(payload, "password");
+                if (roomPassword.Length == 0) { Toast("这是私密房间，请输入房间密码", "warn"); return; }
+                if (room.Salt.Length < 16) { Toast("房间数据不完整，请刷新列表", "warn"); return; }
+                password = SteamLobby.Derive(room.Salt, roomPassword);
+            }
+            else password = room.Password;
+            if (password.Length < 8) { Toast("房间数据不完整，请刷新列表", "warn"); return; }
+            await LaunchAsync(prepare: () =>
+            {
+                if (!UseSeamlessPassword(password)) return false;
+                Log.Write($"大厅加入：{room.Name}（房主 {room.Host}）");
+                return true;
+            });
+        }
+
         // ---------------- 启动游戏 ----------------
 
         /// <summary>
         /// 和 Start-Solo.cmd / Start-Seamless.cmd 走同一个 Start-Tower.ps1，只是不开控制台窗口；
         /// 脚本失败时把原因写进 -ErrorFile，这里读出来提示。
         /// </summary>
-        async Task LaunchAsync()
+        bool CanPrepareLaunch()
         {
-            if (GameRunning()) { Toast("艾尔登法环已经在运行了", "warn"); return; }
+            var workerRunning = false;
             if (launchWorkerId.HasValue) {
                 try {
                     using var worker = Process.GetProcessById(launchWorkerId.Value);
-                    if (!worker.HasExited) { Toast("上次启动仍在后台运行，请先查看日志", "warn", 0, "打开日志", "openLogs"); return; }
+                    workerRunning = !worker.HasExited;
                 } catch (ArgumentException) { }
-                launchWorkerId = null;
+                if (!workerRunning) launchWorkerId = null;
             }
-            if (launching) { Toast("正在启动，请稍候", "info"); return; }
-            if (running != null) { Toast("正在更新，完成后再开始游戏", "warn"); return; }
+            var reason = LobbyLaunch.BlockReason(GameRunning(), launching, workerRunning, running != null);
+            if (reason == null) return true;
+            Toast(reason, "warn", 6000);
+            return false;
+        }
+
+        async Task LaunchAsync(bool lobbyHost = false, Func<bool>? prepare = null)
+        {
+            if (!CanPrepareLaunch()) return;
+            launching = true;
+            try
+            {
             var script = Path.Combine(paths.InstallDir, "Start-Tower.ps1");
             var wrapper = Path.Combine(paths.InstallDir, "Launch-Logged.ps1");
             if (!File.Exists(wrapper)) { Toast("缺少 Launch-Logged.ps1，请完整更新启动器文件", "error", 0); return; }
             if (!File.Exists(script)) { Toast("缺少 Start-Tower.ps1：请在设置 → 更新里「校验并修复文件」", "error", 6000); return; }
             var gameDir = GameDir() ?? FindGameDir() ?? ChooseGameDir();
             if (gameDir == null) return;
-            launching = true;
-            try
-            {
+                if (prepare != null && !prepare()) return;
+                CloseLobby();
+                if (!lobbyHost && File.Exists(LobbyFile)) File.Delete(LobbyFile);
                 var options = TowerOptions.Read(OptionsFile);
                 options.TryGetValue("dlc", out var dlcMode);
                 var dlcWarning = DlcLaunchCheck.Warning(gameDir, settings.Mode == HostSettings.Seamless, dlcMode);
@@ -684,22 +840,25 @@ namespace Tower.Launcher
                 var mode = settings.Mode;
                 var logs = Path.Combine(paths.LaunchLogs, DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8));
                 Directory.CreateDirectory(logs);
-                var arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(wrapper)} -Entry {Quote(script)} -Mode {mode} -GameDir {Quote(gameDir)} -ErrorFile {Quote(errorFile)} -LogDirectory {Quote(logs)}";
+                var arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File {Quote(wrapper)} -Entry {Quote(script)} -Mode {mode} -Loader {settings.Loader} -GameDir {Quote(gameDir)} -ErrorFile {Quote(errorFile)} -LogDirectory {Quote(logs)}";
                 Log.Write("开始游戏：" + arguments);
                 var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
                 using var process = Process.Start(new ProcessStartInfo(powershell, arguments) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = paths.InstallDir })!;
                 launchWorkerId = process.Id;
                 Toast(mode == HostSettings.Seamless ? "正在启动（无缝联机）…" : "正在启动（单人）…", "info", 6000);
+                var localAssets = UsesLocalAssets();
+                var launchWaitTicks = localAssets ? 3600 : 120;
+                if (localAssets) Toast("正在检查本地资源；首次生成或修复可能需要数分钟，请勿重复启动", "info", 12000);
                 if (mode == HostSettings.Seamless && Seamless() is { } seamless && seamless.Installed && !seamless.Version().Verified)
                     Toast("这个无缝联机版本还没验证过：照常启动，联机复活修复会自动关闭；联机双方要用同一个版本", "warn", 8000);
                 // 加载器拉起游戏后脚本可能一直等到游戏退出，也可能马上结束：两种情况都只盯「脚本报错」和「游戏起来了」
                 var started = false;
-                for (var waited = 0; !process.HasExited || (!started && process.ExitCode == 0 && waited < 120); waited++)
+                for (var waited = 0; !process.HasExited || (!started && process.ExitCode == 0 && waited < launchWaitTicks); waited++)
                 {
                     await Task.Delay(500);
-                    if (!started && waited >= 119) {
+                    if (!started && waited >= launchWaitTicks - 1) {
                         Log.Write("等待游戏进程超时；后台日志：" + logs);
-                        Toast("60 秒内未检测到游戏启动，请查看后台日志", "error", 0, "打开日志", "openLogs");
+                        Toast(localAssets ? "本地资源准备或启动耗时过长，请查看后台日志" : "60 秒内未检测到游戏启动，请查看后台日志", "error", 0, "打开日志", "openLogs");
                         return;
                     }
                     if (started || !GameRunning()) continue;
@@ -721,6 +880,20 @@ namespace Tower.Launcher
                 Toast("启动失败：" + e.Message, "error", 0, "打开日志", "openLogs");
             }
             finally { launching = false; }
+        }
+
+        bool UsesLocalAssets()
+        {
+            var mode = Path.Combine(paths.InstallDir, "asset-mode.txt");
+            return File.Exists(mode) && File.ReadAllText(mode).Trim() == "local-v1";
+        }
+
+        bool LocalAssetPreparationBusy()
+        {
+            var path = Path.Combine(paths.InstallDir, "asset-patches", ".restore.lock");
+            if (!File.Exists(path)) return false;
+            try { using var guard = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); return false; }
+            catch (IOException) { return true; }
         }
 
         static bool HasGame(string dir) => File.Exists(Path.Combine(dir, "eldenring.exe"));

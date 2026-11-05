@@ -47,8 +47,9 @@ fn boss_weapon_keeps_legendary_quality_and_base_pool_identity() {
         let run=Run::new(seed,Class::Samurai);
         let node=run.nodes.iter().position(|n|n.kind==NodeKind::Boss).unwrap();
         for r in rewards::offers(&run,node).into_iter().take(1) {if let Reward::Item(id)=r {
-            assert!(erdtree_tower::elite::LEGENDARY.contains(&affixes::base(id)));
-            if id>>28==0 {assert_eq!(affixes::tier(id),Some(3));}
+            // Boss 奖励规则 2：任意武器，品质固定为传说
+            assert_eq!(rewards::lookup(affixes::base(id)).unwrap().kind,ItemKind::Weapon);
+            assert_eq!(affixes::tier(id),Some(3));
         }}
     }
 }

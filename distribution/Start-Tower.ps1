@@ -1,5 +1,6 @@
 param(
     [ValidateSet('Solo', 'Seamless')][string]$Mode = 'Solo',
+    [ValidateSet('ME3', 'YAFSML')][string]$Loader = 'ME3',
     [string]$GameDir,
     [switch]$CheckOnly,
     [string]$PartyConfig,
@@ -26,7 +27,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $GameDir 'eldenring.exe') -PathType 
 $GameDir = (Resolve-Path -LiteralPath $GameDir).Path
 $launcher = if ($Mode -eq 'Seamless') { 'Launch-Seamless-Tower.ps1' } else { 'Launch-Preview.ps1' }
 $entry = Join-Path $PSScriptRoot $launcher
-$options = @{GameDir=$GameDir}
+$options = @{GameDir=$GameDir;Loader=$Loader}
 if ($PartyConfig) {
     if ($Mode -ne 'Seamless') {throw 'PartyConfig requires Seamless mode.'}
     $options.PartyConfig=$PartyConfig

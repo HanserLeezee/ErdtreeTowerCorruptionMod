@@ -8,6 +8,8 @@ pub mod party_law;
 pub mod party_vote;
 pub mod party_roster;
 pub mod party_handshake;
+pub mod party_latency;
+pub mod skip;
 pub mod party_events;
 pub mod map_drawing;
 pub mod contracts;
@@ -19,6 +21,7 @@ pub mod torches;
 pub mod encounter;
 pub mod events;
 pub mod regional_events;
+pub mod mausoleum;
 pub mod stormveil;
 pub mod rewards;
 pub mod affixes;
@@ -40,6 +43,7 @@ pub mod themes;
 
 pub mod music;
 pub mod options;
+pub mod lobby;
 pub mod dlc;
 pub mod stat_summary;
 
@@ -250,7 +254,7 @@ pub struct Run {
     /// 叠层余烬的层数（整局保留）：击倒、致命一击由运行时记录，精英与 Boss 胜利在 win_combat 里记录
     #[serde(default,skip_serializing_if="embers::Stacks::is_empty")]
     pub ember_stacks: embers::Stacks,
-    /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；旧存档为 0，等概率
+    /// 余烬规则：1 起按品质抽（embers::offer_by_quality）；2 起宝箱房改为给一枚随机余烬（embers::chest_ember）；旧存档为 0，等概率
     #[serde(default)]
     pub ember_rules: u8,
     /// 新旅程：普通战与精英战的奖励里会出现强化石
@@ -261,6 +265,8 @@ pub struct Run {
     pub debug: bool,
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub boss_test: Option<debug::BossTest>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub mausoleum_test: Option<(u8,usize)>,
     /// 2：问号房的每个事件按权重单独抽取，加入骰子赌徒、盲盒商人与词条重铸台三个房间事件（0、1 为旧分配）
     /// 3：九个问号房事件权重相同（2 为试炼 4、其余 2）
     #[serde(default)]
@@ -349,9 +355,11 @@ pub struct Run {
     pub shop_stock: Option<ShopStock>,
     #[serde(default)]
     pub bells: merchant::Bells,
-    /// 徘徊赐福：单人旅程里死亡时消耗一个，回到路线图重打本层（开局 RETRIES 个；联机不使用，旧存档为 0）
+    /// 徘徊赐福：单人死亡后消耗一个，自动返回原房间（旧存档为 0）。
     #[serde(default)]
     pub retries: u8,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub retry_node: Option<usize>,
     checkpoint: Option<CombatCheckpoint>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -715,14 +723,15 @@ mod map_compatibility {
             assert!(run.retry_floor());
             assert_eq!(run.retries,left);assert_eq!(run.phase,Phase::Map);
             assert_eq!((run.hp,run.flasks),(hp,flasks),"restored to the values on entering the floor");
-            assert!(run.available().contains(&id),"the same floor can be fought again");
+            assert_eq!(run.available(),vec![id],"a retry must lock the room instead of reopening route choices");
+            let pending=run.clone();assert!(!run.retry_floor());assert_eq!(run,pending,"one death must not spend two charges");
             assert!(run.visited.is_empty());
             run.validate().unwrap();
             assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
         }
         let mut travelling=Run::new(42,Class::Samurai);
-        assert!(travelling.retry_floor(),"dying on the way still spends a charge");
-        assert_eq!((travelling.retries,travelling.phase.clone()),(RETRIES-1,Phase::Map));
+        assert!(!travelling.retry_floor(),"a route screen without a destination has no room to retry");
+        assert_eq!((travelling.retries,travelling.phase.clone()),(RETRIES,Phase::Map));
         run.enter(id).unwrap();
         assert!(!run.retry_floor(),"no charges left");
         run.observe_hp(0).unwrap();assert_eq!(run.phase,Phase::Dead);
@@ -733,6 +742,33 @@ mod map_compatibility {
         let mut value:serde_json::Value=serde_json::from_str(&Run::new(42,Class::Samurai).encode().unwrap()).unwrap();
         value.as_object_mut().unwrap().remove("retries").unwrap();
         assert_eq!(Run::decode(&value.to_string()).unwrap().retries,0);
+    }
+    #[test]
+    fn lingering_grace_keeps_room_across_reload_and_rejects_another_route() {
+        let mut run=Run::new(42,Class::Samurai);
+        let routes=run.available();let id=routes[0];let other=routes[1];
+        run.enter(id).unwrap();assert!(run.retry_floor());
+        let mut restored=Run::decode(&run.encode().unwrap()).unwrap();
+        restored.resume_from_hub().unwrap();
+        assert_eq!(restored.available(),vec![id]);
+        assert!(restored.enter(other).is_err());
+        restored.enter(id).unwrap();assert_eq!(restored.phase,Phase::Combat{id});
+        restored.observe_hp(1).unwrap();restored.validate().unwrap();
+    }
+    #[test]
+    fn lingering_grace_keeps_event_identity_and_validates_saved_destination() {
+        let mut run=Run::new(42,Class::Samurai);
+        let id=run.nodes.iter().position(|n|n.kind==NodeKind::Event).unwrap();
+        run.debug_jump(id).unwrap();run.enter(id).unwrap();let event=run.event_draw(id);
+        assert!(run.retry_floor());
+        let saved=run.encode().unwrap();let mut restored=Run::decode(&saved).unwrap();
+        assert_eq!(restored.retry_node,Some(id));restored.enter(id).unwrap();
+        assert_eq!(restored.phase,Phase::Node{id});assert_eq!(restored.event_draw(id),event);
+        restored.validate().unwrap();
+        let mut invalid:serde_json::Value=serde_json::from_str(&saved).unwrap();
+        invalid["retry_node"]=serde_json::json!(usize::MAX);
+        assert!(Run::decode(&invalid.to_string()).is_err());
+        run.end_on_death();assert_eq!(run.retry_node,None);run.validate().unwrap();
     }
     #[test]
     fn old_act_keeps_twelve_floors_then_advances_to_sixteen() {
@@ -750,8 +786,40 @@ mod map_compatibility {
                     NodeKind::Chest=>run.finish_chest().unwrap(),NodeKind::Event=>run.resolve_event(false).unwrap(),
                 }
             }
-            assert_eq!(run.act,2);assert_eq!(run.floors(),16);assert_eq!(run.schema,6);
+            assert_eq!(run.act,2);assert_eq!(run.floors(),16);assert_eq!(run.schema,7);
             assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+        }
+    }
+    #[test]
+    fn route_limits_cover_every_branch_and_all_acts() {
+        fn walk(nodes:&[Node],id:usize,shops:usize) {
+            let node=&nodes[id];let shops=shops+usize::from(node.kind==NodeKind::Shop);
+            assert!(shops<=3,"more than three shops on a route at {id}");
+            if node.layer<5 {assert_ne!(node.kind,NodeKind::Elite);}
+            for &next in &node.next {walk(nodes,next,shops);}
+        }
+        let mut later_elites=0;let mut shops=0;
+        for seed in 0..1000 {
+            let mut run=Run::new(seed,Class::Samurai);
+            for act in 1..=3 {
+                let old=camp_graph(run.seed);
+                for (id,node) in run.nodes.iter().enumerate() {
+                    assert_eq!(node.next,old[id].next);
+                    later_elites+=usize::from(node.kind==NodeKind::Elite);
+                    shops+=usize::from(node.kind==NodeKind::Shop);
+                }
+                for start in run.start_nodes() {walk(&run.nodes,start,0);}
+                assert_eq!(Run::decode(&run.encode().unwrap()).unwrap(),run);
+                if act<3 {run.finish(run.nodes.len()-1);}
+            }
+        }
+        assert!(later_elites>0&&shops>0);
+    }
+    #[test]
+    fn previous_camp_maps_remain_unchanged_on_load() {
+        for seed in 0..100 {
+            let mut old=Run::new(seed,Class::Samurai);old.schema=6;old.nodes=camp_graph(seed);
+            assert_eq!(Run::decode(&old.encode().unwrap()).unwrap(),old);
         }
     }
     #[test]
@@ -889,6 +957,19 @@ pub(crate) fn camp_graph(seed:u64)->Vec<Node> {
     space_rest_nodes(nodes)
 }
 
+fn route_graph(seed:u64)->Vec<Node> {
+    let mut nodes=camp_graph(seed);
+    let mut shops=vec![0usize;nodes.len()];
+    for id in 0..nodes.len() {
+        if (nodes[id].layer<5&&nodes[id].kind==NodeKind::Elite)
+            ||(nodes[id].kind==NodeKind::Shop&&shops[id]>=3) {nodes[id].kind=NodeKind::Monster;}
+        let count=shops[id]+usize::from(nodes[id].kind==NodeKind::Shop);
+        // Nodes are ordered by layer; merging routes inherit the largest shop count.
+        for &next in &nodes[id].next {shops[next]=shops[next].max(count);}
+    }
+    nodes
+}
+
 pub(crate) fn space_rest_nodes(mut nodes:Vec<Node>)->Vec<Node> {
     let rest=|kind|matches!(kind,NodeKind::Chest|NodeKind::Camp);
     for id in (0..nodes.len()).rev() {
@@ -906,10 +987,10 @@ impl Run {
     pub fn floors(&self)->usize {self.nodes.last().map_or(0,|n|n.layer+1)}
     pub fn new(seed: u64, class: Class) -> Self {
         Self {
-            schema: 6,
+            schema: 7,
             affix_equipment: true,
             affix_rules: 5,
-            boss_reward_rules: 1,
+            boss_reward_rules: 2,
             class_rules: 1,
             talisman_affixes: true,
             ruby_spells: false,
@@ -921,13 +1002,13 @@ impl Run {
             weapon_preference: None,
             weapon_preferences: Vec::new(),
             ember_rewards: true,
-            ember_rules: 1,
+            ember_rules: 2,
             stone_rewards: true,
             embers: vec![],
             ember_stacks: Default::default(),
             debug: false,
             boss_test: None,
-            event_rules: 3,
+            event_rules: 4,
             wander: false,
             descents_before: 0,
             cursed: Vec::new(),
@@ -936,6 +1017,7 @@ impl Run {
             torches: Vec::new(),
             torch_rolls: 0,
             weapon_merges: Vec::new(),
+            mausoleum_test: None,
             act:1,
             seed,
             initial_seed: Some(seed),
@@ -948,7 +1030,7 @@ impl Run {
             spirit_peak: Some(0),
             spirit_rules: 1,
             class,
-            nodes: camp_graph(seed),
+            nodes: route_graph(seed),
             phase: Phase::Map,
             visited: vec![],
             hp: 100,
@@ -972,6 +1054,7 @@ impl Run {
             shop_stock: None,
             bells: Default::default(),
             retries: RETRIES,
+            retry_node: None,
             checkpoint: None,
         }
     }
@@ -1022,7 +1105,7 @@ impl Run {
         if self.act!=1||!self.visited.is_empty()||self.phase!=Phase::Map {
             return Err("已有旅程不能替换路线，请从大赐福开始共同旅程".into());
         }
-        let mut next=self.clone();next.seed=seed;next.initial_seed=Some(seed);next.schema=6;next.nodes=camp_graph(seed);
+        let mut next=self.clone();next.seed=seed;next.initial_seed=Some(seed);next.schema=7;next.nodes=route_graph(seed);
         next.validate()?;*self=next;Ok(())
     }
 
@@ -1030,7 +1113,7 @@ impl Run {
         if self.phase != Phase::Map || self.contract_pending() {
             return vec![];
         }
-        self.next_route()
+        self.retry_node.map_or_else(||self.next_route(),|id|vec![id])
     }
 
     fn next_route(&self) -> Vec<usize> {
@@ -1074,7 +1157,8 @@ impl Run {
     pub fn red_camp(&self)->Option<usize> {self.fallen.as_ref().and_then(|_|descent::red_camp(&self.nodes,self.seed))}
     /// 这一幕的地图（堕落模式下按当前状态加上篝火、堕落首领与洗牌）
     pub(crate) fn expected_nodes(&self)->Vec<Node> {
-        let base=camp_graph(self.seed);
+        // 第 6 版路线图是 camp_graph，第 7 版起是 route_graph（1.6 调整了精英与商店分布）
+        let base=if self.schema==6 {camp_graph(self.seed)} else {route_graph(self.seed)};
         match &self.fallen {Some(f)=>descent::fallen_graph(base,self.seed,f.active,f.entry),None=>base}
     }
     /// 红篝火处选择了走过的相邻关卡：开启堕落挑战
@@ -1114,11 +1198,11 @@ impl Run {
     /// 联机客机跟随房主的堕落设置（由房主的进入指令携带）
     pub fn follow_wander(&mut self,on:bool) {
         self.wander=on;
-        if self.act==1&&self.visited.is_empty()&&self.schema==6 {self.apply_fallen_mode();}
+        if self.act==1&&self.visited.is_empty()&&self.schema>=6 {self.apply_fallen_mode();}
     }
     /// 堕落模式开关后换上对应的地图（只在第一幕开局时调用）
     fn apply_fallen_mode(&mut self) {
-        if self.schema!=6 {return;}
+        if self.schema<6 {return;}
         self.fallen=self.wander.then(descent::Fallen::default);
         self.nodes=self.expected_nodes();
     }
@@ -1130,14 +1214,20 @@ impl Run {
             return Err("节点不可达".into());
         }
         if !self.fallen_active()&&self.visited.last().is_some_and(|&l|Some(l)==self.red_camp())&&self.visited.contains(&id) {self.begin_fallen(id)?;}
-        self.reached_layer=self.reached_layer.max(self.nodes[id].layer+1);
+        // 死亡重试回到已经动过的事件：保留“已结束”，不重新抽事件（否则能重选试炼、再领一次奖）
+        let retry=self.retry_node==Some(id);
+        let settled=retry&&self.regional_event.settled;
+        self.retry_node=None;
+        // [HansFix] 堕落关卡的层数可能比已到达的层低：平常只增不减；死亡重试照作者的做法回到该层
+        self.reached_layer=if retry {self.nodes[id].layer+1} else {self.reached_layer.max(self.nodes[id].layer+1)};
         self.shop_purchased = 0;self.shop_stock=None;
-        if self.nodes[id].kind==NodeKind::Event {
+        if self.nodes[id].kind==NodeKind::Event&&!settled {
             let draw=self.event_draw(id);
             self.regional_event.scarabs=draw==events::Draw::Scarabs;
             self.regional_event.locked=draw==events::Draw::Locked;
-            self.regional_event.trial=draw==events::Draw::Trial;
+            self.regional_event.trial=matches!(draw,events::Draw::Trial|events::Draw::Mausoleum);
             self.regional_event.recovery=draw==events::Draw::Spring;
+            self.regional_event.mausoleum=(draw==events::Draw::Mausoleum).then(Default::default);
 
         }
         if self.nodes[id].kind.combat() {
@@ -1176,8 +1266,8 @@ impl Run {
             self.flasks=self.flask_limit;
             self.seed=mix(self.seed^u64::from(self.act));
             if let Some(old)=&self.contract {self.contract=Some(old.next_act(self.reward_seed(),self.class,self.act));}
-            self.schema=6;
-            self.nodes=camp_graph(self.seed);
+            self.schema=7;
+            self.nodes=route_graph(self.seed);
             if self.fallen.is_some() {self.fallen=Some(descent::Fallen::default());self.nodes=self.expected_nodes();}
             self.visited.clear();
             self.phase=Phase::Map;
@@ -1222,7 +1312,7 @@ impl Run {
                 self.physick_empty=false;
             }
             CampChoice::UpgradeWeapon => {
-                if self.weapon_level >= 25 {
+                if self.weapon_level >= contracts::NORMAL_MAX {
                     return Err("武器已达到上限".into());
                 }
                 self.weapon_level += 1;
@@ -1374,7 +1464,7 @@ impl Run {
                 }
             }
             Reward::UpgradeWeapon => {
-                if self.weapon_level >= 25 {
+                if self.weapon_level >= contracts::NORMAL_MAX {
                     return Err("武器已达到上限".into());
                 }
                 self.weapon_level += 1;
@@ -1511,6 +1601,15 @@ impl Run {
         Ok(())
     }
 
+    /// 宝箱房打开宝箱（余烬规则 2 起）：得到一枚随机余烬并结束节点；没有可得的余烬时返回 None、什么都不改（照旧给物品）
+    pub fn claim_chest_ember(&mut self) -> RuleResult<Option<embers::Ember>> {
+        let id = self.active_node(NodeKind::Chest)?;
+        let Some(ember) = embers::chest_ember(self, id) else { return Ok(None) };
+        self.embers.push(ember);
+        self.finish(id);
+        Ok(Some(ember))
+    }
+
     pub fn open_chest(&mut self) -> RuleResult<()> {
         let id = self.active_node(NodeKind::Chest)?;
         self.phase = Phase::Reward {
@@ -1587,28 +1686,36 @@ impl Run {
         }
         Ok(())
     }
-    /// 徘徊赐福：死在本层（战斗、房间里或出发途中）时消耗一个，回到路线图重打本层——本层的节点仍可选择，
-    /// 生命与圣杯瓶恢复到进入本层时的值（房间里没有进场快照时生命回满）。没有剩余或不在本层里时返回 false，由调用方照常结束旅程
+    /// 保存自动返回的房间，并恢复进场时的生命与圣杯瓶；同一次死亡只扣一次。
     pub fn retry_floor(&mut self)->bool {
-        // 路线图阶段（出发传送途中）死亡也算：扣一个，留在路线图
-        if self.retries==0||!matches!(self.phase,Phase::Combat{..}|Phase::Node{..}|Phase::Map) {return false;}
+        if self.retries==0||self.retry_node.is_some() {return false;}
+        let id=match self.phase {Phase::Combat{id}|Phase::Node{id}=>id,_=>return false};
         self.retries-=1;
         if let Some(checkpoint)=self.checkpoint.take() {self.hp=checkpoint.hp;self.flasks=checkpoint.flasks;}
         if self.hp==0 {self.hp=self.max_hp;}
-        self.regional_event=Default::default();
+        let settled=self.nodes[id].kind==NodeKind::Event&&self.regional_event.touched();
+        self.regional_event=crate::regional_events::Progress{settled,..Default::default()};
         self.shop_purchased=0;self.shop_stock=None;
         self.phase=Phase::Map;
+        self.retry_node=Some(id);
         true
     }
     pub fn end_on_death(&mut self) {
-        self.hp=0;self.phase=Phase::Dead;self.checkpoint=None;
+        self.hp=0;self.phase=Phase::Dead;self.checkpoint=None;self.retry_node=None;
     }
 
     pub fn decode(json: &str) -> RuleResult<Self> {
         if json.len() > 128 * 1024 {
             return Err("存档过大".into());
         }
-        let mut run: Self = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let mut value:serde_json::Value=serde_json::from_str(json).map_err(|e|e.to_string())?;
+        let offer=value.get_mut("regional_event").and_then(|p|p.get_mut("mausoleum")).and_then(|m|m.as_object_mut()).is_some_and(|copy|{
+            if copy.contains_key("accepted"){return false;}
+            let used=copy.get("completed").and_then(|v|v.as_bool())==Some(true)||copy.get("receipt").is_some_and(|v|!v.is_null());
+            copy.insert("accepted".into(),serde_json::Value::Bool(used));!used
+        });
+        if offer {value["regional_event"]["trial"]=serde_json::Value::Bool(true);}
+        let mut run: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
         if run.ruby_spells {
             run.ruby_spells=false;
             if let Phase::Reward{id,..}=run.phase {run.phase=Phase::Reward{id,offers:run.offers(id)};}
@@ -1619,6 +1726,7 @@ impl Run {
             run.flask_limit=run.full_flask_limit();
         }
         run.validate()?;
+        if let Some(contract)=&mut run.contract {contract.retire_ranged_offers();}
         if run.boss_reward_rules==0 {
             run.boss_reward_rules=1;
             if let Phase::Reward{id,..}=run.phase {run.phase=Phase::Reward{id,offers:run.offers(id)};}
@@ -1638,7 +1746,8 @@ impl Run {
     pub fn validate(&self) -> RuleResult<()> {
         let fail = || Err("存档状态不合法或版本不受支持".into());
         if self.boss_test.is_some_and(|t|!self.debug||!(1..=3).contains(&t.act)||t.encounter>=4096){return fail();}
-        if ![1,2,3,4,5,6].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>1||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>1||self.scaling_rules>1
+        if self.mausoleum_test.is_some_and(|(act,id)|!self.debug||!(1..=3).contains(&act)||act==self.act&&self.nodes.get(id).is_none_or(|n|n.kind!=NodeKind::Event)){return fail();}
+        if ![1,2,3,4,5,6,7].contains(&self.schema)||self.affix_rules>5||self.boss_reward_rules>2||self.class_rules!=1||self.boss_affix_rules>1||self.ember_rules>2||self.scaling_rules>1
             || self.contract.as_ref().is_some_and(|c|!c.valid(self.act)&&!(self.debug&&c.act==self.act))
             || !self.larval_gift.valid(self.act)
             || self.elite_buffs.iter().any(|id|!elite::BUFFS.contains(id))
@@ -1654,13 +1763,13 @@ impl Run {
             || !self.valid_start_talisman()
             || self.weapon_preference.is_some_and(|p|!p.valid())
             || !weapon_training::valid_preferences(&self.weapon_preferences)
-            || self.event_rules>3
+            || self.event_rules>4
             || (!self.ember_rewards&&!self.embers.is_empty())
             || self.embers.iter().enumerate().any(|(i,e)|self.embers[..i].contains(e))
             || self.flask_limit != self.full_flask_limit()
             || self.flasks > self.flask_limit
-            || self.weapon_level > 25
-            || self.weapon_peak.is_some_and(|peak|peak>50)
+            || self.weapon_level > contracts::NORMAL_MAX
+            || self.weapon_peak.is_some_and(|peak|peak>contracts::MAX_PEAK)
             || self.spirit_peak.is_some_and(|peak|peak>10)
             || self.spirit_rules>1
             || self.shop_purchased > 7
@@ -1684,7 +1793,7 @@ impl Run {
         if self.cursed.len()>self.claimed_items.len()||self.cursed.iter().any(|c|!self.claimed_items.contains(&c.item)||c.swaps.is_empty()
             ||c.swaps.len()>3||c.swaps.iter().any(|&(from,to)|!descent::effects(c.item).contains(&from)||(to!=descent::doubled(from)&&to!=descent::negated(from)&&to!=descent::negated2(from)))) {return fail();}
         // 旧版（r4 及以前）的堕落存档没有 fallen，照旧继续，只是这局没有红篝火与堕落首领
-        if (self.fallen.is_some()&&!(self.wander&&self.schema==6))||self.fallen.as_ref().is_some_and(|f|f.page>2) {return fail();}
+        if (self.fallen.is_some()&&!(self.wander&&self.schema>=6))||self.fallen.as_ref().is_some_and(|f|f.page>2) {return fail();}
         if self.fallen_oaths.iter().enumerate().any(|(i,o)|!o.valid()||self.fallen_oaths[..i].iter().any(|p|p.kind==o.kind)) {return fail();}
         for (i,id) in self.claimed_items.iter().enumerate() {
             if !(rewards::lookup(*id).is_some_and(|item|item.kind.allowed(self.class)||elite::LEGENDARY.contains(&affixes::base(*id)))||rewards::RETIRED_SPELLS.contains(id))||self.claimed_items[..i].contains(id) {return fail();}
@@ -1748,6 +1857,7 @@ impl Run {
             }
         };
         if current_id.is_some_and(|id| !route.contains(&id))
+            || self.retry_node.is_some_and(|id|self.phase!=Phase::Map||!route.contains(&id))
             || (!matches!(self.phase, Phase::Combat { .. }) && self.checkpoint.is_some())
             || (self.hp == 0 && self.phase != Phase::Dead)
             || (self.shop_purchased != 0

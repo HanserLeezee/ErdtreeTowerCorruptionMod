@@ -33,7 +33,7 @@ static class TowerScalingAssets {
     static int Tier(Dictionary<int,int[]> tiers,Target t)=>tiers[t.Act][t.Role switch {"weak"=>0,"elite"=>1,_=>2}];
     static string[] Slots(PARAM.Row row)=>row.Cells.Select(c=>c.Def.InternalName).Where(n=>n.StartsWith("spEffectID")&&int.TryParse(n[10..],out _)).ToArray();
     static int I(PARAM.Row row,string field)=>Convert.ToInt32(row[field].Value);
-    static void Apply(PARAM.Row row,int tier) {
+    public static void Apply(PARAM.Row row,int tier) {
         var slots=Slots(row);
         foreach(var slot in slots.Where(s=>AreaScaling(I(row,s))))row[slot].Value=Convert.ChangeType(-1,row[slot].Value.GetType());
         var free=slots.FirstOrDefault(s=>I(row,s)==-1)??throw new Exception($"No free SpEffect slot on NpcParam {row.ID}");

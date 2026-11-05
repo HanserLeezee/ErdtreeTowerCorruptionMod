@@ -31,6 +31,10 @@ static PAD:AtomicBool=AtomicBool::new(false);
 static PAD_FRAME:AtomicBool=AtomicBool::new(false);
 /// 已经见过手柄连接：第一次连上时直接切到手柄提示
 static CONNECTED:AtomicBool=AtomicBool::new(false);
+/// 这一帧鼠标真的动了（游戏的 DirectInput 鼠标读数，不受游戏自己移动光标影响）
+static MOUSE_FRAME:AtomicBool=AtomicBool::new(false);
+/// 界面接管输入时光标位置可信（游戏移动光标的调用被拦下）；平时游戏会自己把光标挪回中间，那种移动不算键鼠输入
+static TRUST_CURSOR:AtomicBool=AtomicBool::new(false);
 pub fn using_pad()->bool {PAD.load(Ordering::Relaxed)}
 /// 直接指定提示用哪种设备（Linux 预览工具录两种样式用）
 #[allow(dead_code)]
@@ -40,11 +44,19 @@ pub fn note_pad(found:bool,active:bool) {
     if found&&!CONNECTED.swap(true,Ordering::Relaxed) {PAD.store(true,Ordering::Relaxed);}
     if found&&active {PAD.store(true,Ordering::Relaxed);PAD_FRAME.store(true,Ordering::Relaxed);}
 }
-/// 每帧调用一次：键盘按键、鼠标点击或（不是摇杆带动的）鼠标移动都切回键盘提示
+/// 读游戏输入设备时调用（reward_ui::poll_game_devices）：moved 为鼠标真的动了；trust_cursor 为界面接管输入、光标位置可信
+pub fn note_mouse(moved:bool,trust_cursor:bool) {
+    if moved {MOUSE_FRAME.store(true,Ordering::Relaxed);}
+    TRUST_CURSOR.store(trust_cursor,Ordering::Relaxed);
+}
+/// 光标位移算不算键鼠输入：只在光标可信时算；打开界面时光标从无效位置跳到画面中间的那一下不算
+fn cursor_moved(delta:[f32;2],trust:bool)->bool {trust&&delta.iter().all(|d|d.is_finite()&&d.abs()<400.0)&&delta.iter().any(|d|d.abs()>0.5)}
+/// 每帧调用一次：键盘按键、鼠标点击或真实的鼠标移动都切回键盘提示（摇杆带动的、游戏自己挪光标的不算）
 pub fn update(ui:&Ui) {
+    let moved=MOUSE_FRAME.swap(false,Ordering::Relaxed);
     if PAD_FRAME.swap(false,Ordering::Relaxed) {return;}
     let io=ui.io();
-    let mouse=io.mouse_delta.iter().any(|d|d.abs()>0.5)||io.mouse_down.iter().any(|d|*d);
+    let mouse=moved||cursor_moved(io.mouse_delta,TRUST_CURSOR.load(Ordering::Relaxed))||io.mouse_down.iter().any(|d|*d);
     let key=Key::VARIANTS.iter().any(|k|{let name=format!("{k:?}");!name.starts_with("Gamepad")&&!name.starts_with("Mouse")&&!name.starts_with("Mod")&&ui.is_key_pressed(*k)});
     if mouse||key {PAD.store(false,Ordering::Relaxed);}
 }
@@ -216,5 +228,13 @@ mod tests {
         assert!(matches!(parts(MOVE,true).as_slice(),[Part::Cross(0b1111)]));
         assert!(matches!(parts(Input::new(Pad::View,"J"),false).as_slice(),[Part::Cap(j)] if j=="J"));
         assert!(parts(Input::new(Pad::X,""),false).is_empty());
+    }
+    #[test]
+    fn only_trusted_real_cursor_motion_means_keyboard() {
+        assert!(cursor_moved([3.0,0.0],true));
+        assert!(!cursor_moved([3.0,0.0],false),"the game recentring its cursor during play is not mouse input");
+        assert!(!cursor_moved([960.0,540.0],true),"the jump to the screen centre when a menu opens");
+        assert!(!cursor_moved([f32::MAX,0.0],true));
+        assert!(!cursor_moved([0.2,0.1],true));
     }
 }

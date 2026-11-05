@@ -13,7 +13,7 @@
 var SCALE_CHOICES = ['0', '5', '10', '15', '20', '25', '30', '35', '40', '45', '50', '60', '70', '80', '90', '100', '120', '150', '200'];
 
 /* 爬塔按键可选的键（与 src/options.rs 的 KEYS 对应的常用子集） */
-var KEY_CHOICES = ['Home', 'End', 'Insert', 'Delete', 'PageUp', 'PageDown', 'Pause', 'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'J', 'K', 'L', 'O', 'P', 'U', 'I', 'M', 'N', 'B', 'C', 'V', 'X', 'Z', 'Num0', 'Num1', 'Num2', 'Num3', 'Num4', 'Num5', 'Num6', 'Num7', 'Num8', 'Num9'];
+var KEY_CHOICES = ['None', 'Home', 'End', 'Insert', 'Delete', 'PageUp', 'PageDown', 'Backspace', 'Tab', 'Enter', 'Space', 'Up', 'Down', 'Left', 'Right', 'LeftCtrl', 'RightCtrl', 'LeftShift', 'RightShift', 'LeftAlt', 'RightAlt'].concat('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split(''), ['Num0', 'Num1', 'Num2', 'Num3', 'Num4', 'Num5', 'Num6', 'Num7', 'Num8', 'Num9', 'NumEnter', 'NumMultiply', 'NumSubtract', 'NumAdd', 'NumDecimal', 'NumDivide']);
 
 window.HOYO_CONFIG = {
   app: {
@@ -76,7 +76,7 @@ window.HOYO_CONFIG = {
         { img: 'assets/img/tower-banner-5.webp', href: 'https://github.com/tamikip/erdtree-tower',
           detail: { name: '祷誓者', role: '祷告 · 治疗 · 辅助', mechanic: ['圣誓', '祷告专注消耗降低 15%；打赢一场战斗回复 25% 专注'], kit: '短矛、指头圣印记、治疗、招来火焰', bias: '圣印记、祷告与矛', accent: 'rgb(226, 196, 120)' } },
         { img: 'assets/img/tower-banner-6.webp', href: 'https://github.com/tamikip/erdtree-tower',
-          detail: { name: '召唤师', role: '骨灰为核心', mechanic: ['群灵', '战斗胜利时召唤物还活着，这次召唤不消耗骨灰；每页奖励都有骨灰，召唤流余烬必定可出'], kit: '短剑、熨斗形盾、圣印记、离群野狼与骸骨民兵的骨灰', bias: '骨灰、轻武器与祷告', accent: 'rgb(140, 196, 170)' } },
+          detail: { name: '召唤师', role: '骨灰为核心', mechanic: ['群灵', '胜利时每组召唤物独立判断，仍有成员存活就返还对应骨灰（含第二次召唤）；每页奖励都有骨灰，召唤流余烬必定可出'], kit: '短剑、熨斗形盾、圣印记、离群野狼与骸骨民兵的骨灰', bias: '骨灰、轻武器与祷告', accent: 'rgb(140, 196, 170)' } },
       ],
       /* 公告：宿主检查更新后换成最新版本的更新说明 */
       news: {
@@ -224,6 +224,7 @@ window.HOYO_CONFIG = {
             title: '启动',
             rows: [
               { type: 'seg', key: 'mode', label: '启动模式', value: '单人', options: ['单人', '无缝联机'] },
+              { type: 'select', key: 'loader', label: '加载器', hint: '下次启动生效；两种加载器共用原有存档与联机设置', value: 'ME3', options: ['ME3', 'YAFSML'] },
               { type: 'static', label: '游戏目录', key: 'gameDir', value: '（未设置）' },
               { type: 'buttons', label: '目录', items: [{ text: '选择游戏目录…', action: 'chooseGameDir' }] },
             ],
@@ -246,10 +247,11 @@ window.HOYO_CONFIG = {
             title: '按键（下次启动游戏生效）',
             rows: [
               { type: 'select', key: 'key.settle', label: '快速结算', hint: '暂离并结束本局', value: 'Home', options: KEY_CHOICES },
-              { type: 'select', key: 'key.overlay', label: '显示/隐藏爬塔界面', value: 'F10', options: KEY_CHOICES },
+              { type: 'select', key: 'key.overlay', label: '显示/隐藏爬塔界面', value: 'Insert', options: KEY_CHOICES },
               { type: 'select', key: 'key.archive', label: '旅程档案', value: 'J', options: KEY_CHOICES },
               { type: 'select', key: 'key.build', label: '构筑面板（地图界面）', value: 'C', options: KEY_CHOICES },
-              { type: 'select', key: 'key.debug', label: '调试菜单', value: 'F8', options: KEY_CHOICES },
+              { type: 'select', key: 'key.debug', label: '调试菜单', value: 'Delete', options: KEY_CHOICES },
+              { type: 'select', key: 'key.skip', label: '跳过本关', hint: '战斗中视为胜利，直接到三选一；联机只有房主能用', value: 'End', options: KEY_CHOICES },
             ],
           },
         ],

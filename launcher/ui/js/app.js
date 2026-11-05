@@ -547,6 +547,12 @@
         onSettingChange('mode', setState.mode === '无缝联机' ? '单人' : '无缝联机');
         return;
       }
+      if (e.target.closest('[data-act="lobby"]')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openLobby();
+        return;
+      }
       var a = e.target.closest('[data-act="update"]');
       if (!a) return;
       e.preventDefault();
@@ -858,8 +864,128 @@
 
   function closeModal() {
     var old = document.getElementById('modalMask');
-    if (old) old.remove();
+    if (old) {
+      if (old.querySelector('#lobbyDialog')) bridge.lobby.close();
+      old.remove();
+    }
   }
+
+  /* ================= 联机大厅 =================
+     房间列表由宿主用 Steam 大厅查询（TowerHost.LobbyListAsync），开房 / 加入时宿主写好无缝联机密码再启动游戏。
+     lobbyState.view：'list' 房间列表 | 'host' 开房表单 */
+  var lobbyState = { view: 'list', loading: false, error: '', rooms: [], version: '', joining: null, mine: null };
+
+  function openLobby() {
+    closeModal();
+    lobbyState = { view: 'list', loading: true, error: '', rooms: [], version: '', joining: null };
+    var mask = el('div', 'modal-mask');
+    mask.id = 'modalMask';
+    var dlg = el('div', 'set-dialog lobby-dialog');
+    dlg.id = 'lobbyDialog';
+    mask.appendChild(dlg);
+    mask.addEventListener('click', function (e) { if (e.target === mask) closeModal(); });
+    document.getElementById('app').appendChild(mask);
+    renderLobby();
+    bridge.lobby.list();
+  }
+
+  function renderLobby() {
+    var dlg = document.getElementById('lobbyDialog');
+    if (!dlg) return;
+    var L = lobbyState;
+    var html = '<button class="set-close" data-lobby="close" aria-label="关闭">' +
+      '<svg viewBox="0 0 14 14"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.6"/></svg></button>' +
+      '<div class="lobby-body"><div class="card-header">联机大厅</div>';
+    if (L.view === 'host') {
+      html += '<div class="lobby-hint">开房后启动器会自动设置无缝联机密码并启动游戏；进游戏后照常用无缝联机的道具开启联机，房间就会出现在大厅里，队友不用填密码。</div>' +
+        '<div class="set-row"><div class="label">房间名</div><div class="ctrl"><input class="inp" id="lobbyName" maxlength="32" placeholder="例如：一起爬塔"></div></div>' +
+        '<div class="set-row"><div class="label">人数上限</div><div class="ctrl"><select class="inp" id="lobbyMax">' +
+        [2, 3, 4, 5, 6, 7, 8].map(function (n) { return '<option value="' + n + '"' + (n === 4 ? ' selected' : '') + '>' + n + ' 人</option>'; }).join('') +
+        '</select></div></div>' +
+        '<div class="set-row"><div class="label">房间密码<div class="hint">可不填；填了就是私密房间，只有知道密码的人能进</div></div>' +
+        '<div class="ctrl"><input class="inp" id="lobbyPassword" maxlength="32" type="password" placeholder="不填即公开"></div></div>' +
+        '<div class="lobby-actions"><button class="btn-ghost" data-lobby="back">返回</button>' +
+        '<button class="btn-ghost primary" data-lobby="create">开房并启动游戏</button></div>';
+    } else {
+      html += '<div class="lobby-toolbar"><span class="lobby-hint">' +
+        (L.version ? '你的版本 ' + esc(L.version) + ' · 版本不同的房间不能加入' : '同一版本的队友开的房间会显示在这里') + '</span>' +
+        '<span><button class="btn-ghost" data-lobby="refresh"' + (L.loading ? ' disabled' : '') + '>' + (L.loading ? '刷新中…' : '刷新') + '</button> ' +
+        '<button class="btn-ghost primary" data-lobby="host">开房</button></span></div>';
+      if (L.mine) {
+        html += '<div class="lobby-mine lobby-mine-' + esc(L.mine.state) + (L.mine.state === 'open' && !L.mine.ready ? ' lobby-mine-wait' : '') + '">你开的房间「' + esc(L.mine.name) + '」：' + esc(L.mine.detail) +
+          (L.mine.state === 'open' ? '<span class="lobby-hint">（自己的房间在下面的列表里可能看不到，请让队友刷新确认）</span>' : '') + '</div>';
+      }
+      if (L.error) {
+        html += '<div class="lobby-empty">' + esc(L.error) + '</div>';
+      } else if (L.loading && !L.rooms.length) {
+        html += '<div class="lobby-empty">正在向 Steam 查询房间…</div>';
+      } else if (!L.rooms.length) {
+        html += '<div class="lobby-empty">暂时没有房间，点「开房」开一个吧</div>';
+      } else {
+        html += '<ul class="lobby-list">' + L.rooms.map(function (r) {
+          var blocked = !r.sameVersion ? '版本 ' + esc(r.version) : (r.full ? '已满' : (r.started ? '旅程中' : ''));
+          var joining = L.joining === r.id;
+          return '<li class="lobby-room' + (blocked ? ' off' : '') + '">' +
+            '<div class="lobby-main"><div class="lobby-name">' + (r.locked ? '🔒 ' : '') + esc(r.name) + '</div>' +
+            '<div class="lobby-meta">房主 ' + esc(r.host || '—') + ' · ' + esc(r.state || '大赐福') +
+            (r.open ? '' : ' · <span class="lobby-wait">等待房主开启联机</span>') + '</div></div>' +
+            '<div class="lobby-count">' + r.players + ' / ' + r.max + '</div>' +
+            (joining
+              ? '<div class="lobby-join"><input class="inp lobby-pass" id="lobbyJoinPass" type="password" maxlength="32" placeholder="房间密码">' +
+                '<button class="btn-ghost primary" data-lobby="joinConfirm" data-id="' + esc(r.id) + '">加入</button></div>'
+              : '<button class="btn-ghost' + (blocked ? '' : ' primary') + '" data-lobby="join" data-id="' + esc(r.id) + '"' +
+                (blocked ? ' disabled' : '') + '>' + (blocked || '加入') + '</button>') +
+            '</li>';
+        }).join('') + '</ul>';
+      }
+    }
+    html += '</div>';
+    dlg.innerHTML = html;
+    var focus = dlg.querySelector('#lobbyJoinPass') || dlg.querySelector('#lobbyName');
+    if (focus) focus.focus();
+  }
+
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-lobby]');
+    if (!b || !document.getElementById('lobbyDialog')) return;
+    var act = b.getAttribute('data-lobby');
+    var L = lobbyState;
+    if (act === 'close') { closeModal(); return; }
+    if (act === 'refresh') { L.loading = true; L.error = ''; renderLobby(); bridge.lobby.list(); return; }
+    if (act === 'host') { L.view = 'host'; renderLobby(); return; }
+    if (act === 'back') { L.view = 'list'; renderLobby(); return; }
+    if (act === 'create') {
+      var name = (document.getElementById('lobbyName').value || '').trim();
+      if (!name) { toast('请填写房间名', 'warn'); return; }
+      bridge.lobby.host({
+        name: name,
+        max: parseInt(document.getElementById('lobbyMax').value, 10) || 4,
+        password: document.getElementById('lobbyPassword').value || '',
+      });
+      closeModal();
+      return;
+    }
+    var id = b.getAttribute('data-id');
+    var room = L.rooms.filter(function (r) { return r.id === id; })[0];
+    if (!room) return;
+    if (act === 'join') {
+      if (room.locked) { L.joining = id; renderLobby(); return; }
+      bridge.lobby.join(id, '');
+      closeModal();
+      return;
+    }
+    if (act === 'joinConfirm') {
+      var pass = document.getElementById('lobbyJoinPass').value || '';
+      if (!pass) { toast('请输入房间密码', 'warn'); return; }
+      bridge.lobby.join(id, pass);
+      closeModal();
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || !document.getElementById('lobbyDialog')) return;
+    var confirm = document.querySelector('[data-lobby="joinConfirm"]') || document.querySelector('[data-lobby="create"]');
+    if (confirm) confirm.click();
+  });
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeModal();
@@ -1268,7 +1394,7 @@
         return '有可用更新 ' + esc(g.updateTo) +
           ' · <a data-act="update">立即更新</a>';
       }
-      return g.note ? esc(g.note) + ' · <a data-act="mode">切换</a>' : '';
+      return (g.note ? esc(g.note) + ' · <a data-act="mode">切换</a> · ' : '') + '<a data-act="lobby">联机大厅</a>';
     }
     /* 模组装在启动器所在文件夹，没有「定位已有安装」这一说，只显示配置里的提示 */
     return esc((g.cta && g.cta.hint) || '');
@@ -1858,6 +1984,18 @@
         if (p.phase) t.phase = p.phase;
         if (t.percent >= 100 && t.phase === 'downloading') t.phase = 'verifying';
         taskRender();
+        return;
+      }
+
+      /* 联机大厅的房间列表（或查询失败的原因） */
+      if (msg.type === 'lobby' && msg.action === 'rooms') {
+        lobbyState.loading = false;
+        lobbyState.error = p.error || '';
+        lobbyState.rooms = p.rooms || [];
+        if (p.version) lobbyState.version = p.version;
+        lobbyState.mine = p.mine || null;
+        if (lobbyState.joining && !lobbyState.rooms.some(function (r) { return r.id === lobbyState.joining; })) lobbyState.joining = null;
+        renderLobby();
         return;
       }
 

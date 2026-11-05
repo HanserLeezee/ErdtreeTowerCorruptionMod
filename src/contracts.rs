@@ -65,14 +65,14 @@ impl Kind {
     /// 新规则下各等级的增益（1–3 级）
     pub fn boon_at(self,level:u8)->String {
         let l=usize::from(level.clamp(1,3)-1);
-        let narrow=[35,55,80][l];
+        let narrow=NARROW[l];
         match self {
             Self::Steel=>format!("蓄力重攻击伤害 +{narrow}%"),Self::Breaker=>format!("跳跃攻击伤害 +{narrow}%"),
             Self::Combo=>format!("连段末击伤害 +{narrow}%"),Self::Guard=>format!("防御反击伤害 +{narrow}%"),
             Self::Hunter=>format!("弓弩伤害 +{narrow}%"),Self::Execution=>format!("致命一击伤害 +{narrow}%"),
-            Self::Mystic=>format!("魔法／祷告伤害 +{}%",[25,40,55][l]),
-            Self::Feather=>format!("轻负重时伤害 +{}%\n精力恢复 +{} 点/秒",[20,30,40][l],[5,7,10][l]),
-            Self::Blood=>format!("生命低于 50%\n伤害 +{}%",[35,55,75][l]),
+            Self::Mystic=>format!("魔法／祷告伤害 +{}%",MYSTIC[l]),
+            Self::Feather=>format!("轻负重时伤害 +{}%\n精力恢复 +{} 点/秒",FEATHER[l],FEATHER_STAMINA[l]),
+            Self::Blood=>format!("生命低于 50%\n伤害 +{}%",BLOOD[l]),
             Self::Ascetic=>{let (hp,fp)=ASCETIC[l];format!("胜利恢复最大生命 {hp}%\n最大专注 {fp}%")},
             Self::Radiant=>format!("魔力／火／雷／圣伤害 +{}%",[25,40,55][l]),
             Self::Iron=>format!("物理伤害 +{}%",[15,25,35][l]),
@@ -87,8 +87,17 @@ impl Kind {
         Self::Combo=>"受到伤害 +5%",Self::Guard=>"动作精力消耗 +10%",_=>self.bane(),
     }}
 }
+// 誓约 I–III 级的增益（%）。I 级不变，II、III 级削弱过一次（原来 II、III 级分别约为 I 级的 1.6 倍、2.3 倍）；
+// 参数里的倍率在 scene-builder/OathAssets.cs，两边一起改
+/// 蓄力、凌空、连击、坚盾、猎手、处刑
+pub const NARROW:[u32;3]=[35,45,55];
+pub const MYSTIC:[u32;3]=[25,32,40];
+pub const FEATHER:[u32;3]=[20,25,30];
+/// 轻羽之誓的精力恢复（点/秒）
+pub const FEATHER_STAMINA:[u32;3]=[5,6,7];
+pub const BLOOD:[u32;3]=[35,45,55];
 /// 苦修之誓各等级的胜利恢复（最大生命 %、最大专注 %）
-pub const ASCETIC:[(u8,u8);3]=[(15,20),(20,25),(25,30)];
+pub const ASCETIC:[(u8,u8);3]=[(15,20),(18,23),(20,26)];
 pub const MAX_LEVEL:u8=3;
 /// 吊命之誓各等级的无敌与减耗时长（秒）
 pub const LIFELINE_SECONDS:[u8;3]=[10,15,20];
@@ -132,7 +141,7 @@ fn preferred(class:Class,roll:u64)->Kind {
         Class::Samurai=>&[Kind::Execution,Kind::Combo],
         Class::Astrologer=>&[Kind::Mystic],
         Class::Prophet=>&[Kind::Mystic,Kind::Guard],
-        Class::Confessor=>&[Kind::Mystic,Kind::Hunter],
+        Class::Confessor=>&[Kind::Mystic],
     };
     kinds[roll as usize%kinds.len()]
 }
@@ -142,24 +151,24 @@ impl State {
         let preferred=if class.sorcerer()||class.cleric(){Kind::Mystic}else{
             [Kind::Steel,Kind::Breaker,Kind::Combo,Kind::Guard][roll as usize%4]
         };
-        let mut pool:Vec<_>=Kind::LEGACY.into_iter().filter(|k|Some(*k)!=previous).collect();
+        let mut pool:Vec<_>=Kind::LEGACY.into_iter().filter(|k|*k!=Kind::Hunter&&Some(*k)!=previous).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
         let first=if Some(preferred)!=previous{preferred}else{pool[0]};
         let second=*pool.iter().find(|k|**k!=first).unwrap();
-        Self{act,offers:vec![first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:0,held:vec![],deepen:None,deepened:false}
+        Self{act,offers:vec![first,second],chosen:None,gear:[0;3],gear_done:false,peak:peak.min(MAX_PEAK),gift:None,rules:0,held:vec![],deepen:None,deepened:false}
     }
     /// 新规则：三份新誓约（不与已有的重复），已有誓约未满级时加一张深化卡。
     /// [HansFix] 首张按职业倾向，其余随机。
     pub fn start(seed:u64,class:Class,act:u8,held:Vec<Oath>,peak:u8)->Self {
         let roll=crate::mix(seed^0xc071ac7);
         let preferred=preferred(class,roll);
-        let mut pool:Vec<_>=pool().iter().copied().filter(|k|!held.iter().any(|o|o.kind==*k)).collect();
+        let mut pool:Vec<_>=pool().iter().copied().filter(|k|*k!=Kind::Hunter&&!held.iter().any(|o|o.kind==*k)).collect();
         pool.sort_by_key(|k|crate::mix(roll^k.index() as u64));
         // v99：首张仍按职业倾向（不在池中时随机）；其余两张随机
         if let Some(at)=pool.iter().position(|k|*k==preferred) {let first=pool.remove(at);pool.insert(0,first);}
         let offers:Vec<Kind>=pool.into_iter().take(offer_count()).collect();
-        let deepen=held.iter().rev().filter(|o|o.level<MAX_LEVEL).max_by_key(|o|o.level).map(|o|o.kind);
-        Self{act,offers,chosen:None,gear:[0;3],gear_done:false,peak:peak.min(50),gift:None,rules:1,held,deepen,deepened:false}
+        let deepen=held.iter().rev().filter(|o|o.kind!=Kind::Hunter&&o.level<MAX_LEVEL).max_by_key(|o|o.level).map(|o|o.kind);
+        Self{act,offers,chosen:None,gear:[0;3],gear_done:false,peak:peak.min(MAX_PEAK),gift:None,rules:1,held,deepen,deepened:false}
     }
     /// 进入下一幕：旧规则换一份新契约，新规则保留已有誓约
     pub fn next_act(&self,seed:u64,class:Class,act:u8)->Self {
@@ -172,6 +181,19 @@ impl State {
         cards
     }
     pub fn options(&self)->usize {self.cards().len()}
+    pub fn retire_ranged_offers(&mut self) {
+        if !self.selection_pending(){return;}
+        // [HansFix] 誓约张数可变（2~3 张）；替补从当前规则的誓约池里取
+        let candidates:Vec<Kind>=if self.rules==0 {Kind::LEGACY.to_vec()} else {pool().to_vec()};
+        for slot in 0..self.offers.len() {
+            if self.offers[slot]==Kind::Hunter {
+                if let Some(kind)=candidates.iter().copied().find(|k|*k!=Kind::Hunter&&!self.offers.contains(k)&&!self.held.iter().any(|o|o.kind==*k)) {
+                    self.offers[slot]=kind;
+                }
+            }
+        }
+        if self.deepen==Some(Kind::Hunter){self.deepen=None;}
+    }
     /// 当前生效的誓约及等级；旧规则返回等级 0，表示沿用旧数值
     pub fn active(&self)->Vec<Oath> {
         if self.rules==0 {self.chosen.map(|kind|Oath{kind,level:0}).into_iter().collect()}else{self.held.clone()}
@@ -227,7 +249,7 @@ impl State {
         };
         let offers_ok=self.offers.iter().enumerate().all(|(i,k)|!self.offers[..i].contains(k))
             &&if self.rules==0 {self.offers.len()==2&&self.offers.iter().all(|k|Kind::LEGACY.contains(k))}else{(2..=OFFERS).contains(&self.offers.len())};
-        self.act==act&&self.peak<=50&&offers_ok&&held_ok
+        self.act==act&&self.peak<=MAX_PEAK&&offers_ok&&held_ok
             &&self.chosen.is_none_or(|k|self.offers.contains(&k)||self.deepened)
             &&if self.chosen.is_none()||self.deepened{self.gift.is_none()&&self.gear==[0;3]}else{
                 self.gear.iter().enumerate().all(|(i,id)|!self.gear[..i].contains(id)&&crate::rewards::lookup(*id).is_some_and(|r|r.kind==crate::rewards::ItemKind::Weapon))
@@ -235,7 +257,13 @@ impl State {
             }
     }
 }
-pub fn reinforcement_level(peak:u8,cap:u8)->u8 {((u16::from(peak.min(50))*u16::from(cap))/50) as u8}
+/// 武器强化上限（scene-builder weapon-level-patch 补了等级行）：普通 +99（武器编号能表示的最高等级）、失色 +39（每级相当于普通 2.5 级，取同一水平）。
+/// 原版是 +25、+10。等效等级 peak = 普通等级×2 = 失色等级×5（原版满级都是 50），最高 MAX_PEAK
+pub const NORMAL_MAX:u8=99;
+pub const SOMBER_MAX:u8=39;
+pub const MAX_PEAK:u8=198;
+/// 等效等级换算成某种武器的强化等级：cap 为原版满级（普通 25、失色 10），超过原版满级照比例继续
+pub fn reinforcement_level(peak:u8,cap:u8)->u8 {((u16::from(peak.min(MAX_PEAK))*u16::from(cap))/50) as u8}
 fn gear(kind:Kind,_class:Class,seed:u64,epic:bool)->[u32;3] {
     let mut pool:Vec<u32>=include_str!("../scene-assets/reward-rarities.tsv").lines().filter_map(|line| {
         let (id,tier)=line.split_once('\t')?;let id:u32=id.parse().ok()?;

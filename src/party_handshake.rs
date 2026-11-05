@@ -1,6 +1,6 @@
 use serde::{Deserialize,Serialize};
 use crate::{party_roster::Roster,RuleResult};
-pub const VERSION:u32=59;
+pub const VERSION:u32=69;
 /// [HansFix] Optional patches that change the wire (堕落模式) add an offset so a patched player can
 /// never join an unpatched party by mistake; with no such patch enabled this stays 0 = official protocol.
 static EXTENSION:std::sync::atomic::AtomicU32=std::sync::atomic::AtomicU32::new(0);
@@ -13,6 +13,7 @@ pub enum Payload {
     Report{session:u64,report:crate::party_game::Report},
     Order{session:u64,order:crate::party_game::Order},
     Fault{session:u64},
+    Latency{session:u64,snapshot:crate::party_latency::Snapshot},
 }
 #[derive(Serialize,Deserialize)]
 struct Envelope {magic:String,version:u32,payload:Payload}

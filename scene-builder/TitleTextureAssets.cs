@@ -3,7 +3,7 @@ using System.Xml.Linq;
 using SoulsFormats;
 
 static class TitleTextureAssets {
-    static readonly string[] Art=["title","loading1","loading2","loading3"];
+    static readonly string[] Art=["title","loading1","loading2","loading3","tips1","tips2"];
 
     public static void Build(string game,string output,string cache) {
         var paths=(from quality in new[]{"hi","low"} from suffix in new[]{"tpf","sblytbnd"} select $"/menu/{quality}/01_common.{suffix}.dcx").ToArray();
@@ -37,6 +37,11 @@ static class TitleTextureAssets {
                 var xml=new XElement("TextureAtlas",new XAttribute("imagePath",atlas+".png"),
                     new XElement("SubTexture",new XAttribute("name",resource+".png"),new XAttribute("x",0),new XAttribute("y",0),
                         new XAttribute("width",1920),new XAttribute("height",1080),new XAttribute("half",0)));
+                if(name.StartsWith("tips")) {
+                    xml.RemoveNodes();int first=(int.Parse(name[4..])-1)*6;
+                    for(int slot=0;slot<6;slot++)xml.Add(new XElement("SubTexture",new XAttribute("name",$"MENU_TowerTheme_tip{first+slot}.png"),
+                        new XAttribute("x",0),new XAttribute("y",slot*180),new XAttribute("width",1920),new XAttribute("height",180),new XAttribute("half",0)));
+                }
                 var fileName=template.Name[..(template.Name.LastIndexOf('\\')+1)]+atlas+".layout";
                 binder.Files.Add(new BinderFile(template.Flags,id++,fileName,Encoding.UTF8.GetBytes(xml.ToString())){CompressionInfo=template.CompressionInfo});
             }
@@ -58,7 +63,8 @@ static class TitleTextureAssets {
                 if(!texture.Bytes.SequenceEqual(File.ReadAllBytes(Path.Combine(output,"theme-textures",name+".dds"))))throw new Exception("Theme DDS changed: "+name);
                 var layout=layoutCheck.Files.Single(f=>f.Name.EndsWith("\\SB_TowerTheme_"+name+".layout"));
                 var xml=XElement.Parse(Encoding.UTF8.GetString(layout.Bytes));
-                if((string)xml.Attribute("imagePath")!=texture.Name+".png"||(string)xml.Element("SubTexture")?.Attribute("name")!="MENU_TowerTheme_"+name+".png")throw new Exception("Theme texture mapping mismatch");
+                var expected=name.StartsWith("tips")?$"MENU_TowerTheme_tip{(int.Parse(name[4..])-1)*6}.png":"MENU_TowerTheme_"+name+".png";
+                if((string)xml.Attribute("imagePath")!=texture.Name+".png"||(string)xml.Element("SubTexture")?.Attribute("name")!=expected)throw new Exception("Theme texture mapping mismatch");
             }
             Console.WriteLine($"{quality}: added {Art.Length} theme textures and layouts; preserved {textures.Length} textures and {layouts.Length} layouts");
         }

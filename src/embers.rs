@@ -38,6 +38,7 @@ pub const SOUL_POINTS:u32=10;
 pub const SOUL_KILL:[u32;3]=[1,3,10];
 pub const SOUL_STEP_PERCENT:u32=2;
 pub const CHAIN_STEP_PERCENT:u32=6;
+pub const CHAIN_ROOM_LIMIT:u8=5;
 pub const SLAYER_HP_PERCENT:u32=4;
 pub const SLAYER_ATTACK_PERCENT:u32=2;
 pub const KEEPER_ATTACK_PERCENT:u32=3;
@@ -83,9 +84,9 @@ impl Ember {
         Self::SpiritBurst=>format!("召唤物倒下或消失时，对 {SPIRIT_BURST_RADIUS} 米内敌人\n造成其最大生命 {SPIRIT_BURST_PERCENT}% 的伤害\n对 Boss 最多 {BOSS_CAP_PERCENT}%"),
         Self::SpiritFeast=>format!("敌人倒下时\n召唤物回复 {SPIRIT_FEAST_HEAL_PERCENT}% 生命\n你回复 {SPIRIT_FEAST_FP_PERCENT}% 专注"),
         Self::SpiritCommand=>format!("召唤物造成的伤害 +{SPIRIT_COMMAND_PERCENT}%\n受到的伤害 -{SPIRIT_COMMAND_PERCENT}%"),
-        Self::SpiritTwin=>"每场战斗可以再召唤一次骨灰\n两只召唤物同时在场\n（第二个骨灰照常消耗）".into(),
+        Self::SpiritTwin=>"每场战斗可以再召唤一次骨灰\n两组召唤物同时在场\n召唤师：胜利时各组存活则返还\n其他职业：骨灰照常消耗".into(),
         Self::SoulEater=>format!("击倒得魂：小怪{} 精英{} Boss{}\n每 {SOUL_POINTS} 魂一层，每层攻击 +{SOUL_STEP_PERCENT}%\n层数不设上限，整局保留",SOUL_KILL[0],SOUL_KILL[1],SOUL_KILL[2]),
-        Self::Chain=>format!("每次致命一击叠一层\n每层致命一击伤害 +{CHAIN_STEP_PERCENT}%\n层数不设上限，整局保留"),
+        Self::Chain=>format!("每次致命一击叠一层，每关最多 {CHAIN_ROOM_LIMIT} 层\n每层致命一击伤害 +{CHAIN_STEP_PERCENT}%\n总层数不设上限，整局保留"),
         Self::Godslayer=>format!("每赢一场精英战或 Boss 战叠一层\n每层最大生命 +{SLAYER_HP_PERCENT}%、攻击 +{SLAYER_ATTACK_PERCENT}%\n层数不设上限，整局保留"),
         Self::SpiritKeeper=>format!("召唤物在场时击倒敌人叠一层\n每层召唤物伤害 +{KEEPER_ATTACK_PERCENT}%\n受到的伤害 -{KEEPER_CUT_PERCENT}%（逐层乘算）\n层数不设上限，整局保留"),
         Self::Barrier=>format!("施放法术或祷告时\n受到的伤害降低 {BARRIER_CUT_PERCENT}%"),
@@ -186,8 +187,18 @@ pub struct Stacks {
     #[serde(default)] pub chain:u32,
     #[serde(default)] pub slayer:u32,
     #[serde(default)] pub keeper:u32,
+    #[serde(default,skip_serializing_if="Option::is_none")] chain_room:Option<(u64,u8,usize,u8)>,
 }
 impl Stacks {
+    pub fn gain_in_room(&mut self,held:&[Ember],event:Gain,key:(u64,u8,usize))->Vec<Ember> {
+        if !matches!(event,Gain::Critical)||!held.contains(&Ember::Chain) {return self.gain(held,event);}
+        let (seed,act,id)=key;
+        if self.chain_room.map(|(s,a,n,_)|(s,a,n))!=Some(key) {self.chain_room=Some((seed,act,id,0));}
+        if self.chain_room.is_some_and(|(_,_,_,count)|count>=CHAIN_ROOM_LIMIT) {return Vec::new();}
+        let raised=self.gain(held,event);
+        if raised.contains(&Ember::Chain) {self.chain_room.as_mut().unwrap().3+=1;}
+        raised
+    }
     pub fn is_empty(&self)->bool {*self==Self::default()}
     pub fn level(&self,ember:Ember)->u32 {match ember {
         Ember::SoulEater=>self.souls/SOUL_POINTS,Ember::Chain=>self.chain,Ember::Godslayer=>self.slayer,Ember::SpiritKeeper=>self.keeper,_=>0,
@@ -244,6 +255,13 @@ pub fn reward(run:&crate::Run,node:usize)->Option<Ember> {
     // 规则 0（旧存档）不分品质，等概率
     if run.ember_rules>=1 {offer_by_quality(roll>>8,&run.embers,carries_spirit(run),carries_catalyst(run),odds(crate::affixes::quality_odds(run)))}
     else {offer(roll>>8,&run.embers,carries_spirit(run),carries_catalyst(run))}
+}
+/// 宝箱房（余烬规则 2 起）：打开宝箱直接得到一枚随机余烬（按品质概率，没拿过的，召唤流、法师余烬照常看构筑）；
+/// 能抽的都拿完了返回 None，宝箱照旧给物品
+pub fn chest_ember(run:&crate::Run,node:usize)->Option<Ember> {
+    if !run.ember_rewards||run.ember_rules<2||run.nodes.get(node).is_none_or(|n|n.kind!=crate::NodeKind::Chest) {return None;}
+    let seed=crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0xc4e5_e3be);
+    offer_by_quality(seed,&run.embers,carries_spirit(run),carries_catalyst(run),odds(crate::affixes::quality_odds(run)))
 }
 /// 身上带着骨灰：召唤师（开局就有骨灰），或拿到过任何骨灰奖励
 pub fn carries_spirit(run:&crate::Run)->bool {
@@ -372,6 +390,47 @@ mod tests {
         assert!(summoner>0);
     }
     #[test]
+    fn chest_rooms_grant_one_random_ember() {
+        use crate::{Class,NodeKind,Phase,Run};
+        let mut seen=std::collections::HashSet::new();let mut checked=0;
+        for seed in 0..80 {
+            let run=Run::new(seed,Class::Samurai);
+            for id in (0..run.nodes.len()).filter(|id|run.nodes[*id].kind==NodeKind::Chest) {
+                let ember=chest_ember(&run,id).unwrap();
+                assert!(!ember.needs_spirit()&&!ember.needs_casting(),"gates still apply");
+                assert_eq!(chest_ember(&run,id),Some(ember),"same chest, same ember");
+                seen.insert(ember);checked+=1;
+            }
+            assert!(run.nodes.iter().enumerate().filter(|(_,n)|n.kind!=NodeKind::Chest).all(|(id,_)|chest_ember(&run,id).is_none()));
+        }
+        assert!(checked>20&&seen.len()>8,"random across chests");
+        // 领取：进背包、节点结束；拿完了就没有，宝箱照旧给物品；旧存档（余烬规则 1）不变
+        // 照正常路线走到第一个宝箱房
+        let (mut run,chest)=(0..60).find_map(|seed|{
+            let mut run=Run::new(seed,Class::Samurai);
+            for _ in 0..run.floors()-1 {
+                let available=run.available();
+                let id=available.iter().copied().find(|id|run.nodes[*id].kind==NodeKind::Chest).unwrap_or(available[0]);
+                run.enter(id).unwrap();
+                match run.nodes[id].kind {
+                    NodeKind::Chest=>return Some((run,id)),
+                    NodeKind::Monster|NodeKind::Elite=>{run.win_combat().unwrap();run.decline_reward().unwrap();},
+                    NodeKind::Camp=>run.leave_camp().unwrap(),NodeKind::Shop=>run.leave_shop().unwrap(),
+                    NodeKind::Event=>run.resolve_event(false).unwrap(),_=>return None,
+                }
+            }
+            None
+        }).unwrap();
+        assert_eq!(run.phase,Phase::Node{id:chest});
+        let expected=chest_ember(&run,chest).unwrap();
+        let mut opened=run.clone();assert_eq!(opened.claim_chest_ember().unwrap(),Some(expected));
+        assert_eq!(opened.embers,vec![expected]);assert!(!matches!(opened.phase,Phase::Node{..}),"the chest node is finished");
+        assert_eq!(Run::decode(&opened.encode().unwrap()).unwrap(),opened);
+        run.embers.clear();let mut full=run.clone();full.embers=Ember::ALL.into_iter().filter(|e|e.fits(false,false)).collect();
+        assert_eq!(full.claim_chest_ember().unwrap(),None);assert_eq!(full.phase,Phase::Node{id:chest},"nothing changes without an ember");
+        let mut old=run.clone();old.ember_rules=1;assert_eq!(old.claim_chest_ember().unwrap(),None);
+    }
+    #[test]
     fn mage_embers_need_a_staff_or_seal() {
         use crate::{Class,Run};
         let (mut warrior,mut picked_up,mut casters)=(0,0,0);
@@ -393,6 +452,25 @@ mod tests {
         while let Some(e)=offer(plain.len() as u64*17,&plain,true,false) {assert!(!e.needs_casting());plain.push(e);}
         assert_eq!(plain.len(),Ember::ALL.len()-4);
         assert!(Ember::ALL.into_iter().filter(|e|e.needs_casting()).all(|e|e.quality()==if e==Ember::Meditation {3}else{2}&&!e.needs_spirit()&&!e.affects_enemies()));
+    }
+    #[test]
+    fn chain_room_limit_survives_reload_and_preserves_total() {
+        let held=[Ember::Chain];
+        let mut stacks=Stacks::default();
+        for _ in 0..9 {stacks.gain_in_room(&held,Gain::Critical,(42,0,3));}
+        assert_eq!(stacks.chain,5);
+        let mut stacks:Stacks=serde_json::from_str(&serde_json::to_string(&stacks).unwrap()).unwrap();
+        assert!(stacks.gain_in_room(&held,Gain::Critical,(42,0,3)).is_empty());
+        for _ in 0..8 {stacks.gain_in_room(&held,Gain::Critical,(42,0,4));}
+        assert_eq!(stacks.chain,10);
+        stacks.gain_in_room(&held,Gain::Critical,(42,1,4));
+        assert_eq!(stacks.chain,11);
+        let mut old:Stacks=serde_json::from_str(r#"{"chain":50}"#).unwrap();
+        for _ in 0..8 {old.gain_in_room(&held,Gain::Critical,(42,0,3));}
+        assert_eq!(old.chain,55);
+        let mut empty=Stacks::default();
+        for _ in 0..8 {empty.gain_in_room(&[],Gain::Critical,(42,0,3));}
+        assert_eq!(empty.gain_in_room(&held,Gain::Critical,(42,0,3)),vec![Ember::Chain]);
     }
     #[test]
     fn stacks_grow_only_from_their_own_events_without_a_cap() {

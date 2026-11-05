@@ -1,6 +1,24 @@
 using SoulsFormats;
 using System.Numerics;
-string[] modes=["advanced-affix-patch","advanced-affix-verify","affix-patch","affix-pool-patch","affix-text-test","archer-patch","archer-verify","arena-chariot-build","arena-chariot-loading","arena-inspect","arrow-shop-inspect","arrow-shop-stage","balance-patch","bandit-fix","battlefield-inspect","battlefields","bgm-audit","bolus-audit","boss-affix-patch","weapon-glow-patch","boss-append-patch","boss-export","camp-inspect","catalog-assets","chariot-build","chest-text","comet-inspect","contract-audit","contract-patch","descent-patch","descent-verify","ember-patch","full-build","game-version-rebase","hub-standing-patch","inspect","law-patch","class-patch","level-inspect","melina-inspect","melina-patch","music-inspect","oath-patch","native-inspect","party-camp-stage","party-collision-inspect","party-completion-patch","party-enemy-audit","party-enemy-events-test","party-enemy-load-patch","party-enemy-stage","party-entity-inspect","party-guard-flags","party-guard-stage","party-guard-test","party-hub-stage","party-model-audit","party-model-patch","party-param-audit","party-param-stage","party-placement-audit","party-scarab-stage","party-service-inspect","party-service-load-patch","party-service-load-test","party-service-stage","party-status-patch","passive-patch","personal-chest-patch","personal-chest-test","personal-events-patch","personal-events-test","pool-inspect","portal-inspect","rarity-assets","recovery-text","resistance-shop-stage","retired-spell-strip","reward-assets","reward-inspect","rune-audit","scaling-correction-fix","scarab-inspect","shop-inspect","shop-order-patch","stormveil-build","stormveil-inspect","talisman-inspect","talisman-menu-text","team-attack-patch","text-update","tower-scaling-patch","text-inspect","trial-stage","trial-verify","verify-native","weapon-sale-patch","bgm-patch","affix-append","advanced-affix-append","dlc-pool-verify","whetblade-menu-patch","equipment-style-patch","unrestricted-ashes-patch","affinity-name-verify","talisman-affix-patch","talisman-affix-verify","enemy-pool-patch"];
+if(args.Length==4&&args[3] is "affinity-text-patch" or "affinity-effect-verify") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    if(args[3]=="affinity-text-patch")AffinityNameAssets.Patch(args[2],args[1]);
+    else AffinityNameAssets.VerifyEffects(args[2],Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??throw new Exception("Set TOWER_PARAMDEFS"));return;
+}
+if(args.Length==4&&args[3] is "mausoleum-patch" or "mausoleum-flow-patch" or "mausoleum-flow-verify") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    if(args[3]=="mausoleum-flow-verify")MausoleumFlowAssets.Verify(args[2]);
+    else MausoleumFlowAssets.Patch(args[2],args[1],Environment.GetEnvironmentVariable("TOWER_MAUSOLEUM_SOURCE")??throw new Exception("Set TOWER_MAUSOLEUM_SOURCE"));return;
+}
+if(args.Length==4&&args[3]=="v103-service-audit") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    ReleaseSourceAudit.Verify(args[2]);return;
+}
+if(args.Length==4&&args[3]=="ember-pickup-patch") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    EmberPickupAssets.Build(args[2],args[1]);return;
+}
+string[] modes=["advanced-affix-patch","advanced-affix-verify","affix-patch","affix-pool-patch","affix-text-test","archer-patch","archer-verify","arena-chariot-build","arena-chariot-loading","arena-inspect","arrow-shop-inspect","arrow-shop-stage","balance-patch","bandit-fix","battlefield-inspect","battlefields","bgm-audit","bolus-audit","boss-affix-patch","weapon-glow-patch","boss-append-patch","boss-export","camp-inspect","catalog-assets","chariot-build","chest-text","comet-inspect","contract-audit","contract-patch","descent-patch","descent-verify","ember-patch","full-build","game-version-rebase","hub-standing-patch","inspect","law-patch","class-patch","level-inspect","melina-inspect","melina-patch","music-inspect","oath-patch","native-inspect","party-camp-stage","party-collision-inspect","party-completion-patch","party-enemy-audit","party-enemy-events-test","party-enemy-load-patch","party-enemy-stage","party-entity-inspect","party-guard-flags","party-guard-stage","party-guard-test","party-hub-stage","party-model-audit","party-model-patch","party-param-audit","party-param-stage","party-placement-audit","party-scarab-stage","party-service-inspect","party-service-load-patch","party-service-load-test","party-service-stage","party-status-patch","passive-patch","personal-chest-patch","personal-chest-test","personal-events-patch","personal-events-test","pool-inspect","portal-inspect","rarity-assets","recovery-text","resistance-shop-stage","retired-spell-strip","reward-assets","reward-inspect","rune-audit","scaling-correction-fix","scarab-inspect","shop-inspect","shop-order-patch","stormveil-build","stormveil-inspect","talisman-inspect","talisman-menu-text","team-attack-patch","text-update","tower-scaling-patch","text-inspect","trial-stage","trial-verify","verify-native","weapon-sale-patch","bgm-patch","affix-append","advanced-affix-append","dlc-pool-verify","whetblade-menu-patch","equipment-style-patch","unrestricted-ashes-patch","affinity-name-verify","talisman-affix-patch","talisman-affix-verify","enemy-pool-patch","enchant-patch","weapon-level-patch","affix-quality-patch"];
 modes=modes.Append("party-dlc-patch").ToArray();
 modes=modes.Append("bout-patch").ToArray();
 modes=modes.Append("party-boss-model-sync").ToArray();
@@ -18,30 +36,79 @@ modes=modes.Append("retry-item-text").ToArray();
 modes=modes.Append("arena-candidates").ToArray();
 modes=modes.Append("stormveil-no-runes-patch").ToArray();
 modes=modes.Append("stormveil-sidewall-patch").ToArray();
+modes=modes.Append("stormveil-grace-patch").ToArray();
 modes=modes.Append("title-texture-patch").ToArray();
 modes=modes.Append("portal-reveal-test").ToArray();
+modes=modes.Append("portal-rise-patch").ToArray();
+modes=modes.Append("portal-size-patch").ToArray();
+modes=modes.Append("portal-arch-test").ToArray();
+modes=modes.Append("portal-arch-patch").ToArray();
+modes=modes.Append("portal-flow-off").ToArray();
+modes=modes.Append("elite-pool-patch").ToArray();
+modes=modes.Append("elite-pool-verify").ToArray();
+modes=modes.Append("boss-bar-name-test").ToArray();
+modes=modes.Append("melina-entrance-patch").ToArray();
+modes=modes.Append("event-host-patch").ToArray();
+modes=modes.Concat(new[]{"event-host-visibility-patch","event-host-visibility-test"}).ToArray();
+modes=modes.Append("event-host-entity-patch").ToArray();
+modes=modes.Append("event-host-name-patch").ToArray();
+modes=modes.Append("portal-persist-patch").ToArray();
+modes=modes.Append("slim-assets").ToArray();
+modes=modes.Append("mausoleum-patch").ToArray();
+modes=modes.Append("mausoleum-startup-fix").ToArray();
+modes=modes.Concat(new[]{"mausoleum-display-test","mausoleum-display-patch"}).ToArray();
+modes=modes.Concat(new[]{"dragonlord-arrival-test","dragonlord-arrival-patch"}).ToArray();
 if(args.Length<4||!modes.Contains(args[3])||args.Length!=4||args.Take(3).Any(modes.Contains)){Console.Error.WriteLine("Usage: SceneBuilder <game> <output> <cache> <mode>"+(args.Length>3?" (rejected: "+string.Join(" ",args.Skip(3))+")":"")+"\nModes: "+string.Join(" ",modes));Environment.Exit(2);}
 var game=args[0];var output=args[1];var cache=args[2];
+if(args[3]=="slim-assets") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(game,"oo2core_6_win64.dll"));
+    SlimAssets.Build(game,output,cache);return;
+}
 if(args.Contains("personal-events-test")){PersonalEvents.Test();return;}
+if(args.Contains("mausoleum-display-test")){MausoleumAssets.TestDisplay();return;}
+if(args.Contains("dragonlord-arrival-test")){DragonlordArrival.Test();return;}
 if(args.Contains("portal-reveal-test")){PortalReveal.Test();return;}
+if(args.Contains("portal-arch-test")){PortalArchTests.Test();return;}
 if(args.Contains("dormant-loading-test")){DormantLoadingAssets.Test();return;}
 if(args.Contains("party-enemy-events-test")){PartyEnemyEvents.Test();return;}
 if(args.Contains("affix-text-test")){AffixTextFix.Test(cache);return;}
+if(args.Contains("boss-bar-name-test")){BossAssets.TestBarNames(cache);return;}
 Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(game,"oo2core_6_win64.dll"));
+if(args.Contains("mausoleum-patch")){MausoleumAssets.Patch(cache,output,Environment.GetEnvironmentVariable("TOWER_MAUSOLEUM_SOURCE")??throw new Exception("Set TOWER_MAUSOLEUM_SOURCE to the extracted native m12_03 resources"));return;}
+if(args.Contains("mausoleum-startup-fix")){MausoleumAssets.FixStartup(cache,output);return;}
+if(args.Contains("mausoleum-display-patch")){MausoleumAssets.PatchDisplay(cache,output,Environment.GetEnvironmentVariable("TOWER_MAUSOLEUM_SOURCE")??throw new Exception("Set TOWER_MAUSOLEUM_SOURCE"));return;}
+if(args.Contains("dragonlord-arrival-patch")){DragonlordArrival.Patch(cache,output);return;}
+if(args.Contains("portal-rise-patch")){PortalRiseAssets.Patch(game,cache,output);return;}
+if(args.Contains("portal-size-patch")){PortalSizeAssets.Patch(game,cache,output);return;}
+if(args.Contains("portal-arch-patch")){PortalArchAssets.Patch(game,cache,output);return;}
+if(args.Contains("portal-flow-off")){PortalArchAssets.RemoveFlow(cache,output);return;}
+if(args.Contains("elite-pool-patch")){ElitePoolAssets.Patch(game,cache,output);return;}
+if(args.Contains("elite-pool-verify")){ElitePoolAssets.Verify(cache);return;}
+if(args.Contains("melina-entrance-patch")){MelinaEntranceAssets.Patch(cache,output);return;}
+if(args.Contains("event-host-patch")){EventHostAssets.Patch(cache,output);return;}
+if(args.Contains("event-host-visibility-patch")){EventHostAssets.PatchVisibility(cache,output);return;}
+if(args.Contains("event-host-visibility-test")){EventHostAssets.TestVisibility(cache);return;}
+if(args.Contains("event-host-entity-patch")){EventHostAssets.PatchEntities(cache,output);return;}
+if(args.Contains("event-host-name-patch")){EventHostNames.Patch(cache,output);return;}
+if(args.Contains("portal-persist-patch")){PortalPersistence.Patch(cache,output);return;}
 if(args.Contains("title-texture-patch")){TitleTextureAssets.Build(game,output,cache);return;}
 if(args.Contains("merchant-patch")){MerchantAssets.Patch(cache,output);return;}
 if(args.Contains("dormant-loading-patch")){DormantLoadingAssets.Patch(cache,output);return;}
 if(args.Contains("stormveil-no-runes-patch")){StormveilRuneAssets.Patch(cache,output);return;}
 if(args.Contains("stormveil-sidewall-patch")){StormveilBarrierAssets.Patch(cache,output);return;}
+if(args.Contains("stormveil-grace-patch")){StormveilAssets.PatchGraces(cache,output);return;}
 if(args.Contains("bgm-patch")){MusicAssets.Patch(cache,output);return;}
 if(args.Contains("party-dlc-patch")){PartyDlcAssets.Build(game,cache,output);return;}
-if(args.Contains("arena-build")){ArenaAssets.Build(game,cache,output);return;}
+if(args.Contains("arena-build")){PortalRuneFfx.Build(cache,output);ArenaAssets.Build(game,cache,output);MelinaEntranceAssets.Patch(output,output);return;}
 if(args.Contains("arena-candidates")){ArenaAssets.Candidates(game,cache);return;}
 if(args.Contains("equipment-style-patch")){EquipmentStyleAssets.Patch(cache,output);return;}
 if(args.Contains("talisman-affix-patch")){TalismanAssets.Build(cache,output);return;}
 if(args.Contains("affix-stack-patch")){AffixStackAssets.Patch(cache,output);return;}
 if(args.Contains("smith-stone-patch")){SmithAssets.PatchStone(cache,output);return;}
 if(args.Contains("smith-stone-text")){SmithAssets.PatchStoneText(cache,output);return;}
+if(args.Contains("weapon-level-patch")){WeaponLevelAssets.Patch(cache,output);return;}
+if(args.Contains("affix-quality-patch")){AffixQualityAssets.Patch(cache,output);return;}
+if(args.Contains("enchant-patch")){WeaponEnchantAssets.Patch(cache,output);return;}
 if(args.Contains("retry-item-patch")){RetryItemAssets.Patch(cache,output);return;}
 if(args.Contains("retry-item-text")){RetryItemAssets.PatchText(cache,output);return;}
 if(args.Contains("talisman-affix-verify")){TalismanAssets.Verify(cache);return;}
@@ -53,7 +120,7 @@ if(args.Contains("advanced-affix-append")){AffixAssets.Patch(cache,output,true,t
 if(args.Contains("shop-order-patch")){ShopOrderAssets.Patch(cache,output);return;}
 if(args.Contains("boss-affix-patch")){BossAffixAssets.Patch(cache,output);return;}
 if(args.Contains("weapon-glow-patch")){WeaponGlowAssets.Patch(cache,output);return;}
-if(args.Contains("aura-patch")){AuraAssets.Patch(cache,output);AuraFfxAssets.Build(game,output);return;}
+if(args.Contains("aura-patch")){AuraAssets.Patch(cache,output);AuraFfxAssets.Build(game,output);PortalRuneFfx.Build(output,output);return;}
 if(args.Contains("countdown-patch")){CountdownAssets.Patch(cache,output);return;}
 if(args.Contains("boss-append-patch")){BossAssets.Append(cache,output);return;}
 if(args.Contains("rennala-patch")){BossAssets.Append(cache,output,141);return;}
@@ -165,7 +232,7 @@ if(args.Contains("party-model-audit")||args.Contains("party-model-patch")){Party
 if(args.Contains("party-service-load-test")){PartyServiceAssets.TestLoading();return;}
 if(args.Contains("party-service-load-patch")) {
     PartyServiceAssets.TestLoading();
-    foreach(var group in File.ReadAllLines("outputs/erdtree-tower/scene-assets/party-services.txt").Select(l=>l.Split('|')).GroupBy(r=>r[0])) {
+    foreach(var group in File.ReadAllLines(Path.Combine(SceneInputs.Root(),"party-services.txt")).Select(l=>l.Split('|')).GroupBy(r=>r[0])) {
         var path=Path.Combine(cache,"event",group.Key+".emevd.dcx");var file=EMEVD.Read(path);
         foreach(var row in group) {uint id=uint.Parse(row[2]);var ev=file.Events.Single(e=>e.ID==id);file.Events[file.Events.IndexOf(ev)]=PartyServiceAssets.Visibility(id);}
         var destination=Path.Combine(output,"event",group.Key+".emevd.dcx");Directory.CreateDirectory(Path.GetDirectoryName(destination)!);file.Write(destination);
@@ -488,7 +555,7 @@ foreach(var mapName in new[]{"m45_00_00_00","m45_01_00_00","m45_02_00_00"}) {
         visual.Instructions.Add(new EMEVD.Instruction(0,0,new object[]{(sbyte)2,(byte)1,(sbyte)-2}));
         visual.Instructions.Add(new EMEVD.Instruction(3,0,new object[]{(sbyte)2,(byte)0,(byte)0,45020970u}));
         visual.Instructions.Add(new EMEVD.Instruction(0,0,new object[]{(sbyte)0,(byte)1,(sbyte)2}));
-        visual.Instructions.Add(new EMEVD.Instruction(1000,4,new object[]{(byte)1}));
+        visual.Instructions.Add(new EMEVD.Instruction(1000,4,new object[]{(byte)0}));
         var music=new EMEVD.Event(eventId+5,EMEVD.Event.RestBehaviorType.Restart);
         PersonalEvents.Local(music);
         music.Instructions.Add(new EMEVD.Instruction(2010,10,new object[]{203000,-1}));
@@ -524,6 +591,7 @@ MelinaAssets.Patch(output,output);
 StormveilAssets.Build(output);
 ChariotAssets.Build(output);
 MusicAssets.Patch(output,output);
+MelinaEntranceAssets.Patch(output,output);
 static void AddAsset(MSBE map,MSBE source,MSBE.Part.Asset donor,uint id,Vector3 pos,Vector3 rot) {
     if(map.Parts.GetEntries().Any(p=>p.EntityID==id))throw new Exception($"Entity ID {id} already occupied");
     var part=(MSBE.Part.Asset)donor.DeepCopy();part.Name=donor.ModelName+"_twr_"+id;part.EntityID=id;part.Position=pos;part.Rotation=rot;

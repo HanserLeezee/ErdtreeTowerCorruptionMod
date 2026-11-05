@@ -25,3 +25,42 @@ The scene-assets folder contains modified base-game regulation, map placement, e
 The development-only scene builder uses SoulsFormats and UXM source checkouts; those tools and their extracted source-map cache are not included in the playable ZIP.
 ESD command IDs and bytecode format were checked against the esdlang documentation/source and the user's installed merchant ESD. The preview does not link or bundle esdlang.
 Reference: https://github.com/thefifthmatt/ESDLang
+
+Debug item search uses rust-pinyin 0.11.0 (MIT).
+Source: https://github.com/mozillazg/rust-pinyin
+
+Copyright (c) 2016 mozillazg
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+## YAFSML
+
+The optional YAFSML 0.11.0 loader by soarqin is bundled in loader/yafsml/ with its LICENSE and THIRD_PARTY_NOTICES.md.
+Source: https://github.com/soarqin/YAFSML
+
+## ERNativeUI
+
+The native System settings tab uses ERNativeUI 1.3.0 by Flammrock (MIT).
+Source: https://github.com/Flammrock/ERNativeUI/releases/tag/ERNativeUI-v1.3.0
+The unmodified host, localization files, LICENSE.txt and THIRD_PARTY_NOTICES.txt are shipped in native-ui/.
+The tower configuration provider is built from native/native-settings/; no example mods are shipped.
+
+## BC7 icon decoder
+
+Slim packages include Tower.IconCodec.dll, built from bcdec 0.985 by Sergii Kudlai, commit 80859ed3b7afb1c527a2a99d70c61457bea72d0c.
+Source: https://github.com/iOrange/bcdec. Used under the MIT license; see licenses/bcdec.txt.

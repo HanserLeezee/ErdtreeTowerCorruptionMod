@@ -26,6 +26,7 @@ fn four_choices_persist_and_cannot_repeat() {
             Trial::Descent=>assert!(r.regional_event.descent_started),
             Trial::Stormveil|Trial::Chariot=>assert_eq!(r.regional_event.stormveil,Some(erdtree_tower::stormveil::Progress::Running)),
             Trial::Skip=>{r.leave_regional_event().unwrap();assert_eq!(r.phase,Phase::Map);}
+            Trial::Mausoleum=>unreachable!("mausoleum uses its own two-choice offer"),
         }
     }
 }

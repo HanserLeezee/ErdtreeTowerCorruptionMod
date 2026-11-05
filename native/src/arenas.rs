@@ -81,18 +81,33 @@ static PREBUILT:std::sync::LazyLock<Vec<(&'static str,Arena)>>=std::sync::LazyLo
 pub fn built()->Vec<(&'static str,&'static str)> {BUILT.iter().map(|(k,a)|(*k,a.name)).collect()}
 /// 由 arena-build 生成的场地：复用宁姆格福竞技场的编号与场边服务
 pub fn is_built(block:i32)->bool {BUILT.iter().any(|(_,a)|a.block==block)}
+const RESOURCES:&str=include_str!("../../scene-assets/arenas-resources.txt");
+/// 清单里的一行（路径|大小|FNV-1a 64）：文件缺失返回 Some(true)，与 DLL 不一致返回 Some(false)，一致返回 None
+fn resource_problem(row:&str)->Option<bool> {
+    let p:Vec<_>=row.split('|').collect();
+    let Ok(bytes)=std::fs::read(crate::LOG_PATH.with_file_name("scene-assets").join(p[0])) else {return Some(true);};
+    let hash=bytes.iter().fold(14695981039346656037u64,|h,b|(h^u64::from(*b)).wrapping_mul(1099511628211));
+    (p.len()!=3||p[1].parse::<usize>().ok()!=Some(bytes.len())||u64::from_str_radix(p[2],16).ok()!=Some(hash)).then_some(false)
+}
+/// 开局前把整合包里的全部场地资源核对一遍：返回缺失或与 DLL 不一致的文件（不用等走到那一战才发现）
+pub fn mismatched_resources()->Vec<String> {
+    RESOURCES.lines().filter(|l|l.split('|').count()==3).filter(|row|resource_problem(row).is_some()).map(|row|row.split('|').next().unwrap_or("").to_owned()).collect()
+}
 pub fn require_resources(arena:Arena)->Result<(),String> {
     if !is_built(arena.block){return Ok(());}
     let [a,b,c,d]=arena.block.to_be_bytes();let map=format!("m{a:02}_{b:02}_{c:02}_{d:02}");
-    for path in [format!("map/mapstudio/{map}.msb.dcx"),format!("event/{map}.emevd.dcx")] {
-        let row=include_str!("../../scene-assets/arenas-resources.txt").lines().find(|l|l.split('|').next()==Some(path.as_str())).ok_or("场地资源清单缺失")?;
-        let p:Vec<_>=row.split('|').collect();
-        let bytes=std::fs::read(crate::LOG_PATH.with_file_name("scene-assets").join(&path)).map_err(|_|format!("缺少场地资源：{path}，请更新完整整合包。"))?;
-        let hash=bytes.iter().fold(14695981039346656037u64,|h,b|(h^u64::from(*b)).wrapping_mul(1099511628211));
-        if p.len()!=3||p[1].parse::<usize>().ok()!=Some(bytes.len())||u64::from_str_radix(p[2],16).ok()!=Some(hash) {
-            return Err(format!("场地资源与 DLL 不匹配：{path}，请全队更新同一版整合包。"));
+    for path in [format!("map/mapstudio/{map}.msb.dcx"),format!("event/{map}.emevd.dcx"),"asset/aeg/aeg990/aeg990_446.geombnd.dcx".to_owned()] {
+        let row=RESOURCES.lines().find(|l|l.split('|').next()==Some(path.as_str())).ok_or("场地资源清单缺失")?;
+        match resource_problem(row) {
+            Some(true)=>return Err(format!("缺少场地资源：{path}，请更新完整整合包。")),
+            Some(false)=>return Err(format!("场地资源与 DLL 不匹配：{path}，请全队更新同一版整合包。")),
+            None=>{},
         }
     }
+    use fromsoftware_shared::FromStatic;
+    let params=unsafe {eldenring::cs::SoloParamRepository::instance()}.map_err(|_|"游戏参数尚未就绪")?;
+    let arch=params.get::<eldenring::cs::AssetEnvironmentGeometryParam>(990446).ok_or("缺少传送门装饰参数，请更新完整整合包。")?;
+    if arch.behavior_type()!=0||arch.hit_create_type()!=0||arch.collision_type()!=0 {return Err("传送门碰撞参数不匹配，请更新完整整合包。".into());}
     Ok(())
 }
 fn site_info(key:&str)->Option<(u8,bool)> {

@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 from transmog_build import build_transmog
+from native_settings_build import build_native_settings
 
 
 def build_native(project):
@@ -30,6 +31,7 @@ def build_native(project):
     if b'DX12 queue captured from submitted back-buffer PRESENT transition' not in native.read_bytes():
         raise RuntimeError('Built DLL is missing the DX12 back-buffer queue-discovery fix.')
     shutil.copy2(build_transmog(project), native.with_name('tower_transmog.dll'))
+    build_native_settings(project, native.parent / 'native-ui')
     return native
 
 
@@ -39,6 +41,7 @@ def stage_native(project, destination, checksum=None):
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(native, destination)
     shutil.copy2(native.with_name('tower_transmog.dll'), destination.with_name('tower_transmog.dll'))
+    shutil.copytree(native.parent / 'native-ui', destination.parent / 'native-ui', dirs_exist_ok=True)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     if checksum is not None:
         Path(checksum).write_text(digest + '\n', encoding='ascii')

@@ -77,11 +77,13 @@ impl Report {
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Order {
+    DescentComplete{epoch:u64},
     Merchant{epoch:u64,phase:u8},
     BossTest{epoch:u64,seed:u64,test:crate::debug::BossTest},
     Law{epoch:u64,seed:u64,law:crate::law::Law},
     MapDrawing(crate::map_drawing::Canvas),
     ForceEnd,
+    SkipNode{epoch:u64,target:crate::skip::Target},
     ChariotPose{epoch:u64,sequence:u64,pose:[f32;3]},
     Trial{epoch:u64,choice:crate::regional_events::Trial},
     Stormveil{epoch:u64,decision:crate::stormveil::Decision},
@@ -102,6 +104,11 @@ pub enum Order {
 pub enum Stage {Map,Travel,Combat,Fighting,Service,Reward,Stopped}
 pub struct Gate {trial:Option<crate::regional_events::Trial>,pub epoch:u64,pub stage:Stage,peers:Vec<(u64,Option<Report>)>,events:Option<crate::party_events::Queue>,stormveil:Option<crate::stormveil::Decision>}
 impl Gate {
+    pub fn skip_node(&mut self,rewards:bool) {
+        self.stage=if rewards{Stage::Reward}else{Stage::Service};
+        self.events=None;self.trial=None;self.stormveil=None;
+        for peer in &mut self.peers {peer.1=None;}
+    }
     pub fn merchant_present(&self)->bool {self.stage==Stage::Service&&self.all(|r|r.arrived&&!r.map_ready)}
     pub fn merchant_ready(&self)->bool {self.merchant_present()&&self.all(|r|!r.alive||r.merchant_bound)&&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive))}
     pub fn boss_test(&mut self,run:&Run,test:crate::debug::BossTest)->RuleResult<Order> {
@@ -141,7 +148,7 @@ impl Gate {
         if self.stage!=Stage::Service||self.trial.is_some()||!self.all(|r|r.trial&&r.arrived&&r.alive&&r.trial_choice.is_some()){return None;}
         let first=self.peers.first()?.1.as_ref()?;
         if !self.all(|r|r.seed==first.seed&&r.act==first.act&&r.visited==first.visited){return None;}
-        let options=[Trial::Descent,Trial::Stormveil,Trial::Chariot,Trial::Skip];
+        let options=[Trial::Descent,Trial::Stormveil,Trial::Chariot,Trial::Skip,Trial::Mausoleum];
         let counts=options.map(|c|self.peers.iter().filter(|(_,r)|r.as_ref().is_some_and(|r|r.trial_choice==Some(c))).count());
         let best=*counts.iter().max()?;
         let tied:Vec<_>=options.into_iter().zip(counts).filter_map(|(c,n)|(n==best).then_some(c)).collect();
@@ -158,11 +165,19 @@ impl Gate {
         let decision=if self.stormveil.is_none()&&self.all(|r|r.arrived&&r.alive&&r.stormveil==Some(Progress::Choosing)) {
             if self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.storm_choice==Some(false))) {Decision::Skip}
             else if self.all(|r|r.storm_choice==Some(true)){Decision::Challenge}else{return None;}
-        }else if chariot&&self.stormveil==Some(Decision::Challenge)&&self.all(|r|r.alive&&r.chariot_ready&&r.stormveil==Some(Progress::Running)){Decision::Engage}
+        }else if chariot&&self.stormveil==Some(Decision::Challenge)&&self.all(|r|!r.alive||r.chariot_ready&&r.stormveil==Some(Progress::Running))
+            &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.chariot_ready)){Decision::Engage}
         else if self.stormveil==Some(if chariot{Decision::Engage}else{Decision::Challenge})&&self.all(|r|r.stormveil==Some(Progress::Running)&&(!r.alive||r.storm_finish))
             &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.storm_finish)){Decision::Complete}
         else{return None;};
         self.stormveil=Some(decision);Some(Order::Stormveil{epoch:self.epoch,decision})
+    }
+    pub fn descent_order(&mut self)->Option<Order> {
+        if self.stage!=Stage::Service||self.trial!=Some(crate::regional_events::Trial::Descent)
+            ||self.stormveil.is_some()||!self.all(|r|!r.alive||r.storm_finish)
+            ||!self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.storm_finish)){return None;}
+        self.stormveil=Some(crate::stormveil::Decision::Complete);
+        Some(Order::DescentComplete{epoch:self.epoch})
     }
     pub fn restart(&mut self,seed:u64)->RuleResult<Option<Order>> {
         if self.epoch==0||!matches!(self.stage,Stage::Stopped|Stage::Reward)||!self.all(|r|r.at_hub&&r.alive){return Ok(None);}
@@ -205,6 +220,8 @@ impl Gate {
         self.events.as_ref().is_some_and(|q|q.busy()||q.completed().is_some_and(|j|!self.all(|r|r.event_applied==Some(j.wave))))
     }
     pub fn disconnect(&mut self,id:u64){if let Some(p)=self.peers.iter_mut().find(|p|p.0==id){p.1=None;}}
+    /// 队员退出了无缝会话（不是房主）：从队伍里去掉，之后的“全员”判断（出发、开战、胜利、领奖、投票）不再等他
+    pub fn remove(&mut self,id:u64)->bool {let before=self.peers.len();self.peers.retain(|p|p.0!=id);self.peers.len()<before}
     pub fn report(&mut self,id:u64,report:Report)->RuleResult<()> {
         if report.visited.len()>MAX_VISITED||report.act==0||report.act>3||report.epoch!=self.epoch||!report.law.valid(){return Err("队员旅程进度或律法不匹配".into());}
         if report.event_request.is_some_and(|k|!k.valid()){return Err("队员事件请求无效".into());}
@@ -259,15 +276,56 @@ impl Gate {
         (self.stage==Stage::Reward&&self.all(|r|r.bound&&(!r.alive||r.portal))
             &&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive&&r.portal))).then_some(Order::Rewards{epoch:self.epoch})
     }
-    pub fn engage(&mut self)->Option<Order> {
-        if self.stage==Stage::Combat&&self.all(|r|r.bound) {self.stage=Stage::Fighting;Some(Order::Engage{epoch:self.epoch})}else{None}
+    pub fn engage(&mut self)->Option<Order> {self.engage_within(None)}
+    /// 开战屏障：全员确认敌人复制后开战（敌人此前在各自的游戏里不动、无敌）。
+    /// host_ready_ms：房主本机的敌人已经就绪多久；超过 ENGAGE_GRACE_MS 还有队员没就绪也先开战，免得一个加载慢的队员让全队的怪愣在原地，
+    /// 慢的队员加载好后自己接上（胜利仍要等全员确认）
+    pub fn engage_within(&mut self,host_ready_ms:Option<u64>)->Option<Order> {
+        if self.stage!=Stage::Combat {return None;}
+        let ready=self.all(|r|r.bound)||host_ready_ms.is_some_and(|ms|ms>=ENGAGE_GRACE_MS)&&self.all(|_|true);
+        if ready {self.stage=Stage::Fighting;Some(Order::Engage{epoch:self.epoch})}else{None}
+    }
+    /// 还没确认敌人复制的队员
+    pub fn unbound(&self)->Vec<u64> {
+        self.peers.iter().filter(|(_,r)|!r.as_ref().is_some_and(|r|r.present&&r.epoch==self.epoch&&r.bound)).map(|(id,_)|*id).collect()
     }
     pub fn stop(&mut self){self.stage=Stage::Stopped;}
 }
+/// 房主本机的敌人就绪后，最多再等队员这么久（毫秒）就开战
+pub const ENGAGE_GRACE_MS:u64=1500;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn descent_completion_waits_for_survivors_and_never_rewards_a_wipe() {
+        for count in 2..=8 {
+            let run=Run::new(42,crate::Class::Samurai);
+            let mut gate=Gate::new((1..=count).collect());gate.stage=Stage::Service;
+            gate.trial=Some(crate::regional_events::Trial::Descent);
+            let mut r=Report::new(&run,0,true,false,false);
+            for id in 1..=count {gate.report(id,r.clone()).unwrap();}
+            assert!(gate.descent_order().is_none());
+            r.alive=true;gate.report(count,r.clone()).unwrap();
+            assert!(gate.descent_order().is_none());
+            r.storm_finish=true;gate.report(count,r.clone()).unwrap();
+            gate.disconnect(1);assert!(gate.descent_order().is_none());
+            let mut dead=r.clone();dead.alive=false;dead.storm_finish=false;gate.report(1,dead).unwrap();
+            assert!(matches!(gate.descent_order(),Some(Order::DescentComplete{epoch:0})));
+            assert!(gate.descent_order().is_none());
+        }
+    }
+    #[test]
+    fn chariot_start_ignores_dead_peers_but_waits_for_living_peers() {
+        use crate::stormveil::{Progress,Decision};
+        let run=Run::new(42,crate::Class::Samurai);
+        let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Service;gate.stormveil=Some(Decision::Challenge);
+        let mut r=Report::new(&run,0,true,false,true);r.chariot=true;r.chariot_ready=true;r.stormveil=Some(Progress::Running);
+        gate.report(1,r.clone()).unwrap();r.chariot_ready=false;gate.report(2,r.clone()).unwrap();
+        assert!(gate.stormveil_order().is_none());
+        r.alive=false;gate.report(2,r).unwrap();
+        assert!(matches!(gate.stormveil_order(),Some(Order::Stormveil{decision:Decision::Engage,..})));
+    }
     #[test]
     fn merchant_waits_for_all_surviving_peers_and_rejects_departures() {
         let run=Run::new(42,crate::Class::Samurai);let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Service;
@@ -372,6 +430,20 @@ mod tests {
             assert!(matches!(gate.rest_end(),Some(Order::Defeat{epoch:0})));
             assert!(gate.rest_end().is_none());assert_eq!(gate.stage,Stage::Stopped);
         }}}
+    }
+    #[test]
+    fn mausoleum_votes_wait_for_all_peers_and_emit_one_shared_decision(){
+        use crate::regional_events::Trial;
+        for count in 2..=8 {for choice in [Trial::Mausoleum,Trial::Skip] {
+            let mut run=Run::new(42,crate::Class::Samurai);run.regional_event.trial=true;
+            let mut gate=Gate::new((1..=count).collect());gate.stage=Stage::Service;
+            let mut report=Report::new(&run,0,true,false,true);report.trial_choice=Some(choice);
+            for id in 1..count {gate.report(id,report.clone()).unwrap();}
+            assert!(gate.trial_order().is_none());
+            let mut loading=report.clone();loading.arrived=false;gate.report(count,loading).unwrap();assert!(gate.trial_order().is_none());
+            gate.report(count,report).unwrap();assert!(matches!(gate.trial_order(),Some(Order::Trial{choice:c,..}) if c==choice));
+            assert!(gate.trial_order().is_none());
+        }}
     }
     #[test]
     fn chariot_vote_requires_same_trial_for_two_to_eight_players() {
@@ -501,6 +573,32 @@ mod tests {
         assert!(gate.victory().is_err());
         assert!(matches!(gate.engage(),Some(Order::Engage{epoch:0})));
         assert!(gate.engage().is_none());assert!(gate.victory().is_ok());
+    }
+    #[test]
+    fn a_member_who_quits_mid_fight_no_longer_blocks_the_party() {
+        let run=Run::new(42,crate::Class::Samurai);let mut gate=Gate::new(vec![1,2,3]);gate.stage=Stage::Combat;
+        gate.report(1,Report::new(&run,0,true,true,true)).unwrap();
+        gate.report(2,Report::new(&run,0,true,true,true)).unwrap();
+        assert!(gate.engage().is_none(),"member 3 never reported");
+        assert!(gate.remove(3));assert!(!gate.remove(3));assert_eq!(gate.members(),vec![1,2]);
+        assert!(matches!(gate.engage(),Some(Order::Engage{epoch:0})));
+        assert!(gate.victory().is_ok(),"victory no longer waits for the player who left");
+    }
+    #[test]
+    fn a_slow_member_delays_the_fight_by_at_most_the_grace_window() {
+        let run=Run::new(42,crate::Class::Samurai);let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Combat;
+        gate.report(1,Report::new(&run,0,true,true,true)).unwrap();
+        gate.report(2,Report::new(&run,0,true,false,true)).unwrap();
+        assert_eq!(gate.unbound(),vec![2]);
+        assert!(gate.engage_within(None).is_none(),"host enemies not ready yet");
+        assert!(gate.engage_within(Some(ENGAGE_GRACE_MS-1)).is_none());
+        assert!(matches!(gate.engage_within(Some(ENGAGE_GRACE_MS)),Some(Order::Engage{epoch:0})));
+        assert!(gate.victory().is_err(),"victory still needs every replica");
+        gate.report(2,Report::new(&run,0,true,true,true)).unwrap();assert!(gate.victory().is_ok());
+        // 队员掉线（没有汇报）时不靠宽限开战
+        let mut gate=Gate::new(vec![1,2]);gate.stage=Stage::Combat;
+        gate.report(1,Report::new(&run,0,true,true,true)).unwrap();
+        assert!(gate.engage_within(Some(10_000)).is_none());
     }
     #[test]
     fn failed_hunt_refund_waits_for_ack_before_retry() {

@@ -151,7 +151,8 @@ pub fn observe_peak(data:&PlayerGameData,state:&mut State) {
             let Some(base)=params.get::<EquipParamWeapon>(id/100*100)else{continue;};
             if base.origin_equip_wep1()<0 {continue;}
             let cap=if base.origin_equip_wep16()<0{10}else{25};
-            state.peak=state.peak.max(((id%100).min(cap)*50/cap) as u8);
+            // 等效等级不再在原版满级（+25 / +10）处截断：强化上限已解除，最高 MAX_PEAK
+            state.peak=state.peak.max(((id%100)*50/cap).min(u32::from(erdtree_tower::contracts::MAX_PEAK)) as u8);
         }
     };
     scan(&data.equipment.equip_inventory_data);if let Some(storage)=data.storage.as_ref(){scan(storage);}
@@ -215,7 +216,7 @@ mod tests {
         assert_eq!(victory_resources(None,100,1000,10,200),(100,10));
         let mut run=Run::new(42,erdtree_tower::Class::Samurai);run.enable_contracts();
         run.contract.as_mut().unwrap().held=vec![erdtree_tower::contracts::Oath{kind:Kind::Ascetic,level:2}];
-        assert_eq!(ascetic_rates(&run),Some((20,25)));
+        assert_eq!(ascetic_rates(&run),Some((18,23)));
         run.contract=Some(State::new(1,run.class,2,None,0));run.contract.as_mut().unwrap().chosen=Some(Kind::Ascetic);
         assert_eq!(ascetic_rates(&run),None,"old rules only heal in the act the contract was made");
     }

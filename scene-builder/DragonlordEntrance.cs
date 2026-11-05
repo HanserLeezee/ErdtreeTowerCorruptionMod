@@ -16,12 +16,13 @@ static class DragonlordEntrance {
         Basis+1900=>new(24,0.03f,5),
         Gate=>new(25,0.03f,0),
         Basis+2950=>new(0,0.15f,0),
-        _=>new(30,0.35f,0),
+        _=>new(30,0.05f,0),
     };
     static void Flag(EMEVD.Event e,uint id,bool value)=>e.Instructions.Add(new(2003,66,new object[]{(byte)0,id,(byte)(value?1:0)}));
     static void Wait(EMEVD.Event e,uint id,bool value)=>e.Instructions.Add(new(3,0,new object[]{(sbyte)0,(byte)(value?1:0),(byte)0,id}));
     static EMEVD.Event Local(uint id){var e=new EMEVD.Event(id,EMEVD.Event.RestBehaviorType.Restart);PersonalEvents.Local(e);return e;}
     public static void Apply(MSBE map,EMEVD events) {
+        DragonlordArrival.Apply(events.Events.Single(e=>e.ID==Basis+7952));
         var gate=map.Parts.Assets.Single(a=>a.EntityID==Gate);
         map.Parts.Assets.Remove(gate);
         map.Parts.Assets.Single(a=>a.EntityID==Basis+1900).Rotation=new(0,178.23f,0);

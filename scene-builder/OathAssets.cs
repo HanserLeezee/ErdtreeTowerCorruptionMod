@@ -9,16 +9,17 @@ static class OathAssets {
         foreach(var target in new[]{"Player","Enemy"})foreach(var element in new[]{"Physics","Magic","Fire","Thunder","Dark"})Set(r,$"atk{target}DmgCorrectRate_{element}",1f);
     }
     // (新行偏移, 复制的旧行偏移, 倍率, 精力恢复)；处刑的旧代价对所有攻击 ×0.9，增益行先除以 0.9
+    // 与 src/contracts.rs 的 NARROW / MYSTIC / FEATHER / FEATHER_STAMINA / BLOOD 一致：I 级不变，II、III 级削弱过一次
     static readonly (int offset,int source,float rate,int stamina)[] Boons=[
-        (3,0,1.35f,0),(4,0,1.55f,0),(5,0,1.80f,0),
-        (13,10,1.35f,0),(14,10,1.55f,0),(15,10,1.80f,0),
-        (23,20,1.35f,0),(24,20,1.55f,0),(25,20,1.80f,0),
-        (33,30,1.35f,0),(34,30,1.55f,0),(35,30,1.80f,0),
-        (43,40,1.25f,0),(44,40,1.40f,0),(45,40,1.55f,0),(46,41,1.25f,0),(47,41,1.40f,0),(48,41,1.55f,0),
-        (53,50,1.35f,0),(54,50,1.55f,0),(55,50,1.80f,0),
-        (63,60,1.35f/0.9f,0),(64,60,1.55f/0.9f,0),(65,60,1.80f/0.9f,0),
-        (73,70,1.20f,5),(74,70,1.30f,7),(75,70,1.40f,10),
-        (83,80,1.35f,0),(84,80,1.55f,0),(85,80,1.75f,0),
+        (3,0,1.35f,0),(4,0,1.45f,0),(5,0,1.55f,0),
+        (13,10,1.35f,0),(14,10,1.45f,0),(15,10,1.55f,0),
+        (23,20,1.35f,0),(24,20,1.45f,0),(25,20,1.55f,0),
+        (33,30,1.35f,0),(34,30,1.45f,0),(35,30,1.55f,0),
+        (43,40,1.25f,0),(44,40,1.32f,0),(45,40,1.40f,0),(46,41,1.25f,0),(47,41,1.32f,0),(48,41,1.40f,0),
+        (53,50,1.35f,0),(54,50,1.45f,0),(55,50,1.55f,0),
+        (63,60,1.35f/0.9f,0),(64,60,1.45f/0.9f,0),(65,60,1.55f/0.9f,0),
+        (73,70,1.20f,5),(74,70,1.25f,6),(75,70,1.30f,7),
+        (83,80,1.35f,0),(84,80,1.45f,0),(85,80,1.55f,0),
     ];
     static readonly int[] Banes=[29,39];
     static int[] Offsets=>Boons.Select(b=>b.offset).Concat(Banes).ToArray();
@@ -58,7 +59,15 @@ static class OathAssets {
         var original=PARAM.Read(file.Bytes);original.ApplyParamdef(def);
         var effects=PARAM.Read(file.Bytes);effects.ApplyParamdef(def);
         var existing=Offsets.Count(o=>effects.Rows.Any(r=>r.ID==First+o));
-        if(existing==Offsets.Length) Verify(effects);
+        if(existing==Offsets.Length) {
+            // 已经打过补丁：数值调整过的行原地换成新定义（只换誓约自己的行）
+            int replaced=0;
+            foreach(int offset in Offsets) {
+                var expected=Create(effects,offset);int index=effects.Rows.FindIndex(r=>r.ID==First+offset);
+                if(!expected.Cells.All(c=>System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(c.Value,effects.Rows[index][c.Def.InternalName].Value))){effects.Rows[index]=expected;replaced++;}
+            }
+            if(replaced>0){file.Bytes=effects.Write();Console.WriteLine($"Oath effects: {replaced} replaced");}
+        }
         else if(existing>0) throw new Exception("Oath effect IDs partly in use");
         else {
             foreach(int offset in Offsets)effects.Rows.Add(Create(effects,offset));
@@ -72,7 +81,8 @@ static class OathAssets {
         var actual=PARAM.Read(check.Files.Single(f=>f.Name==file.Name).Bytes);actual.ApplyParamdef(def);Verify(actual);
         if(actual.Rows.Count!=original.Rows.Count+(existing>0?0:Offsets.Length))throw new Exception("Unexpected effect count");
         var rows=actual.Rows.ToDictionary(r=>r.ID);
-        foreach(var row in original.Rows)foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing effect changed: {row.ID}");
+        var own=Offsets.Select(o=>First+o).ToHashSet();
+        foreach(var row in original.Rows.Where(r=>!own.Contains(r.ID)))foreach(var cell in row.Cells)if(!System.Collections.StructuralComparisons.StructuralEqualityComparer.Equals(cell.Value,rows[row.ID][cell.Def.InternalName].Value))throw new Exception($"Existing effect changed: {row.ID}");
         string Hash(string p)=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(p)));
         File.WriteAllText(Path.Combine(output,"oath-build.json"),System.Text.Json.JsonSerializer.Serialize(new{effects=Offsets.Select(o=>First+o),sourceRegulationSha256=Hash(Path.Combine(input,"regulation.bin")),regulationSha256=Hash(path)},new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
         Console.WriteLine($"Verified {Offsets.Length} oath effects; all existing regulation data preserved");

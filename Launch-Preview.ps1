@@ -1,5 +1,8 @@
-﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly)
+﻿param([string]$GameDir = 'F:\SteamLibrary\steamapps\common\ELDEN RING\Game', [switch]$CheckOnly, [ValidateSet('ME3','YAFSML')][string]$Loader='ME3')
 $ErrorActionPreference = 'Stop'
+$loaderSupport=Join-Path $PSScriptRoot 'Tower-Loader.ps1'
+if(!(Test-Path -LiteralPath $loaderSupport)){$loaderSupport=Join-Path $PSScriptRoot 'distribution/Tower-Loader.ps1'}
+. $loaderSupport
 $exePath = Join-Path $GameDir 'eldenring.exe'
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { throw '找不到游戏，请传入 -GameDir' }
 if ((Get-Item -LiteralPath $exePath).VersionInfo.FileVersion -ne '2.7.2.0') { throw '验证包仅支持游戏文件版本 2.7.2.0' }
@@ -65,24 +68,42 @@ foreach ($candidate in $candidates) {
     $requiredFiles += 'scene-assets\reward-art\card.rgba'
     $requiredFiles += @('scene-assets\map-art\paper.rgba', 'scene-assets\map-art\icons.rgba')
     $detailsFile = Join-Path $candidate 'scene-assets\reward-details.tsv'
+    $generatedIconIds = @{}
+    $modeFile = Join-Path $candidate 'asset-mode.txt'
+    $assetManifest = Join-Path $candidate 'asset-patches\manifest.json'
+    if ((Test-Path -LiteralPath $modeFile) -and [IO.File]::ReadAllText($modeFile).Trim() -eq 'local-v1' -and (Test-Path -LiteralPath $assetManifest)) {
+        $iconRecipes = ([IO.File]::ReadAllText($assetManifest) | ConvertFrom-Json).Icons
+        foreach ($iconRecipe in $iconRecipes) { $generatedIconIds[[string]$iconRecipe.Id] = $true }
+        if ($generatedIconIds.Count -gt 0) { $requiredFiles += @('Tower.AssetRestore.exe', 'Tower.IconCodec.dll') }
+    }
     if (Test-Path -LiteralPath $detailsFile -PathType Leaf) {
         foreach ($line in Get-Content -LiteralPath $detailsFile -Encoding UTF8) {
             $fields = $line -split "`t"
-            if ($fields.Count -eq 7) { $requiredFiles += "scene-assets\reward-icons\$($fields[1]).rgba" }
+            if ($fields.Count -eq 7 -and -not $generatedIconIds.ContainsKey([string]$fields[1])) { $requiredFiles += "scene-assets\reward-icons\$($fields[1]).rgba" }
         }
     }
     $missingFiles = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $candidate $_) -PathType Leaf) })
     if ($missingFiles.Count -eq 0) { $packageRoot = $candidate; $dllName = $candidateDll; break }
 }
 if (-not $packageRoot) { throw "找不到完整验证包，已检查目录：$($candidates -join '；')。请完整解压验证包。" }
-$loader = Join-Path $packageRoot 'loader\bin\me3.exe'
+$loaderPath = Get-TowerLoaderPath $packageRoot $Loader
 $dll = Join-Path $packageRoot $dllName
 $profile = Join-Path $packageRoot 'preview.me3'
 if ($CheckOnly) {
-    [pscustomobject]@{ PackageDirectory = $packageRoot; LoaderPath = $loader; DllPath = $dll; ProfilePath = $profile }
+    [pscustomobject]@{ PackageDirectory = $packageRoot; LoaderPath = $loaderPath; DllPath = $dll; ProfilePath = $profile; Loader = $Loader }
     return
 }
 if (Get-Process -Name eldenring -ErrorAction SilentlyContinue) { throw '请先退出正在运行的艾尔登法环' }
+$assetMode = Join-Path $packageRoot 'asset-mode.txt'
+if ((Test-Path -LiteralPath $assetMode) -and [IO.File]::ReadAllText($assetMode).Trim() -notin @('full', 'local-v1')) { throw '资源包模式损坏，请校验并修复文件。' }
+if (-not (Test-Path -LiteralPath $assetMode) -and (Test-Path -LiteralPath (Join-Path $packageRoot 'asset-patches\manifest.json'))) { throw '缺少资源包模式，请校验并修复文件。' }
+if ((Test-Path -LiteralPath $assetMode) -and [IO.File]::ReadAllText($assetMode).Trim() -eq 'local-v1') {
+    if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'asset-patches\manifest.json'))) { throw '缺少资源补丁清单，请校验并修复文件。' }
+    $restore = Join-Path $packageRoot 'Tower.AssetRestore.exe'
+    if (-not (Test-Path -LiteralPath $restore)) { throw '缺少本地资源生成器，请校验并修复文件。' }
+    & $restore $packageRoot $GameDir
+    if ($LASTEXITCODE -ne 0) { throw '本地资源生成失败，请查看日志或使用完整整合包。' }
+}
 $previousMarker = $env:ERDTREE_TOWER_PREVIEW
 $previousLogDir = $env:ERDTREE_TOWER_LOG_DIR
 try {
@@ -100,8 +121,7 @@ try {
         $profile = $launchProfile
         Write-Host "额外 DLL 插件：$($plugins.Count) 个"
     }
-    & $loader launch --exe $exePath --profile $profile --auto-detect --online false --skip-steam-init true
-    if ($LASTEXITCODE -ne 0) { throw "加载器退出码：$LASTEXITCODE" }
+    Invoke-TowerLoader $packageRoot $Loader $exePath $profile
 } finally {
     $env:ERDTREE_TOWER_PREVIEW = $previousMarker
     $env:ERDTREE_TOWER_LOG_DIR = $previousLogDir

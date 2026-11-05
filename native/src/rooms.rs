@@ -34,6 +34,7 @@ fn map_service_matches(slot:usize,entity:u32,model:i32,param:i32,status:ChrLoadS
 }
 fn player_model(model:i32)->u8 {u8::from(model==0)}
 fn conditional_services(block:i32,kind:NodeKind)->Vec<(u32,i32,i32,u32)> {
+    if block==0x2d010000&&kind==NodeKind::Event{return super::event_hosts::service(0);}
     if block==0x2d000000 && kind==NodeKind::Camp {
         return vec![(45001800,0,523200079,0),(45001801,3451,34510179,1),(45001802,2180,21800000,5)];
     }
@@ -60,11 +61,16 @@ pub struct RoomView {
 }
 
 pub struct Room {
+    pub mausoleum:bool,
+    pub copy_requested:bool,
     merchant_hit_logged:bool,
     pub merchant_down:bool,
     pub shop_refresh_pending:bool,
+    /// 上次读到的商品售出计数（诊断：联机客机商品无故变空）
+    pub shop_counters:Option<(std::time::Instant,Vec<u8>)>,
     pub hunter:Option<super::map_guards::Guards>,
     hub: bool,
+    event_host:usize,
     pub node: usize,
     pub kind: NodeKind,
     pub block: i32,
@@ -112,8 +118,20 @@ impl Room {
         self.talks.iter_mut().find_map(|talk|talk.take_refill())
     }
     pub fn event_menu(&mut self,run:&erdtree_tower::Run,party_ready:bool,party_busy:bool,solo:bool) {
+        if self.mausoleum {
+            let copy=run.regional_event.mausoleum.as_ref();
+            let menu=super::native_talk::EventMenu{used:copy.is_some_and(|c|c.completed),busy:copy.is_some_and(|c|c.receipt.is_some()),..Default::default()};
+            for talk in &mut self.talks {talk.set_event_menu(menu);}return;
+        }
+        self.event_host=super::event_hosts::index(if run.regional_event.mausoleum.is_some(){erdtree_tower::events::Draw::Altar}else{run.event_draw(self.node)});
         let progress=&run.regional_event;
-        let menu=super::native_talk::EventMenu{gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
+        // 死亡重试回到已结束的事件：引导者不再提供任何选项
+        if progress.settled {
+            let menu=super::native_talk::EventMenu{trial:true,used:true,..Default::default()};
+            for talk in &mut self.talks {talk.set_event_menu(menu);}
+            return;
+        }
+        let menu=super::native_talk::EventMenu{mausoleum_offer:progress.mausoleum.is_some(),gamble:run.gamble(self.node).filter(|_|solo).map(|g|g as u8),trial:progress.trial,chariot:progress.chariot,stormveil:progress.stormveil.is_some(),descent:progress.descent,recovery:progress.recovery,scarabs:progress.scarabs,locked:progress.locked,
             altar:run.altar(self.node),used:progress.opened!=0||progress.stormveil.is_some_and(|s|s!=erdtree_tower::stormveil::Progress::Choosing),
             busy:progress.guards||self.scarabs.active()||party_busy,ready:self.scarabs.ready()||party_ready,attempts:progress.attempts};
         for talk in &mut self.talks {talk.set_event_menu(menu);}
@@ -127,6 +145,19 @@ impl Room {
     pub fn new(node: usize, kind: NodeKind, hp: i32, fp: i32) -> Result<Self, String> {
         Self::create(node,kind,hp,fp,None,false)
     }
+    pub fn for_run(run:&erdtree_tower::Run,node:usize,kind:NodeKind,hp:i32,fp:i32)->Result<Self,String> {
+        let mut room=Self::new(node,kind,hp,fp)?;
+        if kind==NodeKind::Event&&run.regional_event.mausoleum.as_ref().is_some_and(|copy|copy.accepted) {
+            super::mausoleum::restore_flow(run.regional_event.mausoleum.as_ref().unwrap())?;
+            let arena=super::arenas::for_block(0x0d000000).ok_or("龙王平台资源未接入")?;
+            room.mausoleum=true;
+            room.block=arena.block;room.entry=arena.entry;
+            room.view.message="正在前往灵庙……".into();
+            super::log(format!("MAUSOLEUM room node={node} block={:08x} entry={}",room.block,room.entry));
+        }
+        super::native_talk::set_flag(45011859,room.mausoleum)?;
+        Ok(room)
+    }
     pub fn attendant(block:i32)->Result<Self,String> {
         let arena=super::arenas::for_block(block).ok_or("未知竞技场")?;
         Self::create(0,NodeKind::Monster,0,0,Some(arena),false)
@@ -134,6 +165,9 @@ impl Room {
     fn create(node:usize,kind:NodeKind,hp:i32,fp:i32,attendant:Option<super::arenas::Arena>,hub:bool)->Result<Self,String> {
         let (block, entry, title) = if hub {(super::hub::BLOCK,11102691,"大赐福")} else if let Some(arena)=attendant {(arena.block,arena.entry,"场边引导者")} else {destination(kind).ok_or("此节点没有房间")?};
         let params = unsafe { SoloParamRepository::instance() }.map_err(|_| "NPC 参数未就绪")?;
+        if kind==NodeKind::Event&&super::event_hosts::HOSTS.iter().any(|h|!params.get::<NpcParam>(h.npc as u32).is_some_and(|p|p.name_id()==h.name_id)) {
+            return Err("事件 NPC 名称参数缺失，请更新配套 regulation.bin".into());
+        }
         let models=if hub {vec![0,0]}else{npcs(kind).into_iter().map(|(model,_)|model).collect()};
         for (index,model) in models.into_iter().enumerate() {
             let (npc,think,_)=npc_data(model,service(hub,kind,index));
@@ -167,10 +201,11 @@ impl Room {
         }
         super::log(format!("Native room {node}: {title}, block={block:x}"));
         Ok(Self {
-            merchant_down:false,shop_refresh_pending:false,hunter:None,merchant_hit_logged:false,
+            mausoleum:false,copy_requested:false,
+            merchant_down:false,shop_refresh_pending:false,shop_counters:None,hunter:None,merchant_hit_logged:false,
             scarabs:Default::default(),
             chest_attempt:None,
-            hub,
+            hub,event_host:0,
             node,
             kind,
             block,
@@ -211,7 +246,7 @@ impl Room {
             return Ok(());
         }
         let flags = unsafe { CSEventFlagMan::instance() }.map_err(|_| "场景事件系统未就绪")?;
-        if !self.hub && self.kind!=NodeKind::Monster && !flags.virtual_memory_flag.get_flag(ready_flag(self.kind)) {
+        if !self.hub && !self.mausoleum && self.kind!=NodeKind::Monster && !flags.virtual_memory_flag.get_flag(ready_flag(self.kind)) {
             self.view.message = "正在等待房间地图和交互物件就绪……".into();
             if self.started.elapsed() > Duration::from_secs(60) {
                 return Err("服务房间事件未加载，请使用包含 scene-assets 的新启动包".into());
@@ -221,13 +256,29 @@ impl Room {
         if !self.restored {
             let player = world.main_player.as_mut().unwrap();
             super::ailments::clear(&mut player.chr_ins)?;
-            player.chr_ins.modules.data.hp = player.chr_ins.modules.data.hp.min(self.saved_hp);
+            super::travel::restore_arrival_hp(&mut player.chr_ins,self.saved_hp,"service room arrival");
             player.chr_ins.modules.data.fp = player.chr_ins.modules.data.fp.min(self.saved_fp);
             self.restored = true;
             super::log(format!(
                 "Native room {} arrived; event handshake received",
                 self.node
             ));
+        }
+        if self.mausoleum {
+            let (lowered,opened)=super::mausoleum::flow()?;
+            super::mausoleum::trace(world,self.node);
+            self.view.loading=false;
+            if !lowered||!opened {
+                self.view.message=if lowered{"灵庙已经跪下：靠近大门，使用原生交互开门。".into()}else{format!("骷髅清除：{}/{}（共 44 块）。达标后等待灵庙跪下，再开门进入。",super::mausoleum::broken_skulls()?,super::mausoleum::REQUIRED_SKULLS)};
+                return Ok(());
+            }
+            if self.talks.is_empty() {
+                if let Some(chr)=world.chr_sets.iter().flatten().flat_map(|set|set.characters()).find(|c|c.event_entity_id==45011860&&c.npc_id==4450&&!c.debug_flags.character_disabled()&&loaded(unsafe {c.chr_set_entry.as_ref()}.chr_load_status)) {
+                    self.talks.push(super::native_talk::NativeTalk::new(self.block,chr.field_ins_handle,7));
+                }else{return Err("等待灵庙祭台加载".into());}
+            }
+            self.view.loading=false;
+            self.talks[0].poll()?;return Ok(());
         }
         let specs = if self.hub {vec![(0,[-329.5,-21.9,-309.0]),(0,[-329.5,-21.9,-302.0])]} else {npcs(self.kind)};
         if let Some(index)=first_stale(&self.handles,|handle|world.chr_ins_by_handle(handle)
@@ -250,10 +301,15 @@ impl Room {
             }
         }
         if self.handles.len()<specs.len() && !grounded {return Ok(());}
-        let conditional=conditional_services(self.block,self.kind);
+        let conditional=if self.kind==NodeKind::Event {super::event_hosts::service(self.event_host)}else{conditional_services(self.block,self.kind)};
+        if self.kind==NodeKind::Event {
+            super::native_talk::set_flag(45011871,false)?;
+            for host in super::event_hosts::HOSTS.iter().filter(|h|h.entity!=conditional[0].0) {super::native_talk::set_flag(host.flag,false)?;}
+        }
         for &(id,_,_,_) in &conditional {
-            super::native_talk::set_flag(id+70,true)?;
-            if !super::native_talk::flag(id+70)? {return Err("服务 NPC 显示标记不可用".into());}
+            let flag=super::event_hosts::visibility_flag(id);
+            super::native_talk::set_flag(flag,true)?;
+            if !super::native_talk::flag(flag)? {return Err(format!("服务 NPC {id} 显示标记 {flag} 不可用"));}
         }
         if self.map_backed() && self.handles.len()<specs.len() {
             let slot=self.handles.len();
@@ -423,6 +479,7 @@ impl Room {
         ready_flag(self.kind) - 991
     }
     pub fn retire(&self, world: &mut WorldChrMan) {
+        if self.mausoleum {let _=super::native_talk::set_flag(45011859,false);}
         if let Some(hunter)=&self.hunter {hunter.retire();}
         self.scarabs.retire(world);
         if !self.hub && self.kind!=NodeKind::Monster && let Ok(flags) = unsafe { CSEventFlagMan::instance_mut() } {
@@ -430,7 +487,8 @@ impl Room {
             if self.kind==NodeKind::Chest { flags.virtual_memory_flag.set_flag(45010939,false); }
             if self.kind==NodeKind::Event { flags.virtual_memory_flag.set_flag(45010940,false); }
         }
-        for (id,_,_,_) in conditional_services(self.block,self.kind) {let _=super::native_talk::set_flag(id+70,false);}
+        for (id,_,_,_) in conditional_services(self.block,self.kind) {let _=super::native_talk::set_flag(super::event_hosts::visibility_flag(id),false);}
+        if self.kind==NodeKind::Event {for host in super::event_hosts::HOSTS.iter(){let _=super::native_talk::set_flag(host.flag,false);}}
         for &(handle, address) in self.handles.iter().filter(|_|!self.map_backed()) {
             if let Some(chr) = world.chr_ins_by_handle_mut(&handle)
                 && std::ptr::from_ref(chr) as usize == address
@@ -465,7 +523,7 @@ fn npcs(kind: NodeKind) -> Vec<(i32, [f32; 3])> {
         NodeKind::Camp => vec![(0, [-5.0, 0.15, 5.0]), (3451, [5.0, 0.05, 1.0]), (2180,[5.0,0.15,6.0])],
         NodeKind::Shop => vec![(3200, [0.0, 0.1, 0.0]),(2180,[-12.0,0.1,8.0])],
         NodeKind::Chest|NodeKind::Monster => vec![(2180,[-16.0,0.1,10.0])],
-        NodeKind::Event => vec![(2170,[-7.0,0.1,2.0])],
+        NodeKind::Event => vec![(0,[0.0,0.1,0.0])],
         _ => vec![],
     }
 }
@@ -502,8 +560,9 @@ mod tests {
             let mut ids=std::collections::HashSet::new();
             for (slot,&(id,model,param,role)) in entries.iter().enumerate() {
                 assert!(ids.insert(id));assert_eq!(model,specs[slot].0);
-                assert_eq!(role,service(false,kind,slot));assert_eq!(param,npc_data(model,role).0);
-                assert!([45001,45011,45021].contains(&((id+70)/1000)));
+                assert_eq!(role,service(false,kind,slot));
+                assert_eq!(param,if kind==NodeKind::Event {super::super::event_hosts::HOSTS[0].npc}else{npc_data(model,role).0});
+                assert!([45001,45011,45021].contains(&(super::super::event_hosts::visibility_flag(id)/1000)));
             }
         }
         assert!(conditional_services(0x0b0a0000,NodeKind::Shop).is_empty());

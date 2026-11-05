@@ -4,7 +4,7 @@ use hudhook::imgui::{Condition,Ui};
 use erdtree_tower::{NodeKind,Run,contracts::Kind,embers::Ember,law::{Law,NODES}};
 use crate::enemies::Enemy;
 
-pub enum Command {BossTest(u16),EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool),FallenStart,FallenValue(u32),TorchGive,TorchAll,TorchFast(bool)}
+pub enum Command {MausoleumTest,BossTest(u16),RadahnTest,EndBossTest,ChainTest(u32),Jump(usize),Act(u8),Oath(Kind,u8),Ember(Ember,bool),Law(Law),Item(u32),Heal,Runes(u32),Cheats(bool,bool),FallenStart,FallenValue(u32),TorchGive,TorchAll,TorchFast(bool)}
 
 // tower-debug.enable 文件，或启动参数 debug=1（启动器的「调试模式」）
 // [HansFix] 无缝联机模式下日志在 seamless-entry\runtime：模组文件夹里的 tower-debug.enable 也算
@@ -15,6 +15,7 @@ static QUEUE:Mutex<VecDeque<Command>>=Mutex::new(VecDeque::new());
 /// 无敌（玩家不会死、敌人打不中玩家）与秒杀（玩家每次命中 9999999 伤害）：游戏自带的调试开关（WorldChrManDbgFlags），只在单人生效
 static GOD:AtomicBool=AtomicBool::new(false);
 static ONE_SHOT:AtomicBool=AtomicBool::new(false);
+pub fn replace_cheats(god:bool,one_shot:bool)->(bool,bool){(GOD.swap(god,Ordering::Relaxed),ONE_SHOT.swap(one_shot,Ordering::Relaxed))}
 static APPLIED:Mutex<Option<(bool,bool)>>=Mutex::new(None);
 static BOUT_PROTECT:AtomicBool=AtomicBool::new(false);
 static PLAYER_PROTECTION:Mutex<PlayerProtection>=Mutex::new(PlayerProtection{previous:None});
@@ -66,10 +67,10 @@ fn ime_here(ui:&Ui) {
     if ui.is_item_active() {let min=ui.item_rect_min();let max=ui.item_rect_max();hudhook::set_ime_position(min[0],max[1]);}
 }
 fn send(command:Command) {if let Ok(mut queue)=QUEUE.lock(){queue.push_back(command);}}
-pub fn take()->Option<Command> {let mut queue=QUEUE.lock().ok()?;let index=queue.iter().position(|c|!matches!(c,Command::BossTest(_)|Command::EndBossTest|Command::ChainTest(_)))?;queue.remove(index)}
+pub fn take()->Option<Command> {let mut queue=QUEUE.lock().ok()?;let index=queue.iter().position(|c|!matches!(c,Command::MausoleumTest|Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;queue.remove(index)}
 pub fn take_test()->Option<Command> {
     let mut queue=QUEUE.lock().ok()?;
-    let index=queue.iter().position(|c|matches!(c,Command::BossTest(_)|Command::EndBossTest|Command::ChainTest(_)))?;
+    let index=queue.iter().position(|c|matches!(c,Command::MausoleumTest|Command::BossTest(_)|Command::RadahnTest|Command::EndBossTest|Command::ChainTest(_)))?;
     queue.remove(index)
 }
 static PARTY_ROLE:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
@@ -146,6 +147,12 @@ impl Menu {
                 if let Some(_tab)=ui.tab_item("构筑") {self.build(ui,run);}
                 if let Some(_tab)=ui.tab_item("物品") {self.items(ui);}
                 if let Some(_tab)=ui.tab_item("状态") {self.state(ui,run);}
+                if let Some(_tab)=ui.tab_item("灵庙测试") {
+                    ui.text_wrapped("单人快捷测试：进入引路人问号房，再选择前往龙王平台灵庙或领取 800 卢恩。此旅程计为调试，不计入正式解锁。");
+                    ui.text_wrapped("复制前在右手装备目标武器；可先在物品页用拼音搜索领取测试武器。");
+                    let _disabled=ui.begin_disabled(PARTY_ROLE.load(Ordering::Relaxed)!=0||run.phase!=erdtree_tower::Phase::Map||view.busy||view.travelling);
+                    if ui.button("进入灵庙事件测试（单人）"){send(Command::MausoleumTest);}
+                }
                 if let Some(_tab)=ui.tab_item("场地") {arenas(ui,run);}
             }
         });
@@ -166,6 +173,11 @@ impl Menu {
         let groups=crate::enemies::debug_encounters();
         ui.text(format!("共 {} 个 Boss 组合；多实体组合整组测试",groups.len()));
         let ready=role!=2&&run.phase==erdtree_tower::Phase::Map&&!view.travelling&&!view.busy;
+        {
+            let _disabled=ui.begin_disabled(!ready||party);
+            if ui.button("碎星拉塔恩：陨石阶段复现（单人）") {send(Command::RadahnTest);}
+        }
+        ui.text_wrapped("自动降至 40% 血量，玩家免伤；靠近中心开战，必要时轻击一次。仅记录，不强制落地。");
         ui.child_window("##boss-tests").size([0.0,0.0]).build(|| {
             for (index,group) in groups.iter().enumerate() {
                 let names=crate::enemies::debug_group_name(group);
@@ -271,12 +283,13 @@ impl Menu {
             }
         }
         ui.separator();ui.text("余烬");
+        if ui.small_button("预览原生余烬获得窗口（不发奖）") {crate::ember_notice::preview(Ember::SpiritTwin);OPEN.store(false,Ordering::Relaxed);}
         for (i,ember) in Ember::ALL.into_iter().enumerate() {
             if i%3!=0 {ui.same_line_with_pos(10.0+(i%3) as f32*200.0);}
             let mut held=run.embers.contains(&ember);
             if ui.checkbox(format!("{}##ember-{i}",ember.name()),&mut held) {send(Command::Ember(ember,held));}
         }
-        ui.text("双生的灵唤铃：保留第一组召唤物（单人试验）");
+        ui.text("双生的灵唤铃：保留第一组；召唤师按各组存活返还骨灰");
         ui.separator();
         ui.text(format!("苦难律法：{} 分 · 律法码 {}",run.law.score(),run.law.code()));
         ui.same_line();if ui.small_button("清空律法") {send(Command::Law(Law::default()));}
@@ -300,11 +313,11 @@ impl Menu {
         let mut preview=crate::weapon_glow::preview();
         if ui.checkbox("预览：手上任意近战武器都发光",&mut preview) {crate::weapon_glow::set_preview(preview);}
         ui.separator();
-        ui.text("按名称或说明搜索，例如：葛孚雷、致命一击、传说·");
+        ui.text_wrapped("支持中文、拼音和首字母，例如：长剑 / changjian / cj；也可搜索物品说明。");
         ui.set_next_item_width(320.0);
         let enter=ui.input_text("##item-query",&mut self.item_query).enter_returns_true(true).build();ime_here(ui);
         ui.same_line();
-        if (ui.button("搜索")||enter)||self.searched!=self.item_query&&self.item_query.chars().count()>=2 {
+        if (ui.button("搜索")||enter)||self.searched!=self.item_query {
             self.items=crate::reward_ui::search_items(&self.item_query,80);self.searched=self.item_query.clone();
         }
         ui.text(format!("{} 条结果（最多显示 80 条）",self.items.len()));

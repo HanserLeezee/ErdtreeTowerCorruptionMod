@@ -8,6 +8,7 @@ static class StormveilAssets {
         var entry=map.Parts.Players.Single(p=>p.EntityID==10000988);
         foreach(var player in map.Parts.Players){player.Position=entry.Position;player.Rotation=entry.Rotation;}
         var init=events.Events.Single(e=>e.ID==0);
+        StripGraces(events);
         bool Blocked(uint id)=>id is 10002500 or 10002501||id>=10002800&&id<10002900;
         foreach(var e in events.Events) e.Instructions.RemoveAll(i=>i.Bank==2000&&(i.ID==0||i.ID==6)&&i.ArgData.Length>=8&&Blocked(BitConverter.ToUInt32(i.ArgData,4)));
         events.Events.RemoveAll(e=>Blocked((uint)e.ID));
@@ -37,6 +38,40 @@ static class StormveilAssets {
         events.Write(Path.Combine(output,$"event/{Map}.emevd.dcx"));
         Verify(output);
     }
+    // 跑城中坐火会把重生点记到史东薇尔，之后用返回赐福的道具就传回城里卡住；
+    // 去掉这张图的“注册赐福”（2009[3] RegisterBonfire），城里的赐福不能点亮也不能休息，只剩装饰
+    static bool RegistersGrace(EMEVD.Instruction i)=>i.Bank==2009&&i.ID==3;
+    static List<(long,uint,uint)> StripGraces(EMEVD events) {
+        var removed=new List<(long,uint,uint)>();
+        foreach(var e in events.Events) {
+            for(int index=e.Instructions.Count-1;index>=0;index--) {
+                var i=e.Instructions[index];
+                if(!RegistersGrace(i))continue;
+                removed.Add((e.ID,i.ArgData.Length>=4?BitConverter.ToUInt32(i.ArgData,0):0,i.ArgData.Length>=8?BitConverter.ToUInt32(i.ArgData,4):0));
+                e.Instructions.RemoveAt(index);
+                // 事件参数按指令序号替换：去掉指向这条的，后面的序号前移
+                e.Parameters.RemoveAll(p=>p.InstructionIndex==index);
+                foreach(var p in e.Parameters.Where(p=>p.InstructionIndex>index))p.InstructionIndex--;
+            }
+        }
+        if(removed.Count==0)throw new Exception("Stormveil has no RegisterBonfire instruction; grace layout changed, inspect before patching");
+        foreach(var (ev,flag,entity) in removed)Console.WriteLine($"Stormveil grace unregistered: event {ev} flag {flag} entity {entity}");
+        return removed;
+    }
+    /// <summary>只改已生成的事件文件（地图上的符文、侧墙补丁不动）：去掉城里的赐福</summary>
+    public static void PatchGraces(string input,string output) {
+        if(Path.GetFullPath(input)==Path.GetFullPath(output))throw new Exception("Separate staging required");
+        const string relative="event/"+Map+".emevd.dcx";
+        var events=EMEVD.Read(Path.Combine(input,relative));
+        var before=events.Events.Sum(e=>e.Instructions.Count);
+        var removed=StripGraces(events);
+        var path=Path.Combine(output,relative);Directory.CreateDirectory(Path.GetDirectoryName(path)!);events.Write(path);
+        var actual=EMEVD.Read(path);
+        if(actual.Events.SelectMany(e=>e.Instructions).Any(RegistersGrace)||actual.Events.Sum(e=>e.Instructions.Count)!=before-removed.Count
+            ||actual.Events.Any(e=>e.Parameters.Any(p=>p.InstructionIndex<0||p.InstructionIndex>=e.Instructions.Count)))throw new Exception("Stormveil grace patch roundtrip failed");
+        foreach(uint id in new uint[]{10007980,10007981})PersonalEvents.Verify(actual.Events.Single(e=>e.ID==id));
+        Console.WriteLine($"Verified Stormveil: {removed.Count} graces unregistered; other events unchanged");
+    }
     public static void Verify(string output) {
         var map=MSBE.Read(Path.Combine(output,$"map/mapstudio/{Map}.msb.dcx"));
         var original=MSBE.Read($"work/boss-report/maps/{Map}.msb.dcx");
@@ -45,6 +80,7 @@ static class StormveilAssets {
         if(entry.Position!=original.Parts.Players.Single(p=>p.EntityID==10000988).Position||map.Parts.Players.Any(p=>p.Position!=entry.Position))throw new Exception("Stormveil main gate arrival mismatch");
         if(map.Parts.Enemies.Count!=original.Parts.Enemies.Count||map.Parts.Enemies.Zip(original.Parts.Enemies).Any(p=>p.First.Position!=p.Second.Position||p.First.NPCParamID!=p.Second.NPCParamID||p.First.ThinkParamID!=p.Second.ThinkParamID))throw new Exception("Stormveil original encounters changed");
         if(events.Events.Any(e=>e.ID>=10002800&&e.ID<10002900))throw new Exception("Stormveil boss scripts must be absent");
+        if(events.Events.SelectMany(e=>e.Instructions).Any(RegistersGrace))throw new Exception("Stormveil graces must stay unregistered");
         foreach(uint id in new uint[]{10007980,10007981})PersonalEvents.Verify(events.Events.Single(e=>e.ID==id));
         var native=EMEVD.Read($"work/scene-cache/{Map}.emevd.dcx");
         if(events.Format!=native.Format||!events.StringData.SequenceEqual(native.StringData)||!events.LinkedFileOffsets.SequenceEqual(native.LinkedFileOffsets))throw new Exception("Stormveil native event dependencies changed");

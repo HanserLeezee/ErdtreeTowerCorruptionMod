@@ -44,8 +44,8 @@ fn at_shop()->Run {
 #[test]
 fn saved_shop_stock_with_retired_spells_is_rebuilt() {
     let mut run=at_shop();let Phase::Node{id}=run.phase else{panic!("not at shop")};
-    run.shop_stock=Some(ShopStock{node:id,items:vec![[3,(retired()[0]&0x0fffffff) as i32,3000,1];37]});
+    run.shop_stock=Some(ShopStock{node:id,items:vec![[3,(retired()[0]&0x0fffffff) as i32,3000,1];37],torches:vec![]});
     assert!(Run::decode(&legacy(&run)).unwrap().shop_stock.is_none());
-    run.shop_stock=Some(ShopStock{node:id,items:vec![[0,1000000,3000,1];37]});
+    run.shop_stock=Some(ShopStock{node:id,items:vec![[0,1000000,3000,1];37],torches:vec![]});
     assert_eq!(Run::decode(&legacy(&run)).unwrap().shop_stock,run.shop_stock);
 }

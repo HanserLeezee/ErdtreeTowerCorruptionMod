@@ -14,9 +14,12 @@ struct Steam {
     transport:super::steam_messages::Transport,
     handshake:erdtree_tower::party_handshake::Handshake,
     roster:erdtree_tower::party_roster::Roster,
+    latency:super::party_latency::Tracker,
 }
 #[derive(Default)]
 pub struct EventSync {
+    pub forced_skip:Option<erdtree_tower::skip::Target>,
+    pub descent_complete:bool,
     pub merchant_phase:u8,
     pub merchant_bound:bool,
     pub chariot_pose:Option<(u64,[f32;3],Instant)>,
@@ -30,6 +33,8 @@ pub struct EventSync {
     scarab_slots:Vec<(u64,u8)>,
     pub request:Option<erdtree_tower::party_events::Kind>,
     pub bound:Option<u8>,
+    /// 房主：本机这一场的敌人全部就绪的时刻（开战屏障的宽限从这里算）
+    pub host_bound_at:Option<Instant>,
     pub job:Option<erdtree_tower::party_events::Job>,
     pub done:Option<u8>,
     pub applied:Option<u8>,
@@ -40,6 +45,9 @@ pub struct EventSync {
     pub guards_cleared:bool,
 }
 impl EventSync {
+    pub fn trial_victory(&self)->bool {
+        self.descent_complete||self.storm_decision==Some(erdtree_tower::stormveil::Decision::Complete)
+    }
     pub fn victory(&self)->bool {
         self.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Guards(_)))
             &&self.hunting&&self.done==Some(0)&&!self.aborted
@@ -96,6 +104,12 @@ impl Departure {
     }
 }
 impl Link {
+    pub fn skip_node(&mut self,target:erdtree_tower::skip::Target)->Result<(),String> {
+        if !self.host(){return Err("只有房主可以跳过节点".into());}
+        if let Some(error)=&self.stopped{return Err(error.clone());}
+        let order=Order::SkipNode{epoch:self.epoch,target};
+        self.send(Send::Broadcast(order.clone()))?;self.accept(&order)?;Ok(())
+    }
     pub fn merchant_phase(&mut self,phase:u8)->Result<(),String> {
         if !self.host()||self.defeated||self.stopped.is_some(){return Err("仅房主可结算商人挑战".into());}
         if phase!=self.event.merchant_phase+1||phase>3{return Err("商人挑战阶段无效".into());}
@@ -140,11 +154,30 @@ impl Link {
         let config=Config{session,seed,player:roster.local,host:roster.host,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers};
         let (tx,_commands)=mpsc::sync_channel(1);let (_events,rx)=mpsc::sync_channel(1);
         let mut link=Self{gate:Gate::new(roster.members.clone()),config,epoch:0,arrived:false,bound:false,spawn:false,fighting:false,victory:false,rewards:false,defeated:false,stopped:None,portal:false,title:0,titles:vec![],
-            law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:Some(Steam{transport,handshake,roster}),queued:Default::default(),selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
+            law_flasks:Default::default(),drawing:Default::default(),drawing_sent:None,event:Default::default(),steam:Some(Steam{transport,handshake,roster,latency:Default::default()}),queued:Default::default(),selected:None,ballots:vec![],tx,rx,running:Arc::new(AtomicBool::new(false)),last_report:Instant::now()-Duration::from_secs(1),last_seen:vec![],encounter:None,strikes:Default::default(),strike_epoch:0,strike_seq:0};
         for (peer,packet) in packets {match steam_event(&link.config,peer,packet){Ok(Some(event))=>link.queued.push_back(event),Ok(None)=>{},Err(e)=>ignored(peer,&e)}}
         Ok(link)
     }
     pub fn roster(&self)->Option<&erdtree_tower::party_roster::Roster> {self.steam.as_ref().map(|s|&s.roster)}
+    /// 有队员退出了无缝会话：新名单是旧名单去掉几个人、房主和本机都还在时，把这些人从队伍里去掉，旅程照常继续；
+    /// 返回去掉的人。房主退出、有新人加入、或名单对不上时返回 None（仍按原来的“名单变化”处理）
+    pub fn shrink(&mut self,next:&erdtree_tower::party_roster::Roster)->Option<Vec<u64>> {
+        let steam=self.steam.as_mut()?;
+        let old=&steam.roster;
+        if next.host!=old.host||next.local!=old.local||next.members.len()>=old.members.len()
+            ||!next.members.iter().all(|id|old.members.contains(id))||!next.members.contains(&next.host) {return None;}
+        let gone:Vec<u64>=old.members.iter().copied().filter(|id|!next.members.contains(id)).collect();
+        for &id in &gone {self.gate.remove(id);}
+        self.config.peers.retain(|p|!gone.contains(&p.player));
+        self.last_seen.retain(|(id,_)|!gone.contains(id));
+        self.ballots.retain(|b|!gone.contains(&b.player));
+        steam.roster=next.clone();steam.transport.set_roster(next.clone());
+        Some(gone)
+    }
+    pub fn latencies(&self)->Vec<erdtree_tower::party_latency::Row> {
+        if self.stopped.is_some(){return Vec::new();}
+        self.steam.as_ref().map_or_else(Vec::new,|s|s.latency.rows(&s.roster))
+    }
     pub fn host(&self)->bool {self.config.player==self.config.host}
     pub fn chariot_pose(&mut self,pose:[f32;3])->Result<(),String> {
         if !self.host()||self.event.storm_decision!=Some(erdtree_tower::stormveil::Decision::Engage){return Ok(());}
@@ -217,6 +250,12 @@ impl Link {
         let order=self.gate.event_abort(wave)?;
         self.send(Send::Broadcast(order.clone()))?;self.accept(&order)?;Ok(())
     }
+    /// 跳过本关（房主）：不等队友摸传送门，直接通知全队领奖
+    pub fn force_rewards(&mut self)->Result<(),String>{
+        if let Some(error)=&self.stopped{return Err(error.clone());}
+        if !self.host(){return Err("只有房主可以跳过本关".into());}
+        if self.victory&&!self.rewards {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
+    }
     pub fn open_rewards(&mut self)->Result<(),String>{
         if let Some(error)=&self.stopped{return Err(error.clone());}
         if self.host()&&!self.rewards&&self.gate.rewards().is_some() {self.send(Send::Broadcast(Order::Rewards{epoch:self.epoch}))?;self.rewards=true;}Ok(())
@@ -225,9 +264,19 @@ impl Link {
         if let Order::MapDrawing(canvas)=order {return Ok(!self.host()&&self.drawing.receive(canvas.clone(),self.config.player));}
         if matches!(order,Order::ForceEnd){return Ok(!self.host());}
         if let Some(error)=&self.stopped {return Err(error.clone());}
+        if self.event.forced_skip.is_some()&&!matches!(order,Order::SkipNode{..}|Order::Enter{..}|Order::BossTest{..}|Order::NewRun{..}|Order::Votes{..}|Order::Law{..}|Order::Stop(_)|Order::Titles(_)) {return Ok(false);}
         if let Order::Titles(list)=order {if !self.host(){self.titles=list.iter().take(erdtree_tower::party_roster::MAX_PLAYERS).copied().collect();}return Ok(false);}
         if self.defeated&&!matches!(order,Order::NewRun{..}|Order::Stop(_)){return Ok(false);}
         match order {
+            Order::SkipNode{epoch,target} if *epoch==self.epoch=>{
+                if let Some(old)=self.event.forced_skip {
+                    if old==*target||!old.rewards&&old.seed==target.seed&&old.act==target.act&&old.node==target.node{return Ok(false);}
+                    if (old.seed,old.act,old.node)!=(target.seed,target.act,target.node){return Err("跳过请求的节点发生变化".into());}
+                }
+                self.event=Default::default();self.event.forced_skip=Some(*target);self.selected=None;self.ballots.clear();
+                self.arrived=true;self.bound=true;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;
+                self.encounter=None;self.gate.skip_node(target.rewards);
+            },
             Order::Merchant{epoch,phase} if *epoch==self.epoch=>{
                 if *phase==self.event.merchant_phase{return Ok(false);}
                 if *phase!=self.event.merchant_phase+1||*phase>3{return Err("商人挑战同步次序无效".into());}
@@ -241,6 +290,11 @@ impl Link {
                 if *sequence==0||!super::chariot::valid_pose(*pose){return Err("战车位置同步数据无效".into());}
                 if self.event.chariot_pose.is_some_and(|(n,_,_)|*sequence<=n){return Ok(false);}
                 self.event.chariot_pose=Some((*sequence,*pose,Instant::now()));
+            },
+            Order::DescentComplete{epoch} if *epoch==self.epoch&&self.event.trial_decision==Some(erdtree_tower::regional_events::Trial::Descent)=>{
+                if self.event.descent_complete{return Ok(false);}
+                self.event.descent_complete=true;
+                super::log(format!("Party descent completed: epoch={epoch}"));
             },
             Order::Trial{epoch,choice} if *epoch==self.epoch=>{
                 if self.event.trial_decision==Some(*choice){return Ok(false);}
@@ -298,7 +352,8 @@ impl Link {
                 if self.event.job.is_some_and(|j|matches!(j.kind,erdtree_tower::party_events::Kind::Guards(_))) {self.event.guards_cleared=true;}
             },
             Order::Spawn{epoch} if *epoch==self.epoch=>{self.spawn=true;self.encounter=Some(Instant::now());},
-            Order::Engage{epoch} if *epoch==self.epoch&&self.spawn&&self.bound&&!self.victory=>self.fighting=true,
+            // 房主过了宽限也会先开战：本机敌人还在加载的队员同样接受，敌人加载出来就直接是开战状态
+            Order::Engage{epoch} if *epoch==self.epoch&&self.spawn&&!self.victory=>self.fighting=true,
             Order::Victory{epoch} if *epoch==self.epoch&&self.bound=>self.victory=true,
             Order::Rewards{epoch} if *epoch==self.epoch&&self.victory=>self.rewards=true,
             Order::Defeat{epoch} if *epoch==self.epoch=>{
@@ -347,6 +402,7 @@ impl Link {
                     if guest&&peer!=host {ignored(peer,"非房主队员向队友发送消息");continue;}
                     let packet=match Payload::decode(&bytes){Ok(packet)=>packet,Err(e)=>{ignored(peer,&e);continue;}};
                     match packet {
+                        Payload::Latency{session,snapshot}=>{steam.latency.accept(&steam.roster,peer,session,self.config.session,snapshot);},
                         Payload::Handshake(message)=>for (target,response) in if lobby{steam.handshake.receive_lobby(peer,message)?}else{steam.handshake.receive(peer,message)?} {
                             steam.transport.send(target,&Payload::Handshake(response).encode()?)?;
                         },
@@ -360,6 +416,7 @@ impl Link {
                         },
                     }
                 }
+                steam.latency.poll(&steam.transport,&steam.roster,&self.last_seen,self.config.session);
         }
         Ok(())
     }
@@ -472,7 +529,15 @@ impl Link {
                     super::log(format!("PARTY_REWARD_PORTAL epoch={}; every living member entered",self.epoch));
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{self.rewards=true;orders.push(order);}
                 }
-                for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.spawn(),self.gate.engage()].into_iter().flatten() {
+                if self.spawn&&self.bound {self.event.host_bound_at.get_or_insert_with(Instant::now);}
+                let unbound=self.gate.unbound();
+                let engage=self.gate.engage_within(self.event.host_bound_at.map(|t|t.elapsed().as_millis() as u64));
+                if engage.is_some() {
+                    let since=self.encounter.map_or(0.0,|t|t.elapsed().as_secs_f32());
+                    super::log(if unbound.is_empty() {format!("PARTY_ENGAGE epoch={} all replicas ready {since:.1} s after spawn",self.epoch)}
+                        else {format!("PARTY_ENGAGE epoch={} after the {} ms grace, {since:.1} s after spawn; still loading: {unbound:?}",self.epoch,erdtree_tower::party_game::ENGAGE_GRACE_MS)});
+                }
+                for order in [self.gate.defeat(),self.gate.trial_order(),self.gate.stormveil_order(),self.gate.descent_order(),self.gate.spawn(),engage].into_iter().flatten() {
                     if let Err(e)=self.send(Send::Broadcast(order.clone())){self.stop(e);}else{orders.push(order);}
                 }
             }
@@ -504,6 +569,28 @@ pub fn random_entropy()->Result<u64,String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skip_before_spawn_is_host_only_idempotent_and_drops_late_combat_orders() {
+        use super::*;
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        let target=erdtree_tower::skip::Target::new(&run,Some(run.available()[0])).unwrap();
+        let (mut host,_events,commands)=test_link(1);
+        let (mut guest,_events2,_commands2)=test_link(2);
+        assert!(guest.skip_node(target).is_err());
+        host.skip_node(target).unwrap();
+        let order=commands.try_recv().unwrap();let Send::Broadcast(order)=order else{panic!("missing broadcast")};
+        assert!(guest.accept(&order).unwrap());assert!(!guest.accept(&order).unwrap());
+        assert!(!guest.accept(&Order::Spawn{epoch:4}).unwrap());
+        assert!(!guest.accept(&Order::Engage{epoch:4}).unwrap());
+        assert!(!guest.spawn&&!guest.fighting);
+        let mut finish=target;finish.rewards=false;
+        assert!(guest.accept(&Order::SkipNode{epoch:4,target:finish}).unwrap());
+        assert!(!guest.accept(&order).unwrap());
+        assert!(guest.accept(&Order::SkipNode{epoch:1,target:finish}).is_err());
+        assert!(guest.accept(&Order::Enter{epoch:5,act:1,visited:vec![target.node],node:1,has_stonesword_key:false,wander:false}).unwrap());
+        assert!(guest.event.forced_skip.is_none());
+        assert!(guest.accept(&Order::Spawn{epoch:5}).unwrap());
+    }
     #[test]
     fn boss_test_broadcast_is_host_only_and_resets_both_clients_once() {
         use super::*;
@@ -754,6 +841,16 @@ mod tests {
         assert!(!event.combat_active());
     }
     #[test]
+    fn trial_revival_requires_completion_and_excludes_skips() {
+        use erdtree_tower::stormveil::Decision;
+        let mut event=EventSync::default();
+        for decision in [None,Some(Decision::Challenge),Some(Decision::Engage),Some(Decision::Skip)] {
+            event.storm_decision=decision;assert!(!event.trial_victory());
+        }
+        event.storm_decision=Some(Decision::Complete);assert!(event.trial_victory());
+        event=Default::default();event.descent_complete=true;assert!(event.trial_victory());
+    }
+    #[test]
     fn fault_discards_travel_already_queued_in_the_same_poll() {
         for signal in 0..3 {
         let config=Config{session:17,seed:42,player:2,host:1,address:"127.0.0.1:1".parse().unwrap(),token:String::new(),peers:vec![]};
@@ -776,6 +873,15 @@ mod tests {
         assert!(!link.accept(&Order::Trial{epoch:0,choice:Trial::Chariot}).unwrap());
         assert!(link.accept(&Order::Trial{epoch:0,choice:Trial::Skip}).is_err());
         assert_eq!(link.event.storm_decision,Some(Decision::Challenge));
+        assert!(link.accept(&Order::DescentComplete{epoch:0}).is_err());
+        link.event=Default::default();
+        assert!(link.accept(&Order::Trial{epoch:0,choice:Trial::Descent}).unwrap());
+        assert!(link.accept(&Order::DescentComplete{epoch:1}).is_err());
+        assert!(link.accept(&Order::DescentComplete{epoch:0}).unwrap());
+        assert!(!link.accept(&Order::DescentComplete{epoch:0}).unwrap());
+        assert!(link.event.trial_victory());
+        link.event=Default::default();
+        assert!(link.accept(&Order::Trial{epoch:0,choice:Trial::Chariot}).unwrap());
         assert!(link.accept(&Order::Stormveil{epoch:0,decision:Decision::Engage}).unwrap());
         let pose=Order::ChariotPose{epoch:0,sequence:1,pose:[1.,2.,0.]};
         assert!(link.accept(&pose).unwrap());assert!(!link.accept(&pose).unwrap());
@@ -806,7 +912,8 @@ mod tests {
         assert!(link.accept(&Order::EventDone{epoch:0,wave:2,killed:0}).is_err());
         assert!(link.accept(&Order::Engage{epoch:0}).is_err());
         link.accept(&Order::Spawn{epoch:0}).unwrap();
-        assert!(link.accept(&Order::Engage{epoch:0}).is_err());
+        // 还没加载完敌人也接受开战（房主宽限后先开战）
+        assert!(!link.bound);link.accept(&Order::Engage{epoch:0}).unwrap();assert!(link.fighting);
         link.bound=true;link.accept(&Order::Engage{epoch:0}).unwrap();assert!(link.fighting);
         assert!(link.accept(&Order::Engage{epoch:1}).is_err());
         events.send(Receive::Order(Order::Enter{epoch:1,act:1,visited:vec![],node:0,has_stonesword_key:false,wander:false})).unwrap();

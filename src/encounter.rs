@@ -78,6 +78,22 @@ impl<H: Copy + Eq> Encounter<H> {
 pub enum Role {Weak,Strong,Boss}
 /// 单人同时在场的敌人上限（Boss 组除外）
 pub const SOLO_CAP:usize=2;
+pub const WAVE_GAP:std::time::Duration=std::time::Duration::from_secs(3);
+#[derive(Clone,Debug,Default)]
+pub struct SpawnGap {
+    blocked:bool,
+    ready_since:Option<std::time::Duration>,
+    admitted:bool,
+}
+impl SpawnGap {
+    /// 同批直接出场；曾等待前批的敌人，条件满足后再等三秒。放行后不再重新拦截。
+    pub fn allows(&mut self,now:std::time::Duration,eligible:bool)->bool {
+        if self.admitted {return true;}
+        if !eligible {self.blocked=true;self.ready_since=None;return false;}
+        if self.blocked&&now.saturating_sub(*self.ready_since.get_or_insert(now))<WAVE_GAP{return false;}
+        self.admitted=true;true
+    }
+}
 /// 联机与 Boss 组一起出（联机的精英战仍按苦难律法「精英成双」等前面的精英，房主与成员按同一规则各自放出预置实体）；
 /// 其余单人战斗同时在场最多 SOLO_CAP 只，普通战清完弱怪后才出强怪。
 /// previous 为本组中排在 index 之前的敌人状态，未生成的敌人记为 Waiting。
@@ -109,6 +125,35 @@ pub fn may_spawn_paced(networked:bool,monster_node:bool,held:bool,roles:&[Role],
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn later_wave_waits_three_seconds_after_spawn_conditions_clear() {
+        use std::time::Duration as D;
+        let mut gap=SpawnGap::default();
+        assert!(!gap.allows(D::ZERO,false));
+        assert!(!gap.allows(D::from_secs(10),false));
+        assert!(!gap.allows(D::from_secs(20),true));
+        assert!(!gap.allows(D::from_millis(22999),true));
+        assert!(gap.allows(D::from_secs(23),true));
+        assert!(gap.allows(D::from_secs(25),true));
+        assert!(gap.allows(D::from_secs(26),false),"an admitted enemy must not be held again while loading or fighting");
+    }
+    #[test]
+    fn first_wave_and_same_wave_members_have_no_extra_serial_delay() {
+        use std::time::Duration as D;
+        let mut first=SpawnGap::default();assert!(first.allows(D::ZERO,true));
+        let mut second=[SpawnGap::default(),SpawnGap::default()];
+        for gap in &mut second {assert!(!gap.allows(D::ZERO,false));assert!(!gap.allows(D::from_secs(5),true));}
+        for gap in &mut second {assert!(gap.allows(D::from_secs(8),true));}
+    }
+    #[test]
+    fn interrupted_spawn_eligibility_restarts_the_three_second_gap() {
+        use std::time::Duration as D;
+        let mut gap=SpawnGap::default();
+        assert!(!gap.allows(D::ZERO,false));assert!(!gap.allows(D::from_secs(1),true));
+        assert!(!gap.allows(D::from_secs(3),false));assert!(!gap.allows(D::from_secs(10),true));
+        assert!(!gap.allows(D::from_millis(12999),true));assert!(gap.allows(D::from_secs(13),true));
+    }
 
     #[test]
     fn requires_a_live_bound_enemy_before_victory() {

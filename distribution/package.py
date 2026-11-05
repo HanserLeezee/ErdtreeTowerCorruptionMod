@@ -24,6 +24,7 @@ import re
 import xml.etree.ElementTree as ET
 from native_build import build_native
 from release_pack import build as build_release
+from resource_filter import include_scene_asset
 
 LATEST_MANIFEST = 'https://github.com/tamikip/erdtree-tower/releases/latest/download/tower-release.json'
 parser = argparse.ArgumentParser(description='Build the release folder, ZIP and launcher update pack')
@@ -33,7 +34,11 @@ parser.add_argument('--notes', type=Path, help='release notes shown by the launc
 parser.add_argument('--display-version', required=True, help='package version shown to players, e.g. 1.0.0; internal build number stays independent')
 parser.add_argument('--build-number', type=int, help='explicit monotonically increasing release build')
 parser.add_argument('--upload', action='store_true', help='upload the mirror folder with ossutil afterwards (see upload_mirror.py)')
+parser.add_argument('--local-test', action='store_true', help='build a private test ZIP from local changes; never upload')
+parser.add_argument('--slim-game', type=Path, help='build a slim package using this verified local Game directory; first launch reconstructs large assets')
 args = parser.parse_args()
+if args.local_test and args.upload:
+    parser.error('--local-test cannot be uploaded')
 if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', args.display_version):
     parser.error('--display-version must be major.minor.patch')
 if args.upload:
@@ -42,6 +47,9 @@ if args.upload:
     upload_mirror.target_from_url(upload_mirror.mirror_url())
 
 project = Path(__file__).resolve().parents[1]
+from verify_release_sources import require_committed
+if not args.local_test:
+    require_committed(project)
 source = project / 'release-preview'
 dist = project / 'dist'
 profile = (source / 'preview.me3').read_text(encoding='utf-8-sig')
@@ -78,10 +86,13 @@ def copy_tree(src, relative):
                 continue
             if relative == 'scene-assets' and (item.name == 'generation.txt' or item.name.endswith('-build.json') or item.name.endswith('-audit.tsv') or item.suffix.lower() == '.png'):
                 continue
+            if relative == 'scene-assets' and not include_scene_asset(item.relative_to(src)):
+                continue
             copy_file(item, Path(relative) / item.relative_to(src))
 
 copy_file(built_native, native[0])
 copy_file(built_native.with_name('tower_transmog.dll'), 'tower_transmog.dll')
+copy_tree(built_native.parent / 'native-ui', 'native-ui')
 for name in ['LICENSE', 'ADDITIONAL-TERMS.md']:
     copy_file(source / name, name)
 (stage / 'preview.me3').write_text(profile, encoding='utf-8')
@@ -91,9 +102,10 @@ for name in ['Launch-Preview.ps1', 'Launch-Seamless-Tower.ps1', 'New-PartyConfig
 for name in ['scene-assets', 'licenses']:
     copy_tree(project / name, name)
 copy_tree(source / 'loader/bin', 'loader/bin')
+copy_tree(project / 'loader/yafsml', 'loader/yafsml')
 for name in ['LICENSE-MIT', 'LICENSE-APACHE']:
     copy_file(source / 'loader' / name, 'loader/' + name)
-for name in ['Start-Tower.ps1', 'Launch-Logged.ps1', '安装教程.md', '额外DLL插件说明.txt']:
+for name in ['Start-Tower.ps1', 'Launch-Logged.ps1', 'Tower-Loader.ps1', '安装教程.md', '额外DLL插件说明.txt']:
     copy_file(Path(__file__).parent / name, name)
 copy_file(project / 'reference/联机战斗验证.md', '联机战斗验证.md')
 for name in ['ErdtreeTowerLauncher.exe', 'ErdtreeTowerLauncher.exe.config']:
@@ -116,6 +128,18 @@ for mode in ['Solo', 'Seamless']:
         'set "tower_exit_code=%errorlevel%"\nif not "%tower_exit_code%"=="0" pause\n'
         'exit /b %tower_exit_code%\n', encoding='ascii')
 (stage / '安装教程.txt').write_text((stage / '安装教程.md').read_text(encoding='utf-8'), encoding='utf-8-sig')
+(stage / 'asset-mode.txt').write_text('full\n', encoding='ascii')
+if args.local_test:
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=project).decode().strip()
+    patch = subprocess.check_output(['git', 'diff', '--binary', 'HEAD'], cwd=project)
+    untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z'], cwd=project).decode('utf-8').split('\0')
+    extras = {name: hashlib.sha256((project / name).read_bytes()).hexdigest() for name in untracked if name and (project / name).is_file()}
+    (stage / 'BUILD-INFO.json').write_text(json.dumps({'localTest': True, 'gitHead': head, 'includesLocalChanges': bool(patch or extras), 'patchSha256': hashlib.sha256(patch).hexdigest(), 'additionalSourceHashes': extras}, ensure_ascii=False, indent=2), encoding='utf-8')
+    if args.notes:
+        (stage / '好友测试说明.txt').write_text(args.notes.read_text(encoding='utf-8'), encoding='utf-8-sig')
+if args.slim_game:
+    from slim_assets import prepare
+    prepare(project, stage, args.slim_game)
 files = sorted(p for p in stage.rglob('*') if p.is_file())
 for file in files:
     name = file.relative_to(stage).as_posix()
@@ -152,12 +176,13 @@ launcher_version = ET.parse(project / 'launcher/Tower.Launcher/Tower.Launcher.cs
 release = build_release(stage, version, release_dir, previous_manifest(), args.notes.read_text(encoding='utf-8') if args.notes else '', args.display_version, launcher_version)
 # Mirror upload folder: the same paths as GitHub's release download URLs
 mirror_dir = dist / f'mirror-v{version}' / 'releases'
-for folder in [mirror_dir / 'download' / release['tag'], mirror_dir / 'latest' / 'download']:
+for folder in ([] if args.local_test else [mirror_dir / 'download' / release['tag'], mirror_dir / 'latest' / 'download']):
     folder.mkdir(parents=True, exist_ok=True)
     shutil.copy2(release_dir / 'tower-release.json', folder / 'tower-release.json')
-shutil.copy2(release_dir / release['pack']['asset'], mirror_dir / 'download' / release['tag'] / release['pack']['asset'])
+if not args.local_test:
+    shutil.copy2(release_dir / release['pack']['asset'], mirror_dir / 'download' / release['tag'] / release['pack']['asset'])
 # The ZIP carries the install record, so the launcher in a freshly extracted package knows its exact version and files
-(stage / 'tower-install.json').write_text(json.dumps({'version': release['version'], 'displayVersion': release['displayVersion'], 'launcherVersion': release['launcherVersion'], 'files': release['files']}, ensure_ascii=False),
+(stage / 'tower-install.json').write_text(json.dumps({'version': release['version'], 'displayVersion': release['displayVersion'], 'launcherVersion': release['launcherVersion'], 'localTest': args.local_test, 'files': release['files']}, ensure_ascii=False),
                                           encoding='utf-8')
 archive = dist / f'ErdtreeTower-v{version}.zip'
 with zipfile.ZipFile(archive, 'x', zipfile.ZIP_DEFLATED, compresslevel=6) as output:
@@ -170,11 +195,14 @@ checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
 (dist / f'ErdtreeTower-v{version}.zip.sha256').write_text(f'{checksum}  {archive.name}\n', encoding='ascii')
 print(f'Packaged {len(files) + 2} files, {archive.stat().st_size / 1024**2:.1f} MiB: {archive}')
 print(f'SHA256 {checksum}')
-print(f'Upload to GitHub release {release["tag"]} (latest): {archive.name}, {release_dir / "tower-release.json"}, '
-      f'{release_dir / release["pack"]["asset"]}')
+if not args.local_test:
+    print(f'Upload to GitHub release {release["tag"]} (latest): {archive.name}, {release_dir / "tower-release.json"}, '
+          f'{release_dir / release["pack"]["asset"]}')
 if args.upload:
     if upload_mirror.main([str(mirror_dir.parent), '--ossutil', upload_tool]) != 0:
         raise SystemExit(f'Mirror upload check failed; fix it and re-run: python distribution/upload_mirror.py {mirror_dir.parent}')
+elif args.local_test:
+    print('Local test ZIP only; no GitHub or OSS publication performed.')
 elif mirror_url:
     print(f'Mirror: python distribution/upload_mirror.py {mirror_dir.parent}  (or upload {mirror_dir} by hand, '
           f'download/ first, then latest/, and run check_mirror.py {mirror_url} --expect {version})')

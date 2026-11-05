@@ -28,6 +28,11 @@ mod hansfix;
 mod hansfix_text;
 mod torch_proto;
 mod torch_workshop;
+mod native_settings;
+mod native_settings_keys;
+mod radahn_probe;
+mod radahn_entity;
+mod mausoleum;
 mod stats;
 mod enemies;
 mod chariot;
@@ -76,14 +81,18 @@ mod rooms;
 mod scarabs;
 mod map_scarabs;
 mod chest_award;
+mod ember_notice;
 mod smith;
 mod whetblades;
 mod parkour_barrier;
+mod hub_boundary;
+mod event_hosts;
 mod spirits;
 mod bloodstain;
 mod run_screen;
 mod runtime;
 mod party;
+mod party_latency;
 mod travel;
 mod grace_travel;
 mod arenas;
@@ -104,6 +113,10 @@ mod weapon_glow;
 mod dummy;
 mod name_tags;
 mod auras;
+mod keep_runes;
+mod throw_guard;
+mod lobby;
+mod material_award;
 mod law_art;
 mod scenery;
 mod spirit_tune;
@@ -199,6 +212,29 @@ struct TowerPreview {
     run: Option<Run>,
     last_archetype: Option<u8>,
     last_prompt: u64,
+    /// 正在显示的场地文件提示：(提示序号, 开始显示的时间)
+    resource_alert: Option<(u64,std::time::Instant)>,
+}
+
+/// 整合包场地文件不完整的提示：屏幕上方一块醒目的面板（只画不接收输入，任何界面下都能看到）
+fn draw_resource_alert(ui:&hudhook::imgui::Ui,files:&[String]) {
+    use hudhook::imgui::ImColor32;
+    let mut lines=vec![format!("{} 个场地文件缺失或与当前模组版本不一致，进入这些战斗会被拒绝；联机时队友出发后你会留在原地：",files.len())];
+    lines.extend(files.iter().take(4).map(|f|format!("· {f}")));
+    if files.len()>4 {lines.push(format!("…… 共 {} 个",files.len()));}
+    lines.push("请关闭游戏，在启动器里点「校验并修复文件」，再从启动器启动。".into());
+    let title="整合包文件不完整";
+    let size=ui.io().display_size;let line_h=ui.text_line_height_with_spacing();
+    let width=lines.iter().map(|l|ui.calc_text_size(l)[0]).fold(ui.calc_text_size(title)[0],f32::max)+48.0;
+    let height=line_h*(lines.len() as f32+1.6)+32.0;
+    let (x,y)=((size[0]-width)*0.5,size[1]*0.1);
+    let draw=ui.get_foreground_draw_list();
+    draw.add_rect([x,y],[x+width,y+height],ImColor32::from_rgba(18,10,10,235)).filled(true).rounding(6.0).build();
+    draw.add_rect([x,y],[x+width,y+height],ImColor32::from_rgb(214,82,64)).rounding(6.0).thickness(2.0).build();
+    draw.add_text([x+24.0,y+16.0],ImColor32::from_rgb(240,120,96),title);
+    for (i,line) in lines.iter().enumerate() {
+        draw.add_text([x+24.0,y+16.0+line_h*(i as f32+1.6)],ImColor32::from_rgb(236,226,210),line);
+    }
 }
 
 impl TowerPreview {
@@ -212,6 +248,7 @@ impl TowerPreview {
             run: Some(Run::new(42, Class::Vagabond)),
             last_archetype: None,
             last_prompt: 0,
+            resource_alert: None,
         }
     }
 }
@@ -226,6 +263,7 @@ impl ImguiRenderLoop for TowerPreview {
         ctx.io_mut().mouse_draw_cursor = capture;
         let map=runtime::with_view(|view|view.run.as_ref().is_some_and(|run|
             matches!(run.phase,Phase::Map)&&!run.contract_pending())).unwrap_or(false);
+        reward_ui::poll_game_devices(capture&&input::active());
         reward_ui::poll_pad(ctx.io_mut(),capture&&input::active(),map);
         let io = ctx.io_mut();
         if capture {
@@ -335,13 +373,17 @@ impl ImguiRenderLoop for TowerPreview {
         if let Some(text)=hansfix::stale() {
             ui.get_foreground_draw_list().add_text([24.0,24.0],hudhook::imgui::ImColor32::from_rgb(255,96,72),text);
         }
+        native_settings::begin_frame();
         // 按键提示跟着最后用的设备切换（手柄 / 键鼠）
         pad::update(ui);
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Settle)) {
+        if options::pressed(ui,Hotkey::Settle) {
             if runtime::PLAYER_READY.load(Ordering::Relaxed) {
                 runtime::QUICK_END.store(true,Ordering::Relaxed);
                 log("Home: quick settlement requested");
             }else{log("Home: ignored before a character is loaded");}
+        }
+        if options::pressed(ui,Hotkey::Skip) {
+            runtime::SKIP.store(true,Ordering::Relaxed);
         }
         static FIRST_FRAME: AtomicBool = AtomicBool::new(true);
         if FIRST_FRAME.swap(false, Ordering::Relaxed) {
@@ -349,7 +391,7 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let view = runtime::view();
         let map_open=self.visible&&view.as_ref().and_then(|v|v.run.as_ref()).or(self.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Map));
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Overlay))&&!map_open {
+        if options::pressed(ui,Hotkey::Overlay)&&!map_open {
             self.visible = !self.visible;
             log(format!("F10: visible={}", self.visible));
         }
@@ -363,10 +405,10 @@ impl ImguiRenderLoop for TowerPreview {
         }
         // J：旅程档案（往期旅程与图鉴），战斗中不响应；档案打开时同一个键负责关闭
         let fighting=view.as_ref().and_then(|v|v.run.as_ref()).is_some_and(|r|matches!(r.phase,Phase::Combat{..}));
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Archive))&&!fighting&&!ui.io().want_text_input&&!run_screen::active()&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
+        if !run_screen::active()&&options::pressed(ui,Hotkey::Archive)&&!fighting&&!ui.io().want_text_input&&runtime::PLAYER_READY.load(Ordering::Relaxed) {run_screen::archive_entry();}
         let rewards=&mut self.rewards;
         let run_screen=run_screen::draw(ui,&mut |icon|rewards.icon(icon));
-        if ui.is_key_pressed_no_repeat(options::key(Hotkey::Debug)) {debug_menu::toggle();}
+        if options::pressed(ui,Hotkey::Debug) {debug_menu::toggle();}
         self.debug.draw(ui,view.as_ref());
         // [HansFix] 火把工坊（营地铁匠）
         if view.as_ref().is_none_or(|v|v.run.is_none()) {torch_workshop::close();}
@@ -397,6 +439,11 @@ impl ImguiRenderLoop for TowerPreview {
         }
         let key=format!("UI visible={} snapshot={} capture={} settlement={} view={:?}",self.visible,snapshot.is_some(),input::CAPTURE.load(Ordering::Relaxed),run_screen,view.as_ref().map(|v|(v.ready,v.busy,v.travelling,v.room.is_some(),v.shared_event,v.prompt)));
         if self.diagnostics.due(key.clone(),std::time::Instant::now()){log(key);}
+        // 整合包场地文件不完整：屏幕上方醒目提示 20 秒（开局检查一次，之后每次出发被拒再提示）
+        if let Some((id,files))=view.as_ref().and_then(|v|v.resource_alert.as_ref()) {
+            if self.resource_alert.is_none_or(|(seen,_)|seen!=*id) {self.resource_alert=Some((*id,std::time::Instant::now()));}
+            if self.resource_alert.is_some_and(|(_,at)|at.elapsed()<std::time::Duration::from_secs(20)) {draw_resource_alert(ui,files);}
+        }
         if run_screen {map_ui::set_peek_because(false,"run-screen");return;}
         // [HansFix7] N opens/closes a read-only route map anywhere in a journey (not over the normal map).
         let journey=view.as_ref().and_then(|v|v.run.as_ref()).filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won));
@@ -417,7 +464,7 @@ impl ImguiRenderLoop for TowerPreview {
             if view.room.is_some()||view.shared_event {
                 return;
             }
-            if view.travelling {
+            if view.travelling||view.run.as_ref().is_some_and(|r|r.retry_node.is_some()) {
                 input::CAPTURE.store(false, Ordering::Relaxed);
                 return;
             }
@@ -506,6 +553,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
             }
             return;
         }
+        native_settings::init(diagnostics::module_path(address));
         render_diagnostics::install();
         log("Executable version accepted; installing DX12 hooks");
         let result = Hudhook::builder()
@@ -529,6 +577,7 @@ pub unsafe extern "system" fn DllMain(module: HINSTANCE, reason: u32, _: *mut c_
         if let Err(error)=unsafe {smith::install()} {log(format!("Smith reinforcement unavailable: {error}"));}
         if let Err(error)=unsafe {spirits::install()} {log(format!("Spirit use trace unavailable: {error}"));}
         if let Err(error)=unsafe {star_stream::install()} {log(format!("Star stream unavailable: {error}"));}
+        if let Err(error)=unsafe {radahn_entity::install()} {log(format!("Radahn event binding unavailable: {error}"));}
         if let Err(error)=unsafe {embers::install_critical_trace()} {log(format!("Critical stack detection unavailable: {error}"));}
         if let Err(error) = wait_for_system_init(&program, Duration::from_secs(60)) {
             log(format!("Game system initialization failed: {error}"));

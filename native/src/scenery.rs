@@ -6,6 +6,7 @@ use hudhook::{RenderContext,imgui::{ImColor32,TextureId,Ui}};
 use erdtree_tower::{Phase,Run,themes::Theme};
 
 const ART_SIZE:(u32,u32)=(800,450);
+const SHOW_ACT_ART:bool=false;
 /// 想要的插画、已经载入的插画与贴图
 static ART:Mutex<(Option<&'static str>,Option<(&'static str,Option<TextureId>)>)>=Mutex::new((None,None));
 /// 开幕标题卡：正在显示的主题与开始时间、上一次显示过的 (幕种子, 幕)
@@ -16,6 +17,7 @@ pub fn theme(run:&Run)->&'static Theme {erdtree_tower::themes::for_run(run)}
 
 /// before_render：上传当前主题的插画（换主题时换掉）
 pub fn load(renderer:&mut dyn RenderContext) {
+    if !SHOW_ACT_ART {return;}
     let Ok(mut art)=ART.lock() else{return};
     let Some(wanted)=art.0 else{return};
     if art.1.is_some_and(|(name,_)|name==wanted) {return;}
@@ -27,6 +29,7 @@ pub fn load(renderer:&mut dyn RenderContext) {
     art.1=Some((wanted,texture));
 }
 fn texture(name:&'static str)->Option<TextureId> {
+    if !SHOW_ACT_ART {return None;}
     let Ok(mut art)=ART.lock() else{return None};
     art.0=Some(name);
     art.1.filter(|(loaded,_)|*loaded==name).and_then(|(_,t)|t)
@@ -52,7 +55,7 @@ pub fn draw_card(ui:&Ui) {
     let alpha=(t/0.6).min(1.0).min((CARD_SECONDS-t)/0.9);
     let size=ui.io().display_size;let s=(size[1]/1080.0).max(0.6);
     let list=ui.get_foreground_draw_list();
-    list.add_rect([0.0,0.0],size,rgb(0x060505,0.86*alpha)).filled(true).build();
+    if SHOW_ACT_ART {list.add_rect([0.0,0.0],size,rgb(0x060505,0.86*alpha)).filled(true).build();}
     // 插画：铺满屏幕（按比例裁切），轻微推近
     if let Some(id)=texture(theme.art) {
         let zoom=1.0+0.04*(t/CARD_SECONDS);

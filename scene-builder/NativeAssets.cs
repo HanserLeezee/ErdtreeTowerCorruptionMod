@@ -65,13 +65,14 @@ static class NativeAssets {
     }
     public static void Build(string game,string output,string cache) {
         Directory.CreateDirectory(output);
-        var enemySource=Path.GetFullPath("outputs/erdtree-tower/scene-assets/enemy-pools.txt");
+        var source=SceneInputs.Root();
+        var enemySource=Path.GetFullPath(Path.Combine(source,"enemy-pools.txt"));
         var enemyOutput=Path.GetFullPath(Path.Combine(output,"enemy-pools.txt"));
         if(enemySource!=enemyOutput)File.Copy(enemySource,enemyOutput,true);
-        var rewardSource=Path.GetFullPath("outputs/erdtree-tower/scene-assets/reward-catalog.txt");
+        var rewardSource=Path.GetFullPath(Path.Combine(source,"reward-catalog.txt"));
         var rewardOutput=Path.GetFullPath(Path.Combine(output,"reward-catalog.txt"));
         if(rewardSource!=rewardOutput)File.Copy(rewardSource,rewardOutput,true);
-        var extrasSource=Path.GetFullPath("outputs/erdtree-tower/scene-assets/shop-extras.txt");
+        var extrasSource=Path.GetFullPath(Path.Combine(source,"shop-extras.txt"));
         var extrasOutput=Path.GetFullPath(Path.Combine(output,"shop-extras.txt"));
         if(extrasSource!=extrasOutput)File.Copy(extrasSource,extrasOutput,true);
         var regulation=SoulsFormats.Cryptography.RegulationDecryptor.DecryptERRegulation(Path.Combine(game,"regulation.bin"));
@@ -100,7 +101,7 @@ static class NativeAssets {
         Save("NpcParam",enemies);
         var goods=Read("EquipParamGoods");var shops=Read("ShopLineupParam");var lots=Read("ItemLotParam_map","ItemLotParam");
         var messages=BND4.Read(Path.Combine(cache,"item_dlc02.msgbnd.dcx"));
-        BossAssets.Build(output,name=>Read(name),(name,param)=>Save(name,param),messages);
+        BossAssets.Build(source,output,name=>Read(name),(name,param)=>Save(name,param),messages);
         enemies=Read("NpcParam");BalanceAssets.Apply(enemies,output);Save("NpcParam",enemies);
         void AddText(BND4 b,int id,IEnumerable<(int,string)> entries) {
             var f=b.Files.Single(f=>f.ID==id);var t=FMG.Read(f.Bytes);
@@ -150,13 +151,13 @@ static class NativeAssets {
         ContractAssets.Build(Read("SpEffectParam","SpEffect"),Save);
         PassiveAssets.Build(Read("SpEffectParam","SpEffect"),Save);
         EliteAssets.Build(Read("SpEffectParam","SpEffect"),Read("EquipParamAccessory"),Save);
-        AffixAssets.Build(name=>Read(name,name=="SpEffectParam"?"SpEffect":name),Save,messages,"outputs/erdtree-tower/scene-assets",output);
-        AdvancedAffixAssets.Build(name=>Read(name,name=="SpEffectParam"?"SpEffect":name),Save,messages,"outputs/erdtree-tower/scene-assets",output);
+        AffixAssets.Build(name=>Read(name,name=="SpEffectParam"?"SpEffect":name),Save,messages,source,output);
+        AdvancedAffixAssets.Build(name=>Read(name,name=="SpEffectParam"?"SpEffect":name),Save,messages,source,output);
         var menu=BND4.Read(Path.Combine(cache,"menu_dlc02.msgbnd.dcx"));
         PartyStatusText.Add(menu);
         RecoveryText.Add(menu);
         RecoveryText.AddTalismans(menu,regulation,messages);
-        AddText(menu,33,new[]{(9500080,"捕捉粪金龟 · 1000 卢恩"),(9500081,"询问规则"),(9500082,"稍等片刻。"),(9500083,"三次机会已用完，祝你一路顺风。"),(9500084,"需要 1000 卢恩。")});
+        AddText(menu,33,new[]{(9500080,"捕捉粪金龟 · 500 卢恩"),(9500081,"询问规则"),(9500082,"稍等片刻。"),(9500083,"三次机会已用完，祝你一路顺风。"),(9500084,"需要 500 卢恩。")});
         AddText(menu,32,new[]{(9500004,"进入爬塔路线")});
         AddText(menu,32,new[]{(9500005,"打开宝箱")});
         AddText(menu,32,new[]{(9500072,"用石剑钥匙打开")});
@@ -186,7 +187,7 @@ static class NativeAssets {
             global.Files.Add(new BinderFile(Binder.FileFlags.Flag1,global.Files.Max(f=>f.ID)+1,$"N:\\GR\\data\\INTERROOT_win64\\script\\talk\\m00_00_00_00\\t95000000{service}.esd",bytes));
         }
         Directory.CreateDirectory(output);SoulsFormats.Cryptography.RegulationDecryptor.EncryptERRegulation(Path.Combine(output,"regulation.bin"),regulation);
-        var shopSource=Path.GetFullPath("outputs/erdtree-tower/scene-assets/shop-catalog.txt");
+        var shopSource=Path.GetFullPath(Path.Combine(source,"shop-catalog.txt"));
         var shopOutput=Path.GetFullPath(Path.Combine(output,"shop-catalog.txt"));
         if(shopSource!=shopOutput)File.Copy(shopSource,shopOutput,true);
         var msgDir=Path.Combine(output,"msg","zhocn");Directory.CreateDirectory(msgDir);menu.Write(Path.Combine(msgDir,"menu_dlc02.msgbnd.dcx"));messages.Write(Path.Combine(msgDir,"item_dlc02.msgbnd.dcx"));

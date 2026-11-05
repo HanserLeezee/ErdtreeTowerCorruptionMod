@@ -5,6 +5,11 @@ pub enum Action {None,Waiting,RequestRevival(Position),FinishRevival}
 #[derive(Default)]
 pub struct Death {epoch:Option<u64>,position:Option<Position>,requested:bool,finished:bool}
 impl Death {
+    pub fn awaiting_revival(&self)->bool {self.position.is_some()&&!self.finished}
+    pub fn redirect(&mut self,destination:Position) {
+        if !self.finished&&self.position.is_some_and(|p|p.block==destination.block)
+            &&destination.xyz.iter().all(|n|n.is_finite()){self.position=Some(destination);}
+    }
     pub fn epoch(&self)->Option<u64>{self.epoch}
     #[cfg(test)]
     pub fn observe(&mut self,epoch:Option<u64>,player:Option<(Position,bool)>,victory:bool,warping:bool)->Action {
@@ -34,6 +39,20 @@ impl Death {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn trial_death_uses_safe_goal_and_waits_for_native_confirmation() {
+        let mut d=Death::default();let fall=Position{block:35,xyz:[0.0,-500.0,0.0]};
+        let goal=Position{block:35,xyz:[125.644,-408.535,-61.213]};
+        d.observe_confirmed(Some(1),Some((fall,true)),false,false,false);
+        assert!(d.awaiting_revival());
+        assert_eq!(d.observe_confirmed(Some(1),Some((fall,true)),true,false,false),Action::RequestRevival(fall));
+        d.redirect(goal);
+        assert_eq!(d.observe_confirmed(Some(1),Some((goal,false)),true,false,false),Action::Waiting);
+        assert!(d.awaiting_revival());
+        assert_eq!(d.observe_confirmed(Some(1),Some((goal,false)),true,false,true),Action::FinishRevival);
+        assert!(!d.awaiting_revival());
+        assert_eq!(d.observe_confirmed(Some(1),Some((goal,false)),true,false,true),Action::None);
+    }
     #[test]
     fn waits_for_authoritative_victory_and_requests_only_once() {
         let mut d=Death::default();let p=Position{block:45,xyz:[1.0,2.0,3.0]};

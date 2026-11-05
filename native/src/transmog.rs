@@ -1,4 +1,4 @@
-use std::{ffi::{c_char,c_void,CString},path::PathBuf,sync::{Mutex,OnceLock,atomic::{AtomicUsize,Ordering}}};
+use std::{ffi::{c_char,c_void,CString},path::PathBuf,sync::{LazyLock,Mutex,OnceLock,atomic::{AtomicBool,AtomicUsize,Ordering}}};
 use eldenring::cs::{EquipParamProtector,SoloParamRepository};
 use fromsoftware_shared::FromStatic;
 use erdtree_tower::transmog::Appearance;
@@ -12,6 +12,13 @@ static SET:AtomicUsize=AtomicUsize::new(0);
 static STATUS:Mutex<String>=Mutex::new(String::new());
 static LOOK:Mutex<Option<((u32,i32),Appearance)>>=Mutex::new(None);
 static APPLIED:Mutex<Option<Appearance>>=Mutex::new(None);
+static UNLOCKED:LazyLock<AtomicBool>=LazyLock::new(||AtomicBool::new(erdtree_tower::transmog::unlocked(&super::run_log::records())));
+pub fn unlocked()->bool {UNLOCKED.load(Ordering::Acquire)}
+pub fn recorded(record:&erdtree_tower::journal::Record) {
+    if erdtree_tower::transmog::unlocked(std::slice::from_ref(record))&&!UNLOCKED.swap(true,Ordering::AcqRel) {
+        super::log("TRANSMOG unlocked by a completed tower climb");
+    }
+}
 #[derive(Clone)]
 pub struct Armor {pub id:i32,pub slot:usize,pub name:String,pub icon:u32}
 static CATALOG:OnceLock<Vec<Armor>>=OnceLock::new();
@@ -37,12 +44,13 @@ pub fn initialize(module:Option<PathBuf>) {
     else{super::log("Integrated armor transmog engine ready");}
 }
 fn path(owner:(u32,i32))->PathBuf {super::hub::path(owner,"appearance")}
-pub fn current()->Appearance {LOOK.lock().ok().and_then(|s|s.as_ref().map(|(_,look)|*look)).unwrap_or_default()}
+pub fn current()->Appearance {LOOK.lock().ok().and_then(|s|s.as_ref().map(|(_,look)|*look)).unwrap_or_default().effective(unlocked())}
 fn category(id:i32)->Option<usize> {
     if let Some(slot)=erdtree_tower::transmog::BARE.iter().position(|&bare|bare==id){return Some(slot);}
     catalog().iter().find(|item|item.id==id).map(|item|item.slot)
 }
 pub fn choose(owner:(u32,i32),slot:usize,id:i32)->Result<(),String> {
+    if !unlocked(){return Err(erdtree_tower::transmog::LOCKED_REASON.into());}
     if !ready(){return Err("幻化组件尚未就绪".into());}
     if id>=0&&!erdtree_tower::dlc::item_allowed(0x10000000|id as u32){return Err("此防具需要启用 DLC 内容".into());}
     let mut state=LOOK.lock().map_err(|_|"幻化状态不可用")?;
@@ -65,6 +73,7 @@ pub fn sync(owner:(u32,i32)) {
         *state=Some((owner,look));if let Ok(mut last)=APPLIED.lock(){*last=None;}
     }
     let look=state.as_ref().unwrap().1;drop(state);
+    let look=look.effective(unlocked());
     let address=SET.load(Ordering::Acquire);if address==0{return;}
     let Ok(mut last)=APPLIED.lock() else{return;};if *last==Some(look){return;}
     let set:unsafe extern "C" fn(*const i32)->bool=unsafe{std::mem::transmute(address)};

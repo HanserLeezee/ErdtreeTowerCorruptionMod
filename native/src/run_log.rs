@@ -38,7 +38,7 @@ pub fn finish(run:&Run,fights:Vec<Fight>,owner:Option<(u32,i32)>)->(Record,Optio
     let time=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|t|t.as_secs());
     let record=Record::new(run,fights,affixes(run),time);
     let result=std::fs::OpenOptions::new().create(true).append(true).open(archive_path()).and_then(|mut f|writeln!(f,"{}",record.line()));
-    if let Err(error)=result {super::log(format!("Run archive write failed: {error}"));}
+    match result {Ok(())=>super::transmog::recorded(&record),Err(error)=>super::log(format!("Run archive write failed: {error}"))}
     let gain=owner.and_then(|owner|super::legacy::award(owner,&record));
     (record,gain)
 }

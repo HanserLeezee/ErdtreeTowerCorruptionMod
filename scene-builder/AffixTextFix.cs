@@ -158,13 +158,18 @@ static class AffixTextFix {
         }
         var poolNames=PoolNames(input);var npcFile=messages.Files.First(f=>f.Name.Contains("NpcName"));var npcNames=FMG.Read(npcFile.Bytes);
         // Boss 名称（9600000 + 名称序号）：原有的由完整构建写入；之后追加的 Boss（boss-pool.txt 末尾）在这里补上
-        var bossNames=File.ReadAllLines(Path.Combine(input,"boss-pool.txt")).Select(l=>l.Split('|')).GroupBy(p=>int.Parse(p[2])).ToDictionary(g=>BossNameFirst+g.Key,g=>g.First()[7]);
+        var bossNames=BossAssets.BarNames(input);
+        var legacyBossNames=BossAssets.Parts(input).ToDictionary(p=>BossNameFirst+p.Index,p=>p.Name);
+        var legacyBarNames=AffixBarNames(input,legacyBossNames).ToDictionary(p=>p.id,p=>p.text);
+        var renamedBars=new Dictionary<int,string>();
         foreach(var (id,name) in bossNames) {
             var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==id);
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(id,name));added++;}
-            else if(existing.Text!=name)throw new Exception($"Boss name collision: {id}");
+            else if(existing.Text!=name) {
+                if(existing.Text!=legacyBossNames[id])throw new Exception($"Boss name collision: {id}");
+                existing.Text=name;renamedBars.Add(id,name);changed++;
+            }
         }
-        var renamedBars=new Dictionary<int,string>();
         for(int i=0;i<poolNames.Count;i++) {
             var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==PoolNameFirst+i);
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(PoolNameFirst+i,poolNames[i]));added++;}
@@ -179,7 +184,8 @@ static class AffixTextFix {
             var existing=npcNames.Entries.FirstOrDefault(e=>e.ID==id);
             if(existing==null){npcNames.Entries.Add(new FMG.Entry(id,text));added++;}
             else if(existing.Text!=text) {
-                if(existing.Text?.Replace("涅槃的","不屈的",StringComparison.Ordinal)!=text)throw new Exception($"Affix bar name collision: {id}: '{existing.Text}' -> '{text}'");
+                var normalized=existing.Text?.Replace("涅槃的","不屈的",StringComparison.Ordinal);
+                if(normalized!=text&&(!legacyBarNames.TryGetValue(id,out var legacy)||normalized!=legacy))throw new Exception($"Affix bar name collision: {id}: '{existing.Text}' -> '{text}'");
                 existing.Text=text;renamedBars.Add(id,text);changed++;
             }
         }

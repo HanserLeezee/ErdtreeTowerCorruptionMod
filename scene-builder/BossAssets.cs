@@ -7,6 +7,32 @@ static class BossAssets {
         var p=line.Split('|');return new Part(int.Parse(p[0]),int.Parse(p[1]),int.Parse(p[2]),int.Parse(p[3]),int.Parse(p[4]),int.Parse(p[5]),int.Parse(p[6]),p[7],p[8]);
     }).ToArray();
     public static int Npc(Part p,bool elite)=>950000000+p.Index*2+(elite?1:0);
+    public static Dictionary<int,string> BarNames(string root) {
+        var parts=Parts(root).ToDictionary(p=>p.Index);
+        var names=parts.Values.ToDictionary(p=>9600000+p.Index,p=>p.Name);
+        var assigned=new HashSet<int>();
+        foreach(var line in File.ReadAllLines(Path.Combine(root,"boss-bar-names.txt"))) {
+            var p=line.Split('|');int index=int.Parse(p[0]);
+            if(p.Length!=4||!assigned.Add(index)||!parts.TryGetValue(index,out var part)||part.Model!=int.Parse(p[1])||part.Source!=int.Parse(p[2])||string.IsNullOrWhiteSpace(p[3]))
+                throw new Exception($"Invalid individual boss name: {line}");
+            names[9600000+index]=p[3];
+        }
+        foreach(var group in parts.Values.GroupBy(p=>p.Encounter).Where(g=>g.Count()>1))
+            if(group.Any(p=>!assigned.Contains(p.Index)))throw new Exception($"Missing individual names for encounter {group.Key}");
+        return names;
+    }
+    public static void TestBarNames(string root) {
+        var parts=Parts(root);var names=BarNames(root);
+        foreach(var (index,name) in new[]{(61,"熔炉骑士"),(62,"混种战士"),(68,"诺克斯修士"),(69,"诺克斯剑士"),(83,"“病花”米兰达"),(84,"恶兆猎人"),(20,"小恶魔"),(45,"结晶人（手杖）"),(46,"结晶人（矛）")})
+            if(names[9600000+index]!=name)throw new Exception($"Individual boss bar mismatch: {index}: '{names[9600000+index]}' != '{name}'");
+        foreach(var group in parts.GroupBy(p=>p.Encounter))foreach(var p in group) {
+            var name=names[9600000+p.Index];
+            if(group.Count()==1&&name!=p.Name)throw new Exception("Single boss name changed");
+            if(group.Count()>1&&(name.Contains('＋')||name.Contains('+')||name.Contains("双人组")||name.Contains("三人组")||name.Contains("双胞胎")))throw new Exception($"Group label on individual bar: {p.Index}");
+        }
+        if(names.Count!=parts.Length)throw new Exception("Boss name IDs changed");
+        Console.WriteLine($"Verified individual bar names for {parts.GroupBy(p=>p.Encounter).Count(g=>g.Count()>1)} multi-enemy encounters; single boss names and IDs preserved");
+    }
     public static void Export(string output) {
         using var document=JsonDocument.Parse(File.ReadAllText("work/boss-candidates.json"));
         var lines=new List<string>();int encounter=0,index=0;
@@ -25,11 +51,14 @@ static class BossAssets {
         Directory.CreateDirectory(output);File.WriteAllLines(Path.Combine(output,"boss-pool.txt"),lines);
         Console.WriteLine($"Exported {encounter} encounters / {index} native components");
     }
-    public static void Build(string output,Func<string,PARAM> read,Action<string,PARAM> save,BND4 messages) {
-        if(Path.GetFullPath("outputs/erdtree-tower/scene-assets/boss-pool.txt")!=Path.GetFullPath(Path.Combine(output,"boss-pool.txt")))File.Copy("outputs/erdtree-tower/scene-assets/boss-pool.txt",Path.Combine(output,"boss-pool.txt"),true);
+    public static void Build(string source,string output,Func<string,PARAM> read,Action<string,PARAM> save,BND4 messages) {
+        foreach(var name in new[]{"boss-pool.txt","boss-bar-names.txt"}) {
+            var input=Path.GetFullPath(Path.Combine(source,name));var target=Path.GetFullPath(Path.Combine(output,name));
+            if(input!=target)File.Copy(input,target,true);
+        }
         var npcs=read("NpcParam");var ai=read("NpcThinkParam");
         var file=messages.Files.First(f=>f.Name.Contains("NpcName"));var names=FMG.Read(file.Bytes);
-        var parts=Parts(output);
+        var parts=Parts(output);var barNames=BarNames(output);
         foreach(var p in parts) {
             if(!ai.Rows.Any(r=>r.ID==p.Think))throw new Exception($"Missing boss AI: {p.Name}");
             foreach(bool elite in new[]{false,true}) {
@@ -41,7 +70,7 @@ static class BossAssets {
                 npcs.Rows.Add(row);
             }
             int text=9600000+p.Index;if(names.Entries.Any(e=>e.ID==text))throw new Exception("Boss name collision");
-            names.Entries.Add(new FMG.Entry(text,p.Name));
+            names.Entries.Add(new FMG.Entry(text,barNames[text]));
         }
         names.Entries.Sort((a,b)=>a.ID.CompareTo(b.ID));file.Bytes=names.Write();save("NpcParam",npcs);
     }
@@ -117,12 +146,12 @@ static class BossAssets {
         Console.WriteLine($"Added {added.Count} late boss parameter rows ({string.Join(",",added)}), rebuilt {rebuilt.Count} with a new source ({string.Join(",",rebuilt)}); other rows and params unchanged");
     }
     public static void Verify(string output,Func<string,PARAM> read) {
-        var parts=Parts(output);var npcs=read("NpcParam");var ai=read("NpcThinkParam");
+        var parts=Parts(output);var barNames=BarNames(output);var npcs=read("NpcParam");var ai=read("NpcThinkParam");
         // 原有 105 组 140 个部件；之后追加 13 个单部件 Boss（追忆与 DLC），再追加 5 个 DLC Boss（序号 153–157，仅单人）
-        if(parts.Select(p=>p.Encounter).Distinct().Count()!=123||parts.Length!=158||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
+        if(parts.Select(p=>p.Encounter).Distinct().Count()!=124||parts.Length!=159||parts.Select(p=>p.Index).Distinct().Count()!=parts.Length)throw new Exception("Boss table coverage mismatch");
         var names=BND4.Read(Path.Combine(output,"msg/zhocn/item_dlc02.msgbnd.dcx")).Files.Where(f=>f.Name.Contains("NpcName")).SelectMany(f=>FMG.Read(f.Bytes).Entries).ToList();
         foreach(var p in parts) {
-            if(!ai.Rows.Any(r=>r.ID==p.Think)||!names.Any(e=>e.ID==9600000+p.Index&&e.Text==p.Name))throw new Exception("Boss AI/name missing");
+            if(!ai.Rows.Any(r=>r.ID==p.Think)||!names.Any(e=>e.ID==9600000+p.Index&&e.Text==barNames[e.ID]))throw new Exception("Boss AI/name missing");
             var source=npcs.Rows.Single(r=>r.ID==p.Source);
             foreach(bool elite in new[]{false,true}) {
                 var row=npcs.Rows.Single(r=>r.ID==Npc(p,elite));

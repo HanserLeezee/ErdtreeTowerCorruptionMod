@@ -24,6 +24,8 @@ struct Tuning {
 }
 const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:15,thorn_percent:8,swift_speed:1.2,shield_every:20,reborn_percent:40,proud_after:8};
 const STRONG:Tuning=Tuning{rot_per_hit:2,leech_permille:25,thorn_percent:12,swift_speed:1.3,shield_every:15,reborn_percent:60,proud_after:6};
+/// 荆棘：一次反弹最多扣这么多生命（同一帧打出的伤害合算一次）
+const THORN_CAP:i64=100;
 const BAR_MARKER:i32=FIRST+99;
 /// text-update 为新增词条的组合也写好血条名称后加入的第二个标记
 const BAR_MARKER_V2:i32=FIRST+98;
@@ -123,9 +125,11 @@ impl Fight {
             let (hp,max)=(chr.modules.data.hp,chr.modules.data.max_hp);
             // 荆棘：单人按 Boss 受到的伤害；联机只按自己与自己召唤物打的（看 last_hit_by），由各自在本机反弹给自己
             if hp<foe.hp&&self.affixes.contains(&Affix::Thorned)&&(!party||own.contains(&chr.last_hit_by)) {reflected+=i64::from(foe.hp-hp)*tuning.thorn_percent/100;}
-            if !authority {foe.hp=hp;continue;}
+            // 常驻词条效果（减伤、攻击、再生等）房主和成员都在本机挂上：效果不随网络同步，只有房主挂时成员那边的 Boss 更“软”，
+            // 成员算出的伤害偏高，本机副本先被打到 0、卡住不倒。护盾、吸血、涅槃这些改 Boss 状态的仍只由房主做
             let present:Vec<i32>=chr.special_effect.entries().map(|e|e.param_id).collect();
             for id in self.affixes.iter().filter_map(|a|resident(*a,self.empowered)) {if !present.contains(&id){chr.apply_speffect(id,false);}}
+            if !authority {foe.hp=hp;continue;}
             if hp<foe.hp {foe.hurt=now;if foe.proud{chr.remove_speffect(pride);foe.proud=false;}}
             if self.affixes.contains(&Affix::Leeching)&&team_taken>0&&max>0 {
                 chr.modules.data.hp=(i64::from(hp)+i64::from(max)*tuning.leech_permille/1000).min(i64::from(max)) as i32;
@@ -144,7 +148,8 @@ impl Fight {
             }
         }
         let Some(player)=world.main_player.as_mut().filter(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()) else{return};
-        // 荆棘：反弹给本机玩家，不会致死
+        // 荆棘：反弹给本机玩家，一次最多 100，不会致死
+        let reflected=reflected.min(THORN_CAP);
         if reflected>0 {
             let data=&mut player.chr_ins.modules.data;
             data.hp=(i64::from(data.hp)-reflected).max(1) as i32;self.player_hp=Some(data.hp);

@@ -85,18 +85,24 @@ fn locate(memory:&impl Memory,base:usize,world:usize,build:&Build)->Option<Spect
     if keys!=7{return None;}
     Some(Spectator{root,address,target:memory.pointer(address+0x58)?,key})
 }
-struct Pending {player:usize,owner:u32,origin:Position,fp:i32,started:Instant,sent:bool,stable:u8,reported_lookup:bool}
+struct Pending {player:usize,owner:u32,origin:Position,relocate:bool,fp:i32,started:Instant,sent:bool,stable:u8,reported_lookup:bool}
 pub fn available()->bool {BASE.load(Ordering::Acquire)!=0}
 pub fn finished(player:usize)->bool {player!=0&&FINISHED.load(Ordering::Acquire)==player}
 pub fn owned_address<T>(player:&fromsoftware_shared::OwnedPtr<T>)->usize {player.as_ptr() as usize}
 pub fn cancel(){if let Ok(mut p)=PENDING.lock(){*p=None;}FINISHED.store(0,Ordering::Release);}
 pub fn request(player:&PlayerIns,origin:Position)->Result<(),String> {
+    request_inner(player,origin,false)
+}
+pub fn request_at_safe_goal(player:&PlayerIns,origin:Position)->Result<(),String> {
+    request_inner(player,origin,true)
+}
+fn request_inner(player:&PlayerIns,origin:Position,relocate:bool)->Result<(),String> {
     if !available(){return Err("无缝复活请求接口未通过版本校验".into());}
     if !origin.xyz.iter().all(|p|p.is_finite()){return Err("死亡位置无效，未请求复活".into());}
     let mut pending=PENDING.lock().map_err(|_|"复活状态锁不可用")?;
     if pending.is_none() {
         *pending=Some(Pending{player:player as *const _ as usize,owner:unsafe {player.player_game_data.as_ref()}.character_id,
-            origin,fp:player.chr_ins.modules.data.fp,started:Instant::now(),sent:false,stable:0,reported_lookup:false});
+            origin,relocate,fp:player.chr_ins.modules.data.fp,started:Instant::now(),sent:false,stable:0,reported_lookup:false});
         FINISHED.store(0,Ordering::Release);
     }
     Ok(())
@@ -138,6 +144,14 @@ pub fn tick(world:&mut WorldChrMan,game:&GameMan) {
         unsafe {request(spectator.address as *mut u8,true,false)};
         pending.sent=true;
         super::log(format!("PARTY_REVIVE native request submitted without detour target={:#x}",spectator.target));
+        return;
+    }
+    if pending.relocate&&alive&&pending.sent&&spectator.target==usize::MAX&&spectator.key==0 {
+        let physics=&mut player.chr_ins.modules.physics;
+        physics.position.0=pending.origin.xyz[0];physics.position.1=pending.origin.xyz[1];physics.position.2=pending.origin.xyz[2];
+        physics.last_update_position=physics.position;physics.chr_proxy_pos_update_requested=true;
+        pending.relocate=false;
+        super::log(format!("PARTY_REVIVE moved to safe trial goal: {:?}",pending.origin));
         return;
     }
     let p=&player.chr_ins.modules.physics.position;

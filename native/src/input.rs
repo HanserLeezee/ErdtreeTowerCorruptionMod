@@ -54,6 +54,7 @@ pub fn capture_route(visible: bool, player_present: bool, view: &crate::runtime:
     if view.room.is_some()||view.shared_event {
         return false;
     }
+    if view.run.as_ref().is_some_and(|r|r.retry_node.is_some()){return false;}
     visible
         && player_present
         && !view.travelling
@@ -88,7 +89,7 @@ mod tests {
     fn native_room_menus_never_capture_game_input() {
         let mut view = crate::runtime::View {
             shared_event:false,
-            ballots:vec![],
+            ballots:vec![],latencies:vec![],
             runes: 0,
             boss_affixes: None,
             boss_alert: None,
@@ -97,6 +98,7 @@ mod tests {
             build: vec![],
             dummy: None,
             stats: Default::default(),
+            resource_alert: None,
             run: None,
             status: String::new(),
             busy: false,
@@ -120,7 +122,7 @@ mod tests {
     fn initialization_blocks_actions_but_keeps_cursor_available() {
         let mut view = crate::runtime::View {
             shared_event:false,
-            ballots:vec![],
+            ballots:vec![],latencies:vec![],
             runes: 0,
             boss_affixes: None,
             boss_alert: None,
@@ -129,6 +131,7 @@ mod tests {
             build: vec![],
             dummy: None,
             stats: Default::default(),
+            resource_alert: None,
             run: None,
             status: String::new(),
             busy: true,

@@ -20,7 +20,7 @@ namespace Tower.Update
         static readonly Regex PathLine = new Regex(@"(?m)^\s*path\s*=\s*['""]([^'""\r\n]+)['""]");
         static readonly Regex EnabledLine = new Regex(@"(?m)^\s*enabled\s*=\s*(\w+)[^\r\n]*");
         /// <summary>这些是加载器、无缝或爬塔自己的 DLL，不能当插件再加一遍</summary>
-        static readonly Regex Reserved = new Regex(@"^(ersc|dinput8|me3.*|erdtree_tower_\w+)\.dll$", RegexOptions.IgnoreCase);
+        static readonly Regex Reserved = new Regex(@"^(ersc|dinput8|yafsml|me3.*|erdtree_tower_\w+)\.dll$", RegexOptions.IgnoreCase);
         /// <summary>下载下来的压缩包常和 DLL 同名放在一起，不跟着复制</summary>
         static readonly string[] Archives = { ".zip", ".7z", ".rar", ".gz", ".tar" };
         const int MaxFiles = 2000;

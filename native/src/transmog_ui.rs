@@ -21,6 +21,14 @@ pub fn draw(ui:&Ui,page:&mut Page,icon:&mut dyn FnMut(u32)->Option<TextureId>,re
     let text=|x:f32,y:f32,value:&str,color:[f32;4],scale:f32|{ui.set_window_font_scale(scale*s);ui.set_cursor_screen_pos(p(x,y));ui.text_colored(color,value);};
     text(76.0,176.0,"防具幻化",GOLD,1.45);
     text(214.0,186.0,"只改变外观，保留当前装备的防御、重量与词条",MUTED,0.92);
+    if !transmog::unlocked() {
+        panel(&ui.get_window_draw_list(),p(76.0,222.0),p(1530.0,806.0),s);
+        style::centered(ui,"尚未解锁",p(76.0,365.0),p(1530.0,417.0),GOLD,1.6,s);
+        ornament(&ui.get_window_draw_list(),p(803.0,445.0),200.0*s,s);
+        style::centered(ui,erdtree_tower::transmog::LOCKED_REASON,p(76.0,480.0),p(1530.0,524.0),WHITE,1.15,s);
+        style::centered(ui,"单人、联机均可 · 调试旅程不计入",p(76.0,548.0),p(1530.0,584.0),MUTED,0.95,s);
+        return;
+    }
     // 部位切换：四段，带代表图标
     for (part,name) in PARTS.iter().enumerate() {
         let x=76.0+part as f32*232.0;let (min,max)=(p(x,222.0),p(x+218.0,270.0));

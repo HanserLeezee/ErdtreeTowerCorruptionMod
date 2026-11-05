@@ -35,16 +35,17 @@ pub fn background(draw:&DrawListMut<'_>,size:[f32;2]) {
 pub const CARDS:usize=12;
 /// 新封面的插画区更高，文字要放得更低
 pub fn tall_art(kind:usize)->bool {kind%CARDS>=6}
-pub fn card(draw:&DrawListMut<'_>,kind:usize,min:[f32;2],max:[f32;2],light:u8) {
+/// 誓约卡插画：3 列 × 2 行图集中的第 kind 幅，可以半透明（入场 / 离场动画用）；[HansFix] 6 以后是新封面图集
+pub fn card_alpha(draw:&DrawListMut<'_>,kind:usize,min:[f32;2],max:[f32;2],light:u8,alpha:u8) {
     let kind=kind%CARDS;
-    if kind>=6&&texture(4).is_none() {return card(draw,kind%6,min,max,light);}
+    if kind>=6&&texture(4).is_none() {return card_alpha(draw,kind%6,min,max,light,alpha);}
     if kind>=6 {
         let kind=kind-6;let col=(kind%3) as f32;let row=(kind/3) as f32;
-        image(draw,4,min,max,([(col+0.002)/3.0,(row+0.002)/2.0],[(col+0.998)/3.0,(row+0.998)/2.0]),light);
+        image_alpha(draw,4,min,max,([(col+0.002)/3.0,(row+0.002)/2.0],[(col+0.998)/3.0,(row+0.998)/2.0]),light,alpha);
         return;
     }
     let col=(kind%3) as f32;let row=(kind/3) as f32;
-    image(draw,0,min,max,([(col+0.005)/3.0,(row+0.003)/2.0],[(col+0.995)/3.0,(row+0.997)/2.0]),light);
+    image_alpha(draw,0,min,max,([(col+0.005)/3.0,(row+0.003)/2.0],[(col+0.995)/3.0,(row+0.997)/2.0]),light,alpha);
 }
 /// 职业插画：3 列 × 2 行图集中的第 index 幅，按目标区域的宽高比从顶部裁切（人物在画面上部）；zoom 大于 1 时向中心推近
 pub fn class_art(draw:&DrawListMut<'_>,index:usize,min:[f32;2],max:[f32;2],light:u8,zoom:f32) {

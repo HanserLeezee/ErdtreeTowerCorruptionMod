@@ -19,11 +19,11 @@ fn at_shop()->Run {
 fn saved_shop_stock_survives_reload_and_is_cleared_on_leave() {
     let mut run=at_shop();
     let Phase::Node{id}=run.phase else{panic!("not at shop")};
-    run.shop_stock=Some(ShopStock{node:id,items:vec![[0,1000000,3000,1];37]});
+    run.shop_stock=Some(ShopStock{node:id,items:vec![[0,1000000,3000,1];37],torches:vec![]});
     let loaded=Run::decode(&run.encode().unwrap()).unwrap();
     assert_eq!(loaded.shop_stock,run.shop_stock);
     let mut left=loaded.clone();left.leave_shop().unwrap();assert!(left.shop_stock.is_none());
     assert!(!left.encode().unwrap().contains("shop_stock"));
-    let mut wrong=run.clone();wrong.shop_stock=Some(ShopStock{node:id+1,items:vec![]});
+    let mut wrong=run.clone();wrong.shop_stock=Some(ShopStock{node:id+1,items:vec![],torches:vec![]});
     assert!(Run::decode(&wrong.encode().unwrap()).is_err());
 }

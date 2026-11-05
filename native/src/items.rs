@@ -111,3 +111,7 @@ pub fn give_stack(data:&mut eldenring::cs::PlayerGameData,id:u32)->Result<(),Str
     let before=count(data);give(&[((0x40000000|id) as i32,1,-1)])?;
     if count(data)<=before{return Err("材料未进入背包或仓库，请清理容量后重试".into());}Ok(())
 }
+
+pub fn stack_count(data:&eldenring::cs::PlayerGameData,id:u32)->u64 {
+    super::loot::held(data,|e|e.category()==eldenring::cs::ItemCategory::Goods&&e.param_id()==id)
+}

@@ -7,7 +7,7 @@ use crate::runtime::{self,Action,View};
 struct Detail {icon:u32,name:String,info:String,caption:String,stats:String,skill:String,cursed:bool}
 static RARITIES:LazyLock<HashMap<u32,u8>>=LazyLock::new(||include_str!("../../scene-assets/reward-rarities.tsv").lines().chain(include_str!("../../scene-assets/affix-rarities.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-rarities.tsv").lines()).chain(include_str!("../../scene-assets/talisman-rarities.tsv").lines()).map(|line| {
     let (id,rarity)=line.split_once('\t').unwrap();(id.parse().unwrap(),rarity.parse().unwrap())
-}).collect());
+}).chain(std::iter::once((0x40000000|super::smith::VOUCHER,0))).collect());
 pub fn item_quality(id:u32)->u8 {RARITIES.get(&erdtree_tower::rewards::spirit_base(id)).copied().unwrap_or(0).min(3)}
 pub(crate) fn rarity_color(tier:usize)->[f32;4] {
     static COLORS:LazyLock<[[f32;4];4]>=LazyLock::new(|| {
@@ -127,6 +127,7 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
         let p:Vec<_>=line.split('\t').collect();
         (p[0].parse().unwrap(),Detail{icon:p[1].parse().unwrap(),name:p[2].into(),info:p[3].replace("\\n","\n"),caption:p[4].replace("\\n","\n"),stats:p[5].replace("\\n","\n"),skill:p[6].replace("\\n","\n"),cursed:false})
     }).collect();
+    result.insert(0x40000000|super::smith::VOUCHER,Detail{icon:990104,name:"强化石".into(),info:"在营地铁匠或商店强化武器，也可升阶护符、调灵骨灰".into(),caption:String::new(),stats:String::new(),skill:String::new(),cursed:false});
     for (id,detail) in &mut result {
         // 原版没有战技的盾牌，默认战灰是“无技能”，中文名是占位的“DLC dummy”
         if detail.skill.starts_with("DLC dummy") {detail.skill="无\n这件装备原本没有战技，可在铁匠处安装战灰。".into();}
@@ -156,10 +157,22 @@ pub fn affix_summary_in(run:Option<&Run>,id:u32)->Option<Gear> {
     Some(gear)
 }
 pub fn affix_summary(id:u32)->Option<Gear> {
+    let id=if id>>28==0 {id/10000*10000}else{id};
     let quality=erdtree_tower::affixes::tier(id)?;
     let detail=DETAILS.get(&id)?;
     let lines=detail.info.lines().filter(|l|l.chars().any(|c|c.is_ascii_digit())&&(l.contains('+')||l.contains('-'))).map(str::to_owned).collect();
     Some(Gear{icon:detail.icon,quality,name:detail.name.clone(),lines,cursed:false})
+}
+#[test]
+fn infused_weapon_keeps_build_summary_at_every_reinforcement_level() {
+    for item in erdtree_tower::affixes::CATALOG.iter().filter(|i|i.id>>28==0) {
+        let expected=affix_summary(item.id).unwrap();
+        for affinity in 0..=12 {for level in [0,1,10,25] {
+            assert_eq!(affix_summary(item.id+affinity*100+level),Some(expected.clone()),"weapon={} affinity={affinity} level={level}",item.id);
+        }}
+    }
+    assert!(affix_summary(1_000_100).is_none());
+    assert!(affix_summary(0x10000000|9_999_999).is_none());
 }
 /// 图鉴：所有词条装备上出现过的词条名（去掉数值，按装备编号的先后）
 pub fn affix_names()->&'static [String] {
@@ -179,12 +192,74 @@ pub fn weapon_type_icon(kind:u8)->Option<u32> {
     erdtree_tower::rewards::CATALOG.iter().filter(|i|i.kind==erdtree_tower::rewards::ItemKind::Weapon&&i.id/1_000_000==u32::from(kind))
         .find_map(|i|DETAILS.get(&i.id).map(|d|d.icon))
 }
-/// 调试菜单：按名称或说明搜索可以直接发放的奖励物品（含词条装备）
+fn search_key(text:&str)->String {text.chars().filter(|c|!c.is_whitespace()).flat_map(char::to_lowercase).collect()}
+fn pinyin_keys(text:&str)->(String,String) {
+    use pinyin::ToPinyin;
+    let (mut full,mut initials)=(String::new(),String::new());
+    for c in text.chars() {
+        if let Some(py)=c.to_pinyin() {let syllable=py.plain();full.push_str(syllable);initials.push(syllable.as_bytes()[0] as char);}
+        else if !c.is_whitespace() {for lower in c.to_lowercase(){full.push(lower);initials.push(lower);}}
+    }
+    (full,initials)
+}
+static ITEM_SEARCH:LazyLock<HashMap<u32,(String,String)>>=LazyLock::new(||DETAILS.iter()
+    .filter(|(id,_)|erdtree_tower::rewards::lookup(**id).is_some())
+    .map(|(id,d)|(*id,pinyin_keys(&format!("{}\n{}",d.name,d.info)))).collect());
+fn alternate_pinyin_matches(text:&str,query:&str,initials:bool)->bool {
+    use pinyin::ToPinyinMulti;
+    if query.is_empty()||!query.is_ascii(){return false;}
+    let (mut positions,mut next)=(Vec::new(),Vec::new());
+    for c in text.chars().filter(|c|!c.is_whitespace()) {
+        next.clear();
+        let mut advance=|token:&str| {
+            for &pos in &positions {
+                let rest=&query[pos..];
+                if token.starts_with(rest){return true;}
+                if rest.starts_with(token){next.push(pos+token.len());}
+            }
+            for (offset,_) in token.char_indices() {
+                let suffix=&token[offset..];
+                if suffix.starts_with(query){return true;}
+                if query.starts_with(suffix){next.push(suffix.len());}
+            }
+            false
+        };
+        if let Some(choices)=c.to_pinyin_multi() {
+            for py in choices {let token=py.plain();if advance(if initials{&token[..1]}else{token}){return true;}}
+        }else {let mut buf=[0u8;4];if advance(c.to_ascii_lowercase().encode_utf8(&mut buf)){return true;}}
+        next.sort_unstable();next.dedup();std::mem::swap(&mut positions,&mut next);
+    }
+    false
+}
+/// 调试菜单：中文、全拼或首字母搜索名称和说明。
 pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
     let query=query.trim();if query.is_empty() {return vec![];}
-    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|erdtree_tower::rewards::lookup(**id).is_some()&&(d.name.contains(query)||d.info.contains(query)))
+    let key=search_key(query);
+    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|(erdtree_tower::rewards::lookup(**id).is_some()||**id==(0x40000000|super::smith::VOUCHER))&&(d.name.contains(query)||d.info.contains(query)
+        ||ITEM_SEARCH.get(id).is_some_and(|(full,initials)|full.contains(&key)||initials.contains(&key))
+        ||alternate_pinyin_matches(&d.name,&key,false)||alternate_pinyin_matches(&d.name,&key,true)
+        ||alternate_pinyin_matches(&d.info,&key,false)||alternate_pinyin_matches(&d.info,&key,true)))
         .map(|(id,d)|(*id,format!("{}　{}",d.name,d.info.replace("\\n","　").replace('\n',"　")))).collect();
     hits.sort_by_key(|(id,_)|*id);hits.truncate(limit);hits
+}
+#[test]
+fn debug_search_includes_upgrade_stone() {
+    for query in ["强化石","qianghuashi","qhs"] {
+        let hits=search_items(query,80);
+        assert!(hits.iter().any(|(id,name)|*id==(0x40000000|super::smith::VOUCHER)&&name.contains("强化石")),"{query}");
+    }
+}
+#[test]
+fn item_search_accepts_pinyin_initials_and_keeps_chinese() {
+    let chinese=search_items("长剑",usize::MAX);
+    assert!(!chinese.is_empty());
+    for query in ["changjian","CHANG JIAN","cj"] {
+        let hits=search_items(query,usize::MAX);
+        assert!(chinese.iter().all(|(id,_)|hits.iter().any(|(found,_)|found==id)),"{query}");
+    }
+    assert!(search_items("  ",80).is_empty());
+    assert!(search_items("zzzzzznotanitem",80).is_empty());
+    assert!(search_items("jian",3).len()<=3);
 }
 pub fn talisman_description(id:u32)->(String,String) {
     DETAILS.get(&(0x20000000|id)).map(|d|(d.name.clone(),d.info.clone()))
@@ -295,6 +370,7 @@ impl Panel {
             self.textures.insert(icon,texture);
         }
     }
+    /// 誓约页：与三选一同一套做法——不铺背景图，透出游戏场景、压暗角；卡片依次升起淡入，确认时选中的卡上浮带金光、其余下沉，播完再提交
     pub fn draw_contract(&mut self,ui:&Ui,run:&Run,view:&View) {
         let Some(contract)=run.contract.as_ref().filter(|c|c.selection_pending())else{return;};
         let fresh=contract.rules==1;
@@ -342,7 +418,19 @@ impl Panel {
     fn draw_oath_screen(&mut self,ui:&Ui,view:&View,screen:OathScreen) {
         let now=ui.time();
         self.selection.sync(screen.key.clone(),now);
-        let ready=view.ready&&!view.busy&&now>=self.selection.armed_at;
+        // 已提交、等游戏切走这一页：先不画；2 秒还没切走（提交没生效）就重新显示
+        if let Some(at)=self.selection.closed {
+            if now-at<2.0 {return;}
+            self.selection.closed=None;self.selection.opened=now;self.selection.armed_at=now+0.35;
+        }
+        // 离场动画播完：提交
+        if let Some((_,pending))=self.selection.closing.filter(|(at,_)|now-at>=REWARD_OUT) {
+            runtime::submit(match pending {Pending::Claim(i)|Pending::Gear(i)=>(screen.choose)(i),Pending::Skip=>screen.skip_action.clone()});
+            self.selection.closing=None;self.selection.closed=Some(now);return;
+        }
+        let closing=self.selection.closing.map(|(at,pending)|(((now-at)/REWARD_OUT).clamp(0.0,1.0) as f32,pending));
+        let opened=now-self.selection.opened;
+        let ready=view.ready&&!view.busy&&now>=self.selection.armed_at&&closing.is_none();
         let key=|keys:&[Key]|keys.iter().any(|k|ui.is_key_pressed_no_repeat(*k));
         let count=screen.cards.len();
         if ready {
@@ -359,36 +447,81 @@ impl Panel {
         let size=ui.io().display_size;let s=(size[0]/1600.0).min(size[1]/900.0);
         let oy=(size[1]-900.0*s)*0.5;let mid=size[0]*0.5;
         let gold=[0.91,0.79,0.53,1.0];
-        let _bg=ui.push_style_color(StyleColor::WindowBg,[0.02,0.02,0.02,1.0]);
+        let _bg=ui.push_style_color(StyleColor::WindowBg,[0.0,0.0,0.0,0.0]);
         let _border=ui.push_style_color(StyleColor::Border,[0.0,0.0,0.0,0.0]);
         ui.window("幕间契约").position([0.0,0.0],Condition::Always).size(size,Condition::Always)
             .title_bar(false).resizable(false).movable(false).collapsible(false).scroll_bar(false).build(|| {
-            crate::oath_art::background(&ui.get_window_draw_list(),size);
-            ui.set_window_font_scale(s*0.95);center(ui,mid,oy+32.0*s,&screen.heading,gold);
-            ui.set_window_font_scale(s*1.85);center(ui,mid,oy+73.0*s,screen.title,gold);
-            ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s,&screen.subtitle,[0.63,0.58,0.46,1.0]);
-            if let Some(held)=&screen.held {ui.set_window_font_scale(s*0.8);center(ui,mid,oy+155.0*s,held,[0.80,0.70,0.50,1.0]);}
-            // [HansFix6] Up to four cards (three new oaths + deepen): shrink cards and gaps so they fit the 1600-unit layout.
+            // 透出游戏场景：整体压暗，上下两端与四周再暗一些（与三选一相同）
+            {
+                let draw=ui.get_window_draw_list();
+                let fade=ease(opened,0.0,0.3).max(0.05)*closing.map_or(1.0,|(k,_)|1.0-k);
+                let shade=|a:f32|ImColor32::from_rgba(0,0,0,(a*fade*255.0) as u8);
+                draw.add_rect([0.0,0.0],size,shade(0.5)).filled(true).build();
+                draw.add_rect_filled_multicolor([0.0,0.0],[size[0],size[1]*0.26],shade(0.4),shade(0.4),shade(0.0),shade(0.0));
+                draw.add_rect_filled_multicolor([0.0,size[1]*0.7],size,shade(0.0),shade(0.0),shade(0.45),shade(0.45));
+                draw.add_rect_filled_multicolor([0.0,0.0],[size[0]*0.18,size[1]],shade(0.3),shade(0.0),shade(0.0),shade(0.3));
+                draw.add_rect_filled_multicolor([size[0]*0.82,0.0],size,shade(0.0),shade(0.3),shade(0.3),shade(0.0));
+            }
+            // 标题：淡入并从上方落下一点，离场时先淡出
+            {
+                let appear=ease(opened,0.0,0.4)*closing.map_or(1.0,|(k,_)|1.0-(k*2.0).min(1.0));
+                let _alpha=ui.push_style_var(StyleVar::Alpha(appear.max(0.001)));
+                let dy=(1.0-appear)*-14.0*s;
+                ui.set_window_font_scale(s*0.95);center(ui,mid,oy+32.0*s+dy,&screen.heading,gold);
+                ui.set_window_font_scale(s*1.85);center(ui,mid,oy+73.0*s+dy,screen.title,gold);
+                ui.set_window_font_scale(s*0.9);center(ui,mid,oy+127.0*s+dy,&screen.subtitle,[0.72,0.66,0.52,1.0]);
+                if let Some(held)=&screen.held {ui.set_window_font_scale(s*0.8);center(ui,mid,oy+155.0*s+dy,held,[0.84,0.74,0.54,1.0]);}
+            }
+            // [HansFix6] 最多四张卡（三张新誓约 + 深化）：卡片与间距缩小以放进 1600 宽的版面
             let (width,gap)=match count {0..=2=>(366.0*s,72.0*s),3=>(352.0*s,44.0*s),_=>(334.0*s,28.0*s)};
             let top=oy+187.0*s;let height=width*549.0/366.0;let k=width/(366.0*s);
             for (i,card) in cards.iter().enumerate() {
                 let x=mid-(width*count as f32+gap*(count as f32-1.0))*0.5+i as f32*(width+gap);
-                ui.set_cursor_pos([x,top-7.0*s]);
-                {let _disabled=ui.begin_disabled(!ready);if ui.invisible_button(format!("contract-{i}"),[width,height+7.0*s]){self.selection.selected=i;}}
-                let hovered=ui.is_item_hovered();let selected=self.selection.selected==i;
-                let y=top-if selected{7.0*s}else if hovered{3.0*s}else{0.0};
-                crate::oath_art::card(&ui.get_window_draw_list(),card.art,[x,y],[x+width,y+height],if selected{255}else if hovered{225}else{165});
+                let selected=self.selection.selected==i;
+                let hovered=ready&&ui.is_mouse_hovering_rect([x,top-7.0*s],[x+width,top+height]);
+                // 入场：从下方依次升起（略微越过再落回）并淡入；离场：选中的卡上浮淡出，其余下沉淡出
+                let start=0.08+i as f64*0.09;
+                let (rise,appear)=(back_out(opened,start,0.5),ease(opened,start,0.3));
+                let chosen=closing.is_some_and(|(_,p)|p==Pending::Claim(i));
+                let (out_y,out_a)=match closing {
+                    Some((k,_)) if chosen=>(-30.0*k,1.0-((k-0.35)/0.65).clamp(0.0,1.0)),
+                    Some((k,_))=>(90.0*k*k,1.0-(k*1.7).min(1.0)),
+                    None=>(0.0,1.0),
+                };
+                let alpha=appear*out_a;
+                if alpha<=0.0 {continue;}
+                let _alpha=ui.push_style_var(StyleVar::Alpha(alpha));
+                let a8=|a:f32|(a*alpha*255.0) as u8;
+                let y=top-if selected{7.0*s}else if hovered{3.0*s}else{0.0}+((1.0-rise)*70.0+out_y)*s;
+                let draw=ui.get_window_draw_list();
+                // 卡片背后一层柔和的暗影，让卡片从游戏场景里浮出来
+                for (spread,a) in [(18.0,0.10),(10.0,0.16),(4.0,0.22)] {
+                    let d=spread*s;draw.add_rect([x-d,y-d+6.0*s],[x+width+d,y+height+d+6.0*s],ImColor32::from_rgba(0,0,0,a8(a))).filled(true).rounding(d).build();
+                }
+                crate::oath_art::card_alpha(&draw,card.art,[x,y],[x+width,y+height],if selected{255}else if hovered{225}else{170},a8(1.0));
                 let tall=crate::oath_art::tall_art(card.art);
                 if let Some((r,g,b))=card.accent {
-                    ui.get_window_draw_list().add_rect([x-4.0*s,y-4.0*s],[x+width+4.0*s,y+height+4.0*s],ImColor32::from_rgba(r,g,b,if selected{230}else{150})).rounding(6.0*s).thickness(2.5*s).build();
+                    draw.add_rect([x-4.0*s,y-4.0*s],[x+width+4.0*s,y+height+4.0*s],ImColor32::from_rgba(r,g,b,a8(if selected{0.9}else{0.6}))).rounding(6.0*s).thickness(2.5*s).build();
                 }
+                // 确认时选中的卡外扩一圈金光
+                if let Some((k,_))=closing.filter(|_|chosen) {
+                    let d=(4.0+36.0*k)*s;
+                    draw.add_rect([x-d,y-d],[x+width+d,y+height+d],ImColor32::from_rgba(255,226,160,((1.0-k)*230.0) as u8)).rounding(4.0*s).thickness((3.0-2.0*k)*s).build();
+                    draw.add_rect([x,y],[x+width,y+height],ImColor32::from_rgba(255,240,205,((1.0-k)*(1.0-k)*120.0) as u8)).filled(true).build();
+                }
+                if selected {
+                    for (offset,a,thickness) in [(3.0,35,9.0),(2.0,80,4.0),(1.0,220,1.5)] {
+                        draw.add_rect([x-offset*s,y-offset*s],[x+width+offset*s,y+height+offset*s],ImColor32::from_rgba(225,204,143,a8(a as f32/255.0))).rounding(2.0*s).thickness(thickness*s).build();
+                    }
+                }
+                drop(draw);
                 if let Some(label)=&card.label {
                     let (r,g,b)=card.accent.unwrap_or((236,196,104));
                     ui.set_window_font_scale(s*0.85);
                     let half=ui.calc_text_size(label)[0]*0.5+14.0*s;let (cx,cy)=(x+width*0.5,y+(if tall{338.0}else{300.0})*s*k);
                     let draw=ui.get_window_draw_list();
-                    draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(14,10,7,225)).filled(true).rounding(11.0*s).build();
-                    draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(r,g,b,220)).rounding(11.0*s).thickness(1.4*s).build();
+                    draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(14,10,7,a8(0.88))).filled(true).rounding(11.0*s).build();
+                    draw.add_rect([cx-half,cy-3.0*s],[cx+half,cy+ui.text_line_height()+3.0*s],ImColor32::from_rgba(r,g,b,a8(0.86))).rounding(11.0*s).thickness(1.4*s).build();
                     drop(draw);
                     center(ui,cx,cy,label,[f32::from(r)/255.0*0.6+0.4,f32::from(g)/255.0*0.6+0.4,f32::from(b)/255.0*0.6+0.4,1.0]);
                 }
@@ -411,17 +544,20 @@ impl Panel {
                         offset+=text.lines().count() as f32*24.0+14.0;
                     }
                 }
+                if selected {ui.set_window_font_scale(s*0.9);center(ui,x+width*0.5,y+height-52.0*s,"已选",gold);}
+                ui.set_cursor_pos([x,y]);let _disabled=ui.begin_disabled(!ready);
+                if ui.invisible_button(format!("contract-{i}"),[width,height]){self.selection.selected=i;}
             }
-            let min=[mid-210.0*s,oy+786.0*s];let max=[mid+210.0*s,oy+852.0*s];
-            ui.set_cursor_pos(min);
-            let confirm={let _disabled=ui.begin_disabled(!ready);ui.invisible_button("confirm-oath",[420.0*s,66.0*s])};
-            let hovered=ui.is_item_hovered();
-            crate::oath_art::button(&ui.get_window_draw_list(),min,max,if !ready{130}else if hovered{255}else{220});
-            crate::pad::label_in(ui,min,max,Some(crate::pad::CONFIRM),screen.confirm,gold,s,crate::pad::Tone::Light);
-            if confirm||key(&[Key::Enter,Key::GamepadFaceDown]) {if let Some(index)=self.selection.claim(now,ready){runtime::submit((screen.choose)(index));}}
-            // 跳过：和确认同款的纹理按钮，小一号
-            let skip={let _disabled=ui.begin_disabled(!ready);ui.set_window_font_scale(s*0.9);textured_button(ui,screen.skip,Some(crate::pad::BACK),[32.0*s,oy+834.0*s],[250.0*s,46.0*s],gold)};
-            if (skip||key(&[Key::Escape,Key::GamepadFaceRight]))&&self.selection.claim(now,ready).is_some() {runtime::submit(screen.skip_action.clone());}
+            // 按钮与提示：卡片升起后淡入，离场时先淡出
+            let controls=ease(opened,0.35,0.3)*closing.map_or(1.0,|(k,_)|1.0-(k*2.0).min(1.0));
+            let _controls=ui.push_style_var(StyleVar::Alpha(controls.max(0.001)));
+            let buttons_y=oy+768.0*s;
+            ui.set_window_font_scale(s);
+            let confirm={let _disabled=ui.begin_disabled(!ready);textured_button(ui,screen.confirm,Some(crate::pad::CONFIRM),[mid-170.0*s,buttons_y],[340.0*s,52.0*s],gold)};
+            {let origin=ui.window_pos();crate::pad::hints(ui,[origin[0]+mid,origin[1]+buttons_y+80.0*s],0.5,&[(Some(crate::pad::MOVE_X),"切换")],24.0*s,17.0*s,[gold[0],gold[1],gold[2],controls],crate::pad::Tone::Light);}
+            if confirm||key(&[Key::Enter,Key::GamepadFaceDown]) {if let Some(index)=self.selection.claim(now,ready){self.selection.closing=Some((now,Pending::Claim(index)));}}
+            let skip={let _disabled=ui.begin_disabled(!ready);ui.set_window_font_scale(s*0.85);textured_button(ui,screen.skip,Some(crate::pad::BACK),[24.0*s,size[1]-66.0*s],[220.0*s,44.0*s],gold)};
+            if (skip||key(&[Key::Escape,Key::GamepadFaceRight]))&&self.selection.claim(now,ready).is_some() {self.selection.closing=Some((now,Pending::Skip));}
             if !crate::oath_art::ready(){ui.set_window_font_scale(s*0.8);center(ui,mid,oy+866.0*s,"誓约贴图缺失，请重启更新后的启动器",[0.91,0.49,0.40,1.0]);}
         });
     }
@@ -910,6 +1046,36 @@ pub fn map_command()->Option<(Option<[f32;2]>,bool)> {
     MAP_CONFIRM.with(|state|{let state=state.borrow();state.active.then(||(MAP_POINTER.with(|p|p.borrow().position),state.pressed))})
 }
 thread_local! {static PAD_RETRY:std::cell::Cell<[Option<std::time::Instant>;4]>=const {std::cell::Cell::new([None;4])};}
+// 游戏自己的输入设备：XInput 手柄以外（PS 手柄等，游戏用 libScePad 读）也能识别成手柄；鼠标移动看 DirectInput 读数，
+// 游戏自己挪光标不算。手柄按“有输入且和上一帧不同”判断，静止时一直不为零的轴不会把提示锁在手柄上
+thread_local! {static DEVICE_STATE:std::cell::RefCell<Vec<(usize,u64)>>=const {std::cell::RefCell::new(Vec::new())};}
+pub fn poll_game_devices(trust_cursor:bool) {
+    use eldenring::dluid::{DLUserInputManagerImpl,KeyboardDevice,MouseDevice,VirtualMultiDevice,DummyDevice};
+    use fromsoftware_shared::{FromStatic,Superclass};
+    use std::hash::{Hash,Hasher};
+    let Ok(manager)=(unsafe {DLUserInputManagerImpl::instance()}) else{crate::pad::note_mouse(false,trust_cursor);return;};
+    let (mut pad,mut mouse)=(false,false);
+    DEVICE_STATE.with(|previous|{
+        let mut previous=previous.borrow_mut();let mut seen=Vec::new();
+        for ptr in manager.user_input_devices.iter() {
+            let device=unsafe {ptr.as_ref()};
+            if let Some(m)=device.as_subclass::<MouseDevice>() {mouse|=m.di_mouse_state.lx.abs()+m.di_mouse_state.ly.abs()>=3;continue;}
+            if device.as_subclass::<KeyboardDevice>().is_some()||device.as_subclass::<VirtualMultiDevice>().is_some()||device.as_subclass::<DummyDevice>().is_some() {continue;}
+            let data=&device.virtual_input_data;
+            let digital:Vec<u32>=data.dynamic_bitset.as_slice().to_vec();
+            let analog:Vec<i8>=data.analog_key_info.vector.iter().map(|v|if v.is_finite()&&v.abs()>0.5 {(v*4.0).round().clamp(-100.0,100.0) as i8}else{0}).collect();
+            let busy=digital.iter().any(|w|*w!=0)||analog.iter().any(|v|*v!=0);
+            let mut hasher=std::collections::hash_map::DefaultHasher::new();(&digital,&analog).hash(&mut hasher);let state=hasher.finish();
+            let address=std::ptr::from_ref(device) as usize;
+            let changed=previous.iter().find(|(a,_)|*a==address).is_some_and(|(_,s)|*s!=state);
+            pad|=busy&&changed;seen.push((address,state));
+        }
+        *previous=seen;
+    });
+    static LOGGED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+    if pad {crate::pad::note_pad(true,true);if !LOGGED.swap(true,std::sync::atomic::Ordering::Relaxed) {crate::log("TOWER_PAD game pad device input seen");}}
+    crate::pad::note_mouse(mouse,trust_cursor);
+}
 pub fn poll_pad(io:&mut Io,active:bool,map:bool) {
     let mut state=PadState::default();let mut found=false;
     if active {PAD_RETRY.with(|retry| {

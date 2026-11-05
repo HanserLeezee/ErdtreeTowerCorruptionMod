@@ -15,6 +15,13 @@ type Receive=unsafe extern "C" fn(*mut c_void,i32,*mut *mut Message,i32)->i32;
 type Release=unsafe extern "C" fn(*mut Message);
 type Close=unsafe extern "C" fn(*mut c_void,*const Identity,i32)->bool;
 type Accept=unsafe extern "C" fn(*mut c_void,*const Identity)->bool;
+type ConnectionInfo=unsafe extern "C" fn(*mut c_void,*const Identity,*mut c_void,*mut RealtimeStatus)->i32;
+// Steamworks SteamNetConnectionRealTimeStatus_t (NetworkingMessages002).
+#[repr(C)]
+#[derive(Default)]
+struct RealtimeStatus {
+    state:i32,ping:i32,quality:[f32;2],rates:[f32;4],counters:[i32;4],queue_time:i64,reserved:[u32;16],
+}
 const MESSAGES_ENTRY:&CStr=c"SteamAPI_SteamNetworkingMessages_SteamAPI_v002";
 fn messages_module(mut lookup:impl FnMut(&str,&CStr)->Option<(*mut c_void,*mut c_void)>)->Result<(*mut c_void,*mut c_void,&'static str),String> {
     for name in ["steam_api64_o.dll","steam_api64.dll"] {
@@ -33,6 +40,7 @@ unsafe extern "system" {
 pub struct Transport {
     interface:NonNull<c_void>,set:SetIdentity,get:GetIdentity,
     send:Send,receive:Receive,release:Release,close:Close,accept:Accept,roster:Roster,
+    connection_info:Option<ConnectionInfo>,
 }
 // Access remains serialized by the runtime lock; no interface call overlaps another.
 unsafe impl std::marker::Send for Transport {}
@@ -110,9 +118,12 @@ impl Transport {
                 release:std::mem::transmute(address(c"SteamAPI_SteamNetworkingMessage_t_Release")?),
                 close:std::mem::transmute(address(c"SteamAPI_ISteamNetworkingMessages_CloseChannelWithUser")?),roster,
                 accept:std::mem::transmute(address(c"SteamAPI_ISteamNetworkingMessages_AcceptSessionWithUser")?),
+                connection_info:address(c"SteamAPI_ISteamNetworkingMessages_GetSessionConnectionInfo").ok().map(|p|std::mem::transmute::<*mut c_void,ConnectionInfo>(p)),
             })
         }
     }
+    /// 队员退出后换成缩小后的名单（之后不再给他发消息，也不收他的）
+    pub fn set_roster(&mut self,roster:Roster) {self.roster=roster;}
     pub fn send(&self,peer:u64,data:&[u8])->Result<(),String> {
         if !allowed(&self.roster,peer,data.len()){return Err("无效队伍消息目标或长度".into());}
         let mut identity=Identity{bytes:[0;136]};
@@ -121,6 +132,18 @@ impl Transport {
             (self.send)(self.interface.as_ptr(),&identity,data.as_ptr(),data.len() as u32,8|1,CHANNEL)
         };
         if result==1 {Ok(())}else{Err(format!("Steam 消息发送失败：{result}"))}
+    }
+    pub fn latency_supported(&self)->bool {self.connection_info.is_some()}
+    pub fn ping(&self,peer:u64)->Option<u32> {
+        if !allowed(&self.roster,peer,1){return None;}
+        let query=self.connection_info?;
+        let mut identity=Identity{bytes:[0;136]};
+        let mut status=RealtimeStatus{ping:-1,..Default::default()};
+        let state=unsafe {
+            (self.set)(&mut identity,peer);
+            query(self.interface.as_ptr(),&identity,std::ptr::null_mut(),&mut status)
+        };
+        (state==3&&status.state==3&&status.ping>=0&&status.ping<=erdtree_tower::party_latency::MAX_MS as i32).then_some(status.ping as u32)
     }
     pub fn receive(&self)->Result<Vec<(u64,Vec<u8>)>,String> {
         for &peer in &self.roster.members {
@@ -162,6 +185,14 @@ impl Drop for Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn realtime_status_matches_steamworks_abi() {
+        assert_eq!(std::mem::size_of::<RealtimeStatus>(),120);
+        assert_eq!(std::mem::align_of::<RealtimeStatus>(),8);
+        assert_eq!(std::mem::offset_of!(RealtimeStatus,ping),4);
+        assert_eq!(std::mem::offset_of!(RealtimeStatus,queue_time),48);
+        assert_eq!(std::mem::offset_of!(RealtimeStatus,reserved),56);
+    }
     #[test]
     fn messages_module_uses_loaded_original_without_calling_wrapper_alias() {
         let pointer=NonNull::<u8>::dangling().as_ptr().cast::<c_void>();

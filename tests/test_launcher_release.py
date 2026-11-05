@@ -20,6 +20,9 @@ class LauncherReleaseTests(unittest.TestCase):
             fresh = root / 'launcher'
             fresh.mkdir()
             (fresh / 'ErdtreeTowerLauncher.exe').write_bytes(b'new launcher')
+            (fresh / 'Tower-Loader.ps1').write_bytes(b'loader bridge')
+            (fresh / 'loader/yafsml').mkdir(parents=True)
+            (fresh / 'loader/yafsml/YAFSML.exe').write_bytes(b'yafsml')
             result = build_update(fresh, root / 'v96/tower-release.json', 97, '1.1.1', root / 'v97')
             old_mod = next(f for f in old['files'] if f['path'] == 'mod.dll')
             self.assertIn(old_mod, result['files'])
@@ -28,6 +31,8 @@ class LauncherReleaseTests(unittest.TestCase):
             self.assertEqual('1.1.1', result['launcherVersion'])
             self.assertEqual('launcher', result['updateKind'])
             self.assertEqual(97, result['version'])
+            self.assertTrue(any(f['path'] == 'Tower-Loader.ps1' for f in result['files']))
+            self.assertTrue(any(f['path'] == 'loader/yafsml/YAFSML.exe' for f in result['files']))
 
     def test_rejects_non_launcher_payload_and_reused_version(self):
         with tempfile.TemporaryDirectory() as tmp:

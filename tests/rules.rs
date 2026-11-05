@@ -93,7 +93,10 @@ fn camp_upgrades_owned_blessing_only() {
 #[test]
 fn capped_upgrades_leave_camp_available() {
     let mut r = camp(1);
+    // 强化上限已去掉：+25 之后照常能强化，到武器编号能表示的 +99 才封顶
     r.weapon_level = 25;
+    assert!(r.clone().camp(CampChoice::UpgradeWeapon).is_ok());
+    r.weapon_level = erdtree_tower::contracts::NORMAL_MAX;
     assert!(r.camp(CampChoice::UpgradeWeapon).is_err());
     assert!(matches!(r.phase, Phase::Node { .. }));
     r.blessings.push(Blessing {
@@ -410,4 +413,18 @@ fn purchasing_capped_blessing_does_not_charge_or_consume_stock() {
     let before = r.clone();
     assert!(r.buy(0).is_err());
     assert_eq!(r, before);
+}
+
+#[test]
+fn weapon_levels_keep_converting_past_the_vanilla_cap() {
+    use erdtree_tower::contracts::{reinforcement_level,MAX_PEAK,NORMAL_MAX,SOMBER_MAX};
+    assert_eq!((reinforcement_level(50,25),reinforcement_level(50,10)),(25,10),"vanilla full level");
+    assert_eq!((reinforcement_level(120,25),reinforcement_level(120,10)),(60,24));
+    assert_eq!((reinforcement_level(MAX_PEAK,25),reinforcement_level(MAX_PEAK,10)),(NORMAL_MAX,SOMBER_MAX));
+    assert_eq!(reinforcement_level(255,25),NORMAL_MAX,"clamped at the top peak");
+    // 骨灰等级仍然最多 +10
+    let mut run=erdtree_tower::Run::new(1,erdtree_tower::Class::Confessor);
+    run.weapon_peak=Some(MAX_PEAK);
+    assert_eq!(erdtree_tower::rewards::spirit_level_now(&run),10);
+    assert!(erdtree_tower::Run::decode(&run.encode().unwrap()).is_ok(),"a peak above 50 is a valid save");
 }

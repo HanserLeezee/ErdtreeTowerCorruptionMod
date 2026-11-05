@@ -3,11 +3,27 @@ pub static EPIC:std::sync::LazyLock<Vec<u32>>=std::sync::LazyLock::new(||include
 pub const LEGENDARY:&[u32]=&[2140000,3090000,3150000,3170000,4080000,4100000,7100000,12200000,16090000,0x40000000|4200,0x40000000|4210,0x40000000|4220,0x40000000|4361,0x40000000|6110,0x40000000|6720,0x40000000|7090];
 pub const BUFFS:&[u32]=&[1000,1010,1020,1030,1040,1060,1070,1080,1090,1150,2060,2130,2180,2200,3000,3040];
 pub const TEAR:u32=10020;
+/// Boss 奖励规则 2（新旅程）：第一格的保底改为从全部武器里抽一把（照普通奖励的规则：约七成是职业擅长的类型，有武器偏好时按偏好），
+/// 品质固定为传说（affixes::rewards 对 Boss 第一格保底传说）；不再限定那 9 件传说装备。没拿过的武器优先
+fn boss_weapon(run:&Run,node:usize)->u32 {
+    let all:Vec<u32>=rewards::CATALOG.iter().filter(|i|i.kind==rewards::ItemKind::Weapon&&i.random_eligible()).map(|i|i.id).collect();
+    let owned:std::collections::HashSet<u32>=run.claimed_items.iter().map(|id|crate::affixes::base(*id)).collect();
+    let fresh:Vec<u32>=all.iter().copied().filter(|id|!owned.contains(id)).collect();
+    let mut pool=if fresh.is_empty(){all}else{fresh};
+    let roll=crate::mix(run.reward_seed()^(node as u64).wrapping_mul(7919)^0xb055_7e9a);
+    if !run.preferences().is_empty() {return pool[crate::weapon_training::pick_many(&pool,roll,run.preferences(),Some(run.class))];}
+    if crate::mix(roll^0xc1a5)%10<7 {
+        let favored:Vec<_>=pool.iter().copied().filter(|id|run.class.weapon_types().contains(&((id&0x0fffffff)/1_000_000))).collect();
+        if !favored.is_empty() {pool=favored;}
+    }
+    pool[(roll>>8) as usize%pool.len()]
+}
 pub fn boss_offers(run:&Run,node:usize)->Vec<Reward> {
     if run.boss_reward_rules==0 {return old_boss_offers(run,node);}
     let items=old_boss_items(run,node);
     let mut guaranteed=items.iter().copied().find(|id|run.casting_tools.is_none_or(|tools|rewards::castable(*id,tools))).expect("Boss pool contains repeatable weapons");
-    if !run.preferences().is_empty()&&guaranteed>>28==0 {
+    if run.boss_reward_rules>=2 {guaranteed=boss_weapon(run,node);}
+    else if !run.preferences().is_empty()&&guaranteed>>28==0 {
         let owned=run.claimed_items.contains(&guaranteed);
         let weapons:Vec<_>=items.into_iter().filter(|id|id>>28==0&&run.claimed_items.contains(id)==owned).collect();
         guaranteed=weapons[crate::weapon_training::pick_many(&weapons,crate::mix(run.reward_seed()^node as u64^0xb055),run.preferences(),None)];

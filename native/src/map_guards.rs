@@ -35,6 +35,7 @@ impl Guards {
         Ok(Self{specs:vec![spec],ids,bound:vec![],reset:false,requested:false,clock:None,active:false,combat:enemies::MAP_COMBAT_FLAG})
     }
     pub fn ready(&self)->bool {self.bound.len()==self.ids.len()}
+    pub fn map_combat_active(&self)->bool {self.active&&self.combat==enemies::MAP_COMBAT_FLAG}
     pub fn prepare(&mut self,world:&WorldChrMan)->Result<(),String> {
         if self.ready(){return Ok(());}
         if !self.reset {self.retire();self.reset=true;return Ok(());}
@@ -104,6 +105,14 @@ mod tests {
         }}
         for id in [0,48040000,48010300]{assert!(entity(id).is_err());}
         assert!(positions(51010000,12).is_err());
+    }
+    #[test]
+    fn only_an_engaged_merchant_owns_the_shared_combat_flag() {
+        let mut hunter=Guards::merchant().unwrap();
+        assert!(!hunter.map_combat_active());
+        hunter.active=true;assert!(hunter.map_combat_active());
+        let mut guards=Guards::new(hunter.specs.clone()).unwrap();
+        guards.active=true;assert!(!guards.map_combat_active(),"question-room guards use their own combat flag");
     }
     #[test]
     fn merchant_hunter_has_a_boss_bar_name() {
