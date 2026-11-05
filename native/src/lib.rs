@@ -109,6 +109,7 @@ mod weapon_glow;
 mod dummy;
 mod name_tags;
 mod auras;
+mod keep_runes;
 mod throw_guard;
 mod lobby;
 mod material_award;

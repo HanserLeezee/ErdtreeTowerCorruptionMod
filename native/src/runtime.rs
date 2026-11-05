@@ -1266,6 +1266,8 @@ fn tick_locked() {
     };
     PLAYER_READY.store(world.main_player.is_some()&&game.save_slot>=0,std::sync::atomic::Ordering::Relaxed);
     clear_ailments_under_overlay(&mut state,world,game);
+    // 内置死亡不掉卢恩（祭品树枝的效果常驻）
+    if let Some(player)=world.main_player.as_mut().filter(|_|!game.warp_requested) {super::keep_runes::tick(&mut player.chr_ins);}
     if SKIP.swap(false,std::sync::atomic::Ordering::Relaxed) {
         let message=request_skip(&mut state);super::log(format!("SKIP requested: {message}"));report(&mut state,message);
     }
@@ -4113,6 +4115,9 @@ fn request_travel(
         state.room = Some(room);
         state.pending = None;
         state.view.enemy_hp = None;
+        // 死亡重试回服务房间时 begin_death_retry 置了“传送中”；房间不走战斗传送流程，这里不清掉的话
+        // 离开房间后路线图一直不显示、不能点（看起来像传送门没反应）
+        state.view.travelling = false;
         state.pad_capture.update(false);
         super::input::CAPTURE.store(false, std::sync::atomic::Ordering::Relaxed);
         report(state, "正在前往服务房间。");

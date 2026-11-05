@@ -24,6 +24,8 @@ struct Tuning {
 }
 const NORMAL:Tuning=Tuning{rot_per_hit:1,leech_permille:15,thorn_percent:8,swift_speed:1.2,shield_every:20,reborn_percent:40,proud_after:8};
 const STRONG:Tuning=Tuning{rot_per_hit:2,leech_permille:25,thorn_percent:12,swift_speed:1.3,shield_every:15,reborn_percent:60,proud_after:6};
+/// 荆棘：一次反弹最多扣这么多生命（同一帧打出的伤害合算一次）
+const THORN_CAP:i64=100;
 const BAR_MARKER:i32=FIRST+99;
 /// text-update 为新增词条的组合也写好血条名称后加入的第二个标记
 const BAR_MARKER_V2:i32=FIRST+98;
@@ -146,7 +148,8 @@ impl Fight {
             }
         }
         let Some(player)=world.main_player.as_mut().filter(|p|p.chr_ins.modules.data.hp>0&&!p.chr_ins.chr_flags1c5.death_flag()) else{return};
-        // 荆棘：反弹给本机玩家，不会致死
+        // 荆棘：反弹给本机玩家，一次最多 100，不会致死
+        let reflected=reflected.min(THORN_CAP);
         if reflected>0 {
             let data=&mut player.chr_ins.modules.data;
             data.hp=(i64::from(data.hp)-reflected).max(1) as i32;self.player_hp=Some(data.hp);

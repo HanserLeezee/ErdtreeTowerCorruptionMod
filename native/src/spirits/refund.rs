@@ -73,10 +73,13 @@ pub(crate) fn observe(world:&WorldChrMan) {
     let owner=unsafe {player.player_game_data.as_ref()}.character_event_id as i32;
     let members=local_members(manager,owner);
     if let Ok(mut ledger)=LEDGER.lock() {
-        if super::ORIGINAL.load(std::sync::atomic::Ordering::Acquire)==0&&ledger.uses.is_empty()&&!members.is_empty()&&manager.active_summon_goods_id>0&&!manager.disappear_requested&&super::ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
-            // Preserve single-summon refunds on builds where request tracing is unavailable.
+        if !ledger.closed&&ledger.uses.is_empty()&&!members.is_empty()&&manager.active_summon_goods_id>0&&!manager.disappear_requested&&super::ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
+            // 召唤请求没被追踪到时（没装上追踪，或开战前就召唤了：倒数、敌人还没出现时追踪还没开），按场上的召唤物补记这一次，
+            // 否则胜利时召唤物还活着也不返还骨灰（玩家日志：每场都是开战前召唤，ASH_GROUP victory refunds=[]）
             let params=manager.trigger_speffect_to_buddy_map.iter().filter_map(|(trigger,param)|(*trigger==manager.active_summon_speffect_id as i32).then_some(*param)).collect();
-            ledger.accept(Use{goods:manager.active_summon_goods_id as u32&0x0fffffff,before:Vec::new(),params,members:HashMap::new()});
+            let goods=manager.active_summon_goods_id as u32&0x0fffffff;
+            ledger.accept(Use{goods,before:Vec::new(),params,members:HashMap::new()});
+            if !ledger.uses.is_empty() {super::super::log(format!("ASH_GROUP untracked summon recorded goods={goods} members={}",members.len()));}
         }
         ledger.observe(&members,manager.disappear_requested,Instant::now());
     }
@@ -115,6 +118,7 @@ mod tests {
     fn usage(goods:u32,before:&[u64],param:i32)->Use {Use{goods,before:before.to_vec(),params:vec![param],members:HashMap::new()}}
     fn member(key:u64,param:i32,alive:bool)->Member {Member{key,param,alive}}
     fn two()->Ledger {let mut l=Ledger{inventory:vec![(100,1),(200,1)],..Default::default()};l.accept(usage(100,&[],10));l.accept(usage(200,&[1,2],20));l}
+    #[test]fn a_summon_made_before_tracking_started_is_still_refunded_once(){let mut l=Ledger{inventory:vec![(100,1)],..Default::default()};l.accept(usage(100,&[],10));l.observe(&[member(1,10,true)],false,Instant::now());assert!(l.uses.len()==1);l.accept(usage(100,&[],10));assert_eq!(l.uses.len(),1,"only one ash was held");let p=l.settle();assert_eq!(p.iter().map(|p|(p.goods,p.quantity)).collect::<Vec<_>>(),[(100,1)]);}
     #[test]fn each_use_is_refunded_once_even_when_it_spawns_several_members(){let mut l=two();l.observe(&[member(1,10,false),member(2,10,true),member(3,20,true)],false,Instant::now());let p=l.settle();assert_eq!(p.iter().map(|p|(p.goods,p.quantity)).collect::<Vec<_>>(),[(100,1),(200,1)]);assert!(l.settle().is_empty());}
     #[test]fn one_dead_group_does_not_borrow_the_other_groups_survival(){for first_alive in [true,false]{let mut l=two();l.observe(&[member(1,10,first_alive),member(2,10,first_alive),member(3,20,!first_alive)],false,Instant::now());let p=l.settle();assert_eq!(p.len(),1);assert_eq!(p[0].goods,if first_alive{100}else{200});}}
     #[test]fn same_ash_used_twice_counts_surviving_uses_not_creatures(){let mut l=Ledger{inventory:vec![(100,2)],..Default::default()};l.accept(usage(100,&[],10));l.accept(usage(100,&[1],10));l.observe(&[member(1,10,true),member(2,10,true)],false,Instant::now());let p=l.settle();assert_eq!(p.len(),1);assert_eq!((p[0].quantity,p[0].post_spend_max),(2,0));}
