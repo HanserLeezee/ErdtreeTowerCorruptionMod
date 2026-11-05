@@ -373,7 +373,7 @@ impl ImguiRenderLoop for TowerPreview {
                 log("Home: quick settlement requested");
             }else{log("Home: ignored before a character is loaded");}
         }
-        if options::pressed(ui,Hotkey::Skip)&&runtime::PLAYER_READY.load(Ordering::Relaxed) {
+        if options::pressed(ui,Hotkey::Skip) {
             runtime::SKIP.store(true,Ordering::Relaxed);
         }
         static FIRST_FRAME: AtomicBool = AtomicBool::new(true);

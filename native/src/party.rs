@@ -18,6 +18,7 @@ struct Steam {
 }
 #[derive(Default)]
 pub struct EventSync {
+    pub forced_skip:Option<erdtree_tower::skip::Target>,
     pub descent_complete:bool,
     pub merchant_phase:u8,
     pub merchant_bound:bool,
@@ -103,6 +104,12 @@ impl Departure {
     }
 }
 impl Link {
+    pub fn skip_node(&mut self,target:erdtree_tower::skip::Target)->Result<(),String> {
+        if !self.host(){return Err("只有房主可以跳过节点".into());}
+        if let Some(error)=&self.stopped{return Err(error.clone());}
+        let order=Order::SkipNode{epoch:self.epoch,target};
+        self.send(Send::Broadcast(order.clone()))?;self.accept(&order)?;Ok(())
+    }
     pub fn merchant_phase(&mut self,phase:u8)->Result<(),String> {
         if !self.host()||self.defeated||self.stopped.is_some(){return Err("仅房主可结算商人挑战".into());}
         if phase!=self.event.merchant_phase+1||phase>3{return Err("商人挑战阶段无效".into());}
@@ -257,9 +264,19 @@ impl Link {
         if let Order::MapDrawing(canvas)=order {return Ok(!self.host()&&self.drawing.receive(canvas.clone(),self.config.player));}
         if matches!(order,Order::ForceEnd){return Ok(!self.host());}
         if let Some(error)=&self.stopped {return Err(error.clone());}
+        if self.event.forced_skip.is_some()&&!matches!(order,Order::SkipNode{..}|Order::Enter{..}|Order::BossTest{..}|Order::NewRun{..}|Order::Votes{..}|Order::Law{..}|Order::Stop(_)|Order::Titles(_)) {return Ok(false);}
         if let Order::Titles(list)=order {if !self.host(){self.titles=list.iter().take(erdtree_tower::party_roster::MAX_PLAYERS).copied().collect();}return Ok(false);}
         if self.defeated&&!matches!(order,Order::NewRun{..}|Order::Stop(_)){return Ok(false);}
         match order {
+            Order::SkipNode{epoch,target} if *epoch==self.epoch=>{
+                if let Some(old)=self.event.forced_skip {
+                    if old==*target||!old.rewards&&old.seed==target.seed&&old.act==target.act&&old.node==target.node{return Ok(false);}
+                    if (old.seed,old.act,old.node)!=(target.seed,target.act,target.node){return Err("跳过请求的节点发生变化".into());}
+                }
+                self.event=Default::default();self.event.forced_skip=Some(*target);self.selected=None;self.ballots.clear();
+                self.arrived=true;self.bound=true;self.spawn=false;self.fighting=false;self.victory=false;self.rewards=false;self.portal=false;
+                self.encounter=None;self.gate.skip_node(target.rewards);
+            },
             Order::Merchant{epoch,phase} if *epoch==self.epoch=>{
                 if *phase==self.event.merchant_phase{return Ok(false);}
                 if *phase!=self.event.merchant_phase+1||*phase>3{return Err("商人挑战同步次序无效".into());}
@@ -552,6 +569,28 @@ pub fn random_entropy()->Result<u64,String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn skip_before_spawn_is_host_only_idempotent_and_drops_late_combat_orders() {
+        use super::*;
+        let run=Run::new(42,erdtree_tower::Class::Samurai);
+        let target=erdtree_tower::skip::Target::new(&run,Some(run.available()[0])).unwrap();
+        let (mut host,_events,commands)=test_link(1);
+        let (mut guest,_events2,_commands2)=test_link(2);
+        assert!(guest.skip_node(target).is_err());
+        host.skip_node(target).unwrap();
+        let order=commands.try_recv().unwrap();let Send::Broadcast(order)=order else{panic!("missing broadcast")};
+        assert!(guest.accept(&order).unwrap());assert!(!guest.accept(&order).unwrap());
+        assert!(!guest.accept(&Order::Spawn{epoch:4}).unwrap());
+        assert!(!guest.accept(&Order::Engage{epoch:4}).unwrap());
+        assert!(!guest.spawn&&!guest.fighting);
+        let mut finish=target;finish.rewards=false;
+        assert!(guest.accept(&Order::SkipNode{epoch:4,target:finish}).unwrap());
+        assert!(!guest.accept(&order).unwrap());
+        assert!(guest.accept(&Order::SkipNode{epoch:1,target:finish}).is_err());
+        assert!(guest.accept(&Order::Enter{epoch:5,act:1,visited:vec![target.node],node:1,has_stonesword_key:false}).unwrap());
+        assert!(guest.event.forced_skip.is_none());
+        assert!(guest.accept(&Order::Spawn{epoch:5}).unwrap());
+    }
     #[test]
     fn boss_test_broadcast_is_host_only_and_resets_both_clients_once() {
         use super::*;

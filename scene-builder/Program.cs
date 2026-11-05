@@ -1,5 +1,10 @@
 using SoulsFormats;
 using System.Numerics;
+if(args.Length==4&&args[3] is "affinity-text-patch" or "affinity-effect-verify") {
+    Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
+    if(args[3]=="affinity-text-patch")AffinityNameAssets.Patch(args[2],args[1]);
+    else AffinityNameAssets.VerifyEffects(args[2],Environment.GetEnvironmentVariable("TOWER_PARAMDEFS")??throw new Exception("Set TOWER_PARAMDEFS"));return;
+}
 if(args.Length==4&&args[3] is "mausoleum-patch" or "mausoleum-flow-patch" or "mausoleum-flow-verify") {
     Oodle.Oodle6Ptr=System.Runtime.InteropServices.NativeLibrary.Load(Path.Combine(args[0],"oo2core_6_win64.dll"));
     if(args[3]=="mausoleum-flow-verify")MausoleumFlowAssets.Verify(args[2]);

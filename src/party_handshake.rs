@@ -1,6 +1,6 @@
 use serde::{Deserialize,Serialize};
 use crate::{party_roster::Roster,RuleResult};
-pub const VERSION:u32=68;
+pub const VERSION:u32=69;
 #[derive(Clone,Debug,Serialize,Deserialize)]
 pub enum Payload {
     Handshake(Message),

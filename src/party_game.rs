@@ -81,6 +81,7 @@ pub enum Order {
     Law{epoch:u64,seed:u64,law:crate::law::Law},
     MapDrawing(crate::map_drawing::Canvas),
     ForceEnd,
+    SkipNode{epoch:u64,target:crate::skip::Target},
     ChariotPose{epoch:u64,sequence:u64,pose:[f32;3]},
     Trial{epoch:u64,choice:crate::regional_events::Trial},
     Stormveil{epoch:u64,decision:crate::stormveil::Decision},
@@ -99,6 +100,11 @@ pub enum Order {
 pub enum Stage {Map,Travel,Combat,Fighting,Service,Reward,Stopped}
 pub struct Gate {trial:Option<crate::regional_events::Trial>,pub epoch:u64,pub stage:Stage,peers:Vec<(u64,Option<Report>)>,events:Option<crate::party_events::Queue>,stormveil:Option<crate::stormveil::Decision>}
 impl Gate {
+    pub fn skip_node(&mut self,rewards:bool) {
+        self.stage=if rewards{Stage::Reward}else{Stage::Service};
+        self.events=None;self.trial=None;self.stormveil=None;
+        for peer in &mut self.peers {peer.1=None;}
+    }
     pub fn merchant_present(&self)->bool {self.stage==Stage::Service&&self.all(|r|r.arrived&&!r.map_ready)}
     pub fn merchant_ready(&self)->bool {self.merchant_present()&&self.all(|r|!r.alive||r.merchant_bound)&&self.peers.iter().any(|(_,r)|r.as_ref().is_some_and(|r|r.alive))}
     pub fn boss_test(&mut self,run:&Run,test:crate::debug::BossTest)->RuleResult<Order> {

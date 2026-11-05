@@ -66,12 +66,62 @@ fn clear_ailments_under_overlay(state:&mut Runtime,world:&mut WorldChrMan,game:&
 /// 「跳过本关」：战斗中视为胜利（敌人撤下、不掉卢恩），传送门不用摸，直接到三选一；联机只有房主能用，房主通知全队
 fn request_skip(state:&mut Runtime)->String {
     if state.party.as_ref().is_some_and(|p|!p.host()) {return "只有房主可以跳过本关。".into();}
-    if state.reward_wait.is_some() {state.skip_portal=true;return "跳过本关：直接领取奖励。".into();}
-    if let Some(pending)=state.pending.as_ref().filter(|p|!p.completed)&&let Phase::Combat{id}=pending.next_run.phase {
-        state.skip_fight=Some(id);
-        return if state.party.is_some() {"跳过本关：全队开战后立即判定胜利。"}else{"跳过本关：敌人出现后立即判定胜利。"}.into();
+    if state.skip_target.is_some(){return "跳过请求已记录，等待场景或物品处理完成。".into();}
+    let Some(run)=state.view.run.as_ref() else{return "尚未开始旅程，请先开始一局。".into();};
+    let travelling=state.travel.as_ref().map(|t|t.0.node).or_else(||state.room.as_ref().map(|r|r.node));
+    let target=match erdtree_tower::skip::Target::new(run,travelling){Ok(t)=>t,Err(e)=>return e};
+    state.skip_target=Some(target);
+    "已记录跳过请求，场景就绪后直接跳过当前节点。".into()
+}
+fn apply_skip(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->Result<bool,String> {
+    let Some(target)=state.skip_target else{return Ok(false);};
+    if QUICK_END.load(std::sync::atomic::Ordering::Relaxed)||game.warp_requested||game.save_slot<0
+        ||state.material_award.is_some()||state.party_pending.is_some(){return Ok(false);}
+    let Some(player)=world.main_player.as_ref().filter(|p|i32::from(p.current_block_id)>=0&&p.chr_ins.modules.data.hp>0) else{return Ok(false);};
+    let owner=(unsafe {player.player_game_data.as_ref()}.character_id,game.save_slot);
+    if state.hub.as_ref().is_some_and(|h|h.owner!=owner){return Err("角色已切换，取消旧跳过请求".into());}
+    if super::hub::path(owner,"party-award").exists(){return Ok(false);}
+    let Some(old)=state.view.run.as_ref() else{return Ok(false);};
+    let block=i32::from(player.current_block_id);
+    if state.travel.is_some()&&block!=super::arenas::for_run(old,state.party.is_some()).block
+        ||state.room.as_ref().is_some_and(|room|block!=room.block){return Ok(false);}
+    if old.regional_event.receipt.is_some()||old.regional_event.mausoleum.as_ref().is_some_and(|m|m.receipt.is_some()){return Ok(false);}
+    let mut next=old.clone();
+    if !next.skip_current(target)?{state.skip_target=None;return Ok(true);}
+    let victory_unsettled=state.reward_wait.is_none()&&state.pending.as_ref().is_none_or(|p|!p.completed);
+    if let Some(room)=state.room.as_mut(){room.suspend_dialogues()?;}
+    if let Some(link)=state.party.as_mut().filter(|link|link.host()) {
+        if link.event.forced_skip!=Some(target){link.skip_node(target)?;}
+    }else if state.party.is_none()&&game.event_world_type==EventWorldType::Remote{return Ok(false);}
+    record_checked(&next)?;
+    if target.rewards&&victory_unsettled {
+        let healing=heal_victory(world,&next);if !healing.is_empty(){super::log(healing);}
+        if let Some(plan)=keep_summoned_ash(world,&next){state.ash_refunds=plan;state.ash_guard=Some(Instant::now());}
+        give_elite_tear(world,&next,target.node);
+        let bonus=erdtree_tower::boss_affixes::bonus_runes(&next,target.node);
+        if let Some(player)=world.main_player.as_mut().filter(|_|bonus>0) {
+            let data=unsafe {player.player_game_data.as_mut()};data.rune_count=data.rune_count.saturating_add(bonus).min(999_999_999);
+        }
+        record_fight(&next,Some(target.node),true);
     }
-    "现在没有可以跳过的战斗。".into()
+    stop_map_combat(state,world);
+    if let Some(pending)=state.pending.take(){state.lingering=Some((pending,Instant::now()));}
+    if let Some(room)=state.room.take(){room.retire(world);}
+    if let Some(scene)=state.party_scene.take(){scene.retire(world);}
+    if let Some(attendant)=state.attendant.take(){attendant.retire(world);}
+    world.summon_buddy_manager.disappear_requested=true;super::spirits::set_active(false);
+    if let Err(error)=clear_chariot(){super::log(error);}
+    for flag in [45020970,45020971,45020972,35007990,45011859,super::map_guards::COMBAT] {
+        if let Err(error)=super::native_talk::set_flag(flag,false){super::log(error);}
+    }
+    state.travel=None;state.reward_wait=None;state.reward_portal=Default::default();state.event_start=None;
+    state.descent=None;state.stormveil=None;state.chariot_clock=None;state.party_spirits=None;
+    state.skip_target=None;state.skip_fight=None;state.skip_portal=false;state.command=None;
+    state.view.run=Some(next);state.view.room=None;state.view.shared_event=false;state.view.busy=false;
+    state.view.travelling=false;state.view.enemy_hp=None;state.view.ballots.clear();
+    super::log(format!("SKIP completed: seed={} act={} node={} rewards={}",target.seed,target.act,target.node,target.rewards));
+    report(state,if target.rewards{"已跳过战斗，请选择奖励。"}else{"已跳过当前节点，未额外发放奖励，请选择下一条路线。"});
+    Ok(true)
 }
 /// 跳过请求在这一帧生效：本机还活着、敌人已经出现；联机还要等全队开战（房主才能判定胜利）
 fn skip_fight_due(requested:Option<usize>,node:Option<usize>,bound:bool,dead:bool,party:Option<(bool,bool)>)->bool {
@@ -298,6 +348,7 @@ impl MaterialAward {
     }
 }
 struct Runtime {
+    skip_target:Option<erdtree_tower::skip::Target>,
     material_award:Option<MaterialAward>,
     radahn_probe:Option<super::radahn_probe::Probe>,
     ember_notice:super::ember_notice::Notice,
@@ -386,6 +437,7 @@ fn fresh_runtime()->Runtime {
     super::seamless_revival::cancel();
     let (party,party_error)=match super::party::Link::load(){Ok(p)=>(p,None),Err(e)=>(None,Some(e))};
     Runtime {
+        skip_target:None,
         material_award:None,
         radahn_probe:None,
         drawing:Default::default(),drawing_owner:None,
@@ -624,6 +676,7 @@ fn apply_party_order(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan
     }
     if !state.party.as_mut().unwrap().accept(&order)?{return Ok(());}
     match order {
+        Order::SkipNode{target,..}=>{state.skip_target=Some(target);state.command=None;Ok(())},
         Order::BossTest{test,..}=>begin_boss_test(state,world,game,test),
         Order::Law{seed,law,..}=>{
             let run=state.view.run.as_ref().ok_or("律法同步时旅程尚未开启")?;
@@ -1210,7 +1263,7 @@ fn emergency_end(state:&mut Runtime,world:&mut WorldChrMan,game:&mut GameMan)->R
         let mut departure=super::party::Departure::new(link);departure.tick();
         state.departure=Some(departure);
     }
-    state.party_pending=None;state.party_error=None;state.command=None;state.material_award=None;
+    state.party_pending=None;state.party_error=None;state.command=None;state.material_award=None;state.skip_target=None;
     state.rest_end=Default::default();state.host_death=Default::default();
     state.party_death=Default::default();state.party_death_wave=None;super::seamless_revival::cancel();
     state.reward_wait=None;state.travel=None;state.flasks=None;state.event_start=None;state.descent=None;state.stormveil=None;state.chariot_clock=None;
@@ -1290,6 +1343,13 @@ fn tick_locked() {
     if let Some(player)=world.main_player.as_mut().filter(|_|!game.warp_requested) {super::keep_runes::tick(&mut player.chr_ins);}
     if SKIP.swap(false,std::sync::atomic::Ordering::Relaxed) {
         let message=request_skip(&mut state);super::log(format!("SKIP requested: {message}"));report(&mut state,message);
+    }
+    if state.skip_target.is_some() {
+        match apply_skip(&mut state,world,game) {
+            Ok(true)=>{sync_action_guard(&mut state,world);return;},
+            Ok(false)=>{},
+            Err(error)=>{state.skip_target=None;report(&mut state,format!("跳过未完成：{error}"));},
+        }
     }
     state.hub_boundary.tick(world,game.warp_requested||game.save_slot<0);
     let chase_enabled=!game.warp_requested&&matches!(state.chariot_clock,Some(ChariotClock::Surviving(_)))
@@ -2387,8 +2447,13 @@ fn debug_command(state:&mut Runtime,world:&mut WorldChrMan,command:super::debug_
             format!("卢恩 +{amount}")
         },
         Command::Item(id)=>{
-            super::items::give_reward(data,id)?;
-            format!("已获得 {}",erdtree_tower::rewards::lookup(id).map_or("物品",|i|i.name))
+            if id==(0x40000000|super::smith::VOUCHER) {
+                super::smith::prepare(data)?;
+                "已请求发放强化石 ×1".into()
+            } else {
+                super::items::give_reward(data,id)?;
+                format!("已获得 {}",erdtree_tower::rewards::lookup(id).map_or("物品",|i|i.name))
+            }
         },
         command=>{
             if busy {return Err("请等战斗、传送或领奖结束后再改旅程".into());}

@@ -68,8 +68,8 @@
   {
     "path": "scene-assets/msg/zhocn/item_dlc02.msgbnd.dcx",
     "releaseSha256": "2f32bb1bd4cf0bc27633019aebfe4b393cd1e865ddf8b9d6857a5160a9f9bddf",
-    "sha256": "733afda43547fca83a5bc19b606aea6292d22d85d56883baf1820aca7b9d96b2",
-    "reason": "Add 26 native ember display names to the unchanged v103 message binder."
+    "sha256": "a3e155df6ec6be2b036aaf83f2711fa59be2a94ab84bfdccca60022d51650889",
+    "reason": "Preserve native ember names and add missing affixed weapon infusion info/captions; all other text tables unchanged."
   },
   {
     "path": "scene-assets/msg/zhocn/menu_dlc02.msgbnd.dcx",

@@ -7,7 +7,7 @@ use crate::runtime::{self,Action,View};
 struct Detail {icon:u32,name:String,info:String,caption:String,stats:String,skill:String}
 static RARITIES:LazyLock<HashMap<u32,u8>>=LazyLock::new(||include_str!("../../scene-assets/reward-rarities.tsv").lines().chain(include_str!("../../scene-assets/affix-rarities.tsv").lines()).chain(include_str!("../../scene-assets/affix-v2-rarities.tsv").lines()).chain(include_str!("../../scene-assets/talisman-rarities.tsv").lines()).map(|line| {
     let (id,rarity)=line.split_once('\t').unwrap();(id.parse().unwrap(),rarity.parse().unwrap())
-}).collect());
+}).chain(std::iter::once((0x40000000|super::smith::VOUCHER,0))).collect());
 pub fn item_quality(id:u32)->u8 {RARITIES.get(&erdtree_tower::rewards::spirit_base(id)).copied().unwrap_or(0).min(3)}
 pub(crate) fn rarity_color(tier:usize)->[f32;4] {
     static COLORS:LazyLock<[[f32;4];4]>=LazyLock::new(|| {
@@ -127,6 +127,7 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
         let p:Vec<_>=line.split('\t').collect();
         (p[0].parse().unwrap(),Detail{icon:p[1].parse().unwrap(),name:p[2].into(),info:p[3].replace("\\n","\n"),caption:p[4].replace("\\n","\n"),stats:p[5].replace("\\n","\n"),skill:p[6].replace("\\n","\n")})
     }).collect();
+    result.insert(0x40000000|super::smith::VOUCHER,Detail{icon:990104,name:"强化石".into(),info:"在营地铁匠或商店强化武器，也可升阶护符、调灵骨灰".into(),caption:String::new(),stats:String::new(),skill:String::new()});
     for (id,detail) in &mut result {
         // 原版没有战技的盾牌，默认战灰是“无技能”，中文名是占位的“DLC dummy”
         if detail.skill.starts_with("DLC dummy") {detail.skill="无\n这件装备原本没有战技，可在铁匠处安装战灰。".into();}
@@ -147,10 +148,22 @@ static DETAILS:LazyLock<HashMap<u32,Detail>>=LazyLock::new(|| {
 #[derive(Clone,Debug,Default,PartialEq)]
 pub struct Gear {pub icon:u32,pub quality:u8,pub name:String,pub lines:Vec<String>}
 pub fn affix_summary(id:u32)->Option<Gear> {
+    let id=if id>>28==0 {id/10000*10000}else{id};
     let quality=erdtree_tower::affixes::tier(id)?;
     let detail=DETAILS.get(&id)?;
     let lines=detail.info.lines().filter(|l|l.chars().any(|c|c.is_ascii_digit())&&(l.contains('+')||l.contains('-'))).map(str::to_owned).collect();
     Some(Gear{icon:detail.icon,quality,name:detail.name.clone(),lines})
+}
+#[test]
+fn infused_weapon_keeps_build_summary_at_every_reinforcement_level() {
+    for item in erdtree_tower::affixes::CATALOG.iter().filter(|i|i.id>>28==0) {
+        let expected=affix_summary(item.id).unwrap();
+        for affinity in 0..=12 {for level in [0,1,10,25] {
+            assert_eq!(affix_summary(item.id+affinity*100+level),Some(expected.clone()),"weapon={} affinity={affinity} level={level}",item.id);
+        }}
+    }
+    assert!(affix_summary(1_000_100).is_none());
+    assert!(affix_summary(0x10000000|9_999_999).is_none());
 }
 /// 图鉴：所有词条装备上出现过的词条名（去掉数值，按装备编号的先后）
 pub fn affix_names()->&'static [String] {
@@ -213,12 +226,19 @@ fn alternate_pinyin_matches(text:&str,query:&str,initials:bool)->bool {
 pub fn search_items(query:&str,limit:usize)->Vec<(u32,String)> {
     let query=query.trim();if query.is_empty() {return vec![];}
     let key=search_key(query);
-    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|erdtree_tower::rewards::lookup(**id).is_some()&&(d.name.contains(query)||d.info.contains(query)
+    let mut hits:Vec<_>=DETAILS.iter().filter(|(id,d)|(erdtree_tower::rewards::lookup(**id).is_some()||**id==(0x40000000|super::smith::VOUCHER))&&(d.name.contains(query)||d.info.contains(query)
         ||ITEM_SEARCH.get(id).is_some_and(|(full,initials)|full.contains(&key)||initials.contains(&key))
         ||alternate_pinyin_matches(&d.name,&key,false)||alternate_pinyin_matches(&d.name,&key,true)
         ||alternate_pinyin_matches(&d.info,&key,false)||alternate_pinyin_matches(&d.info,&key,true)))
         .map(|(id,d)|(*id,format!("{}　{}",d.name,d.info.replace("\\n","　").replace('\n',"　")))).collect();
     hits.sort_by_key(|(id,_)|*id);hits.truncate(limit);hits
+}
+#[test]
+fn debug_search_includes_upgrade_stone() {
+    for query in ["强化石","qianghuashi","qhs"] {
+        let hits=search_items(query,80);
+        assert!(hits.iter().any(|(id,name)|*id==(0x40000000|super::smith::VOUCHER)&&name.contains("强化石")),"{query}");
+    }
 }
 #[test]
 fn item_search_accepts_pinyin_initials_and_keeps_chinese() {
