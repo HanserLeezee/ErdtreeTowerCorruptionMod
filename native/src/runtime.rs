@@ -29,6 +29,20 @@ const SPAWN_TIMEOUT: Duration = Duration::from_secs(15);
 // victory forever. After the others die, an untouched full-HP survivor is retired after this long.
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 pub static QUICK_END:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+/// 开局前在后台核对一次全部场地资源（第一次调用时开始），结果出来后返回缺失或不一致的文件
+fn resource_check()->Option<&'static Vec<String>> {
+    static RESULT:std::sync::OnceLock<Vec<String>>=std::sync::OnceLock::new();
+    static STARTED:std::sync::Once=std::sync::Once::new();
+    STARTED.call_once(||{std::thread::spawn(||{let bad=super::arenas::mismatched_resources();super::log(format!("RESOURCE_CHECK mismatched={bad:?}"));let _=RESULT.set(bad);});});
+    RESULT.get()
+}
+/// 出发被拒（场地文件缺失或不一致）：再弹一次醒目提示，把这个文件排在最前
+fn flag_resource_alert(state:&mut Runtime,error:&str) {
+    let file=error.split_once('：').map_or(error,|(_,rest)|rest.split('，').next().unwrap_or(rest)).to_owned();
+    let (id,mut files)=state.view.resource_alert.take().unwrap_or((0,Vec::new()));
+    files.retain(|f|*f!=file);files.insert(0,file);
+    state.view.resource_alert=Some((id+1,files));
+}
 /// 「跳过本关」键：渲染线程置位，游戏任务线程处理
 pub static SKIP:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 pub static PLAYER_READY:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
@@ -136,10 +150,12 @@ pub struct View {
     pub dummy: Option<super::dummy::View>,
     /// 构筑面板的数值加成（身上生效的特效按项连乘）
     pub stats: super::stats::Summary,
+    /// 整合包的场地文件缺失或与 DLL 不一致：(提示序号, 文件)。开局检查一次、出发被拒时再提示，界面据此弹出醒目提示
+    pub resource_alert: Option<(u64,Vec<String>)>,
 }
 fn initial_view()->View {
     View{shared_event:false,ballots:vec![],latencies:vec![],run:None,status:"进入角色后，从金色入口开始旅程。".into(),
-        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None,stats:Default::default()}
+        busy:false,enemy_hp:None,prompt:0,ready:false,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None,stats:Default::default(),resource_alert:None}
 }
 
 struct Foe {
@@ -1266,6 +1282,10 @@ fn tick_locked() {
     };
     PLAYER_READY.store(world.main_player.is_some()&&game.save_slot>=0,std::sync::atomic::Ordering::Relaxed);
     clear_ailments_under_overlay(&mut state,world,game);
+    if state.view.resource_alert.is_none()&&let Some(bad)=resource_check().filter(|bad|!bad.is_empty()) {
+        state.view.resource_alert=Some((1,bad.clone()));
+        report(&mut state,format!("整合包文件不完整：{} 个场地文件缺失或与当前版本不一致，进入这些战斗会被拒绝。请关闭游戏，在启动器里点「校验并修复文件」。",bad.len()));
+    }
     // 内置死亡不掉卢恩（祭品树枝的效果常驻）
     if let Some(player)=world.main_player.as_mut().filter(|_|!game.warp_requested) {super::keep_runes::tick(&mut player.chr_ins);}
     if SKIP.swap(false,std::sync::atomic::Ordering::Relaxed) {
@@ -4063,7 +4083,7 @@ fn request_travel(
     if let Some(test)=run.boss_test.filter(|t|run.debug&&t.act==run.act&&kind==erdtree_tower::NodeKind::Boss) {
         super::enemies::boss_test_roster(test.encounter,state.party.is_some(),erdtree_tower::dlc::enemies_allowed())?;
     }
-    if kind.combat(){super::arenas::require_resources(super::arenas::for_run(run,state.party.is_some()))?;}
+    if kind.combat()&&let Err(error)=super::arenas::require_resources(super::arenas::for_run(run,state.party.is_some())) {flag_resource_alert(state,&error);return Err(error);}
     if !kind.combat() && super::rooms::destination(kind).is_none() {
         let mut next = run.clone();
         next.enter(id)?;
@@ -4317,7 +4337,7 @@ mod tests {
     }
     fn ui_view()->super::View {
         super::View{shared_event:false,ballots:vec![],latencies:vec![],run:Some(erdtree_tower::Run::new(42,erdtree_tower::Class::Samurai)),
-            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None,stats:Default::default()}
+            status:String::new(),busy:false,enemy_hp:None,prompt:1,ready:true,travelling:false,room:None,runes:0,boss_affixes:None,boss_alert:None,boss_affix_list:vec![],law_clock:None,build:vec![],dummy:None,stats:Default::default(),resource_alert:None}
     }
     #[test]
     fn queued_selection_is_bounded_and_consumed_once_on_the_game_thread() {

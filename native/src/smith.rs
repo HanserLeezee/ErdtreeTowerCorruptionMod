@@ -80,16 +80,20 @@ pub fn inventory_peak(data:&PlayerGameData,params:&SoloParamRepository)->i32 {
             (base.origin_equip_wep1()>=0).then_some(((id%100*50/cap) as i32).min(MAX_PEAK))
         }).max().unwrap_or(0)
 }
+/// 原版强化菜单只认到原版满级（普通 +25、失色 +10）：到了满级就不再生成“强化”这一项，武器从强化列表里消失。
+/// 满级及以上的武器按满级前一级去问原版，拿到原版生成的强化项后再把目标改成真正的下一级；其他项（换战灰、复原等）的等级改回实际等级
+fn vanilla_probe(id:i32,cap:i32)->i32 {if id%100>=cap {id-id%100+cap-1}else{id}}
 unsafe extern "C" fn build_offers(list:*mut Offers,id:i32)->usize {
     let original:BuildOffers=unsafe {std::mem::transmute(ORIGINAL.load(Ordering::Acquire))};
-    let count=unsafe {original(list,id)};
-    let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{log_offer(format!("Smith bypass: id={id} params unavailable"));return count;};
-    let Some(base)=params.get::<eldenring::cs::EquipParamWeapon>((id.max(0)/100*100) as u32) else{log_offer(format!("Smith bypass: id={id} weapon parameter missing"));return count;};
+    let Ok(params)=(unsafe {SoloParamRepository::instance()}) else{log_offer(format!("Smith bypass: id={id} params unavailable"));return unsafe {original(list,id)};};
+    let Some(base)=params.get::<eldenring::cs::EquipParamWeapon>((id.max(0)/100*100) as u32) else{log_offer(format!("Smith bypass: id={id} weapon parameter missing"));return unsafe {original(list,id)};};
     if id<0||base.material_set_id()!=700000||base.origin_equip_wep1()<0 {
         log_offer(format!("Smith bypass: id={id} material={} origin1={}",base.material_set_id(),base.origin_equip_wep1()));
-        return count;
+        return unsafe {original(list,id)};
     }
     let cap=if base.origin_equip_wep16()<0 {10}else{25};
+    let probe=if id%100<level_max(params,base.reinforce_type_id()) {vanilla_probe(id,cap)}else{id};
+    let count=unsafe {original(list,probe)};
     let player=unsafe {eldenring::cs::PlayerIns::local_player()}.ok();
     let peak=player.as_ref().map(|p|effective_peak(unsafe {p.player_game_data.as_ref()},params)).unwrap_or(0);
     let max=level_max(params,base.reinforce_type_id());
@@ -104,10 +108,12 @@ unsafe extern "C" fn build_offers(list:*mut Offers,id:i32)->usize {
     for offer in unsafe {std::slice::from_raw_parts_mut(list.begin,count)} {
         offers.push((offer.weapon,offer.flags));
         let before=offer.weapon;
-        update_offer(offer,id,next,base.material_set_id()+i32::from(reinforce.material_set_id()));
+        update_offer(offer,probe,next,base.material_set_id()+i32::from(reinforce.material_set_id()));
+        // 按满级前一级问出来的其他项（换战灰等）带着那一级：改回武器的实际等级
+        if probe!=id&&offer.weapon==before&&offer.weapon>=0&&offer.weapon%100==probe%100 {offer.weapon+=id%100-probe%100;}
         changed+=usize::from(before!=offer.weapon);
     }
-    log_offer(format!("Smith offer: id={id} cap={cap} max={max} peak={peak} next={next} player={} changed={changed} offers={offers:?}",player.is_some()));
+    log_offer(format!("Smith offer: id={id} probe={probe} cap={cap} max={max} peak={peak} next={next} player={} changed={changed} offers={offers:?}",player.is_some()));
     count
 }
 pub unsafe fn install()->Result<(),String> {
@@ -260,6 +266,15 @@ mod tests {
         assert!(!super::eligible_offer(4000,4002,&[6110]));
         assert!(!super::eligible_offer(4000,4002,&[4000,4002]));
         assert!(!super::eligible_offer(4002,4002,&[4002]));
+    }
+    #[test]
+    fn weapons_at_the_vanilla_cap_ask_the_native_menu_one_level_lower() {
+        assert_eq!(super::vanilla_probe(901224,25),901224,"below the cap the real level is used");
+        assert_eq!(super::vanilla_probe(901225,25),901224);
+        assert_eq!(super::vanilla_probe(901240,25),901224);
+        assert_eq!(super::vanilla_probe(16262009,10),16262009);
+        assert_eq!(super::vanilla_probe(16262010,10),16262009);
+        assert_eq!(super::vanilla_probe(16262030,10),16262009);
     }
     #[test]
     fn catch_up_converts_caps_without_rounding_up_or_losing_affinity() {

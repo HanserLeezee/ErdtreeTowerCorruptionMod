@@ -141,6 +141,19 @@ $assets = Join-Path $root 'scene-assets'
 $runtime = Join-Path $entry $(if ($PartyConfig) {'party-runtime'} else {'runtime'})
 New-Item -ItemType Directory -Path $runtime -Force | Out-Null
 $assetLink = Join-Path $runtime 'scene-assets'
+# The tower DLL checks arena files through this link (its log directory is the runtime folder). A link left behind by
+# a moved or copied installation, or a plain copied folder, keeps serving old files while the game loads the new ones,
+# so every launch makes sure it is a junction to this installation's scene-assets.
+if (Test-Path -LiteralPath $assetLink) {
+    $linkItem = Get-Item -LiteralPath $assetLink -Force
+    $linkTarget = @($linkItem.Target | Where-Object { $_ }) | Select-Object -First 1
+    $current = $linkItem.LinkType -eq 'Junction' -and $linkTarget -and ([IO.Path]::GetFullPath($linkTarget).TrimEnd('\') -ieq [IO.Path]::GetFullPath($assets).TrimEnd('\'))
+    if (-not $current) {
+        if ($linkItem.LinkType) { [IO.Directory]::Delete($assetLink) }
+        else { Move-Item -LiteralPath $assetLink -Destination ($assetLink + '.stale-' + (Get-Date -Format 'yyyyMMddHHmmss')) }
+        Write-Host "Replaced stale runtime scene-assets link (was: $(if ($linkItem.LinkType) {"$($linkItem.LinkType) -> $linkTarget"} else {'a copied folder'}))."
+    }
+}
 if (!(Test-Path -LiteralPath $assetLink)) {New-Item -ItemType Junction -Path $assetLink -Target $assets | Out-Null}
 foreach ($path in @($native,$assets)) {if ($path.Contains("'")) {throw 'Unsupported quote in installation path.'}}
 $config = @"
