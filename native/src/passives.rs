@@ -50,7 +50,8 @@ fn regen(chr:&mut ChrIns,run:Option<&Run>) {
 const CLASS:i32=9810000;
 /// 运行时管理的常驻效果；举盾、致命一击后的效果由这些常驻效果自己触发，不在这里增删。
 /// FIRST..=FIRST+4 是职业重做前的旧被动，已不再施加，只留在这里以便从角色身上清掉
-fn all()->impl Iterator<Item=i32> {(FIRST..=FIRST+4).chain([CLASS,CLASS+3,CLASS+10,CLASS+11,CLASS+20,CLASS+23,CLASS+30,CLASS+40])}
+/// HansFix：9800000 与 9800002 被星辉术士的叠层增伤借用（starsurge::BUFF_ROWS），不在这里清掉
+fn all()->impl Iterator<Item=i32> {(FIRST..=FIRST+4).filter(|id|!super::starsurge::BUFF_ROWS.contains(id)).chain([CLASS,CLASS+3,CLASS+10,CLASS+11,CLASS+20,CLASS+23,CLASS+30,CLASS+40])}
 /// 当前应挂的效果；low 为生命低于一半（狂战士的狂血）
 fn desired(run:Option<&Run>,low:bool)->Vec<i32> {
     let Some(run)=run.filter(|r|!matches!(r.phase,Phase::Dead|Phase::Won)) else{return vec![]};
